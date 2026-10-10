@@ -1,0 +1,13 @@
+[Unit]
+Description=AmneziaWG failover for UniFi PBR
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/data/awg/failover.sh
+ExecStopPost=/data/awg/failover.sh cleanup
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

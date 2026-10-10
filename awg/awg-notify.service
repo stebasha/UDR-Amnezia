@@ -1,0 +1,11 @@
+[Unit]
+Description=AmneziaWG failover Telegram notifications
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/awg-notify.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

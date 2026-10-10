@@ -1,0 +1,10 @@
+[Unit]
+Description=Clear UniFi SSH banner (/etc/motd)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c ': > /etc/motd'
+
+[Install]
+WantedBy=multi-user.target

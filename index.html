@@ -189,7 +189,7 @@ kbd{font-family:var(--f-mono);font-size:.82em;border:1px solid var(--line);borde
 <header class="hero">
   <div class="eyebrow">Полевой мануал · UniFi Dream Router 7</div>
   <h1>AmneziaWG на UDR7 <span class="thin">своими руками</span></h1>
-  <p class="lede">Туннель AmneziaWG прямо на роутере, встроенный в штатные правила Policy-Based Routes UniFi. В туннель уходят только те устройства и сайты, которые вы выбрали в интерфейсе UniFi. Дальше по желанию: запасной канал на своём VPS с автопереключением, панель состояния при входе по SSH, аудит и уведомления в Telegram.</p>
+  <p class="lede">Туннель AmneziaWG прямо на роутере, встроенный в штатные правила Policy-Based Routes UniFi. В туннель уходят только те устройства и сайты, которые вы выбрали в интерфейсе UniFi. Дальше по желанию: запасной канал на своём VPS с автопереключением, панель состояния при входе по SSH, аудит и уведомления в Telegram. Всё ставится одной командой через установщик или вручную по шагам ниже.</p>
   <div class="specs">
     <span>проверено: <b>UDR7</b></span><span>UniFi OS <b>5.1.33</b></span><span>Network <b>10.6.106</b></span><span>ядро <b>5.4.213 aarch64</b></span><span>amneziawg-go <b>0.0.20250522</b></span><span>amneziawg-tools <b>3.1.20260812</b></span><span>VPS <b>Ubuntu 24.04</b></span><span>октябрь <b>2026</b></span>
   </div>
@@ -199,8 +199,9 @@ kbd{font-family:var(--f-mono);font-size:.82em;border:1px solid var(--line);borde
 <nav class="toc" aria-label="Содержание">
   <details id="tocd"><summary>Содержание</summary>
   <p class="ttl">Содержание</p>
-  <ol id="toclist"><li><a href="#how"><span class="n">·</span><span>Как это устроено</span><span class="st"></span></a></li>
-<li class="grp">Основа</li>
+  <ol id="toclist"><li><a href="#auto"><span class="n">⚡</span><span>Установщик одной командой</span><span class="st"></span></a></li>
+<li><a href="#how"><span class="n">·</span><span>Как это устроено</span><span class="st"></span></a></li>
+<li class="grp">Основа вручную</li>
 <li><a href="#p0"><span class="n">0</span><span>Подготовка</span><span class="st"></span></a></li>
 <li><a href="#p1"><span class="n">1</span><span>Бинарники AmneziaWG</span><span class="st"></span></a></li>
 <li><a href="#p2"><span class="n">2</span><span>«Рельса» и PBR в UniFi</span><span class="st"></span></a></li>
@@ -235,7 +236,29 @@ kbd{font-family:var(--f-mono);font-size:.82em;border:1px solid var(--line);borde
   <div class="vars">
     <label for="v-router">IP роутера в вашей сети (подставится в команды)<input id="v-router" data-var="ROUTER_IP" value="192.168.1.1" autocomplete="off" spellcheck="false"></label>
     <label for="v-vps">Внешний IP вашего VPS (для сценариев B и C)<input id="v-vps" data-var="VPS_IP" value="203.0.113.10" autocomplete="off" spellcheck="false"></label>
+    <label for="v-repo">Репозиторий установщика на GitHub<input id="v-repo" data-var="REPO" value="OWNER/udr7-amneziawg" autocomplete="off" spellcheck="false"></label>
   </div>
+</section>
+
+<section id="auto" class="part" data-n="⚡" data-title="Установщик одной командой" data-need="*">
+  <div class="ph"><div class="num">⚡</div><div><h2>Установщик одной командой</h2></div></div>
+  <p>Установщик <code>install.sh</code> делает всё, что описано в частях 0–11: проверяет роутер, ставит бинарники, принимает конфиг, поднимает и проверяет туннели, сам настраивает ваш VPS по SSH, находит таблицу и метку PBR, запускает сторожа и по желанию ставит панель, аудит и Telegram. На каждом шаге он проверяет результат и при ошибке предлагает варианты: повторить, заменить конфиг, запустить диагностику.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">первый запуск</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/<span class="v" data-v="REPO">OWNER/udr7-amneziawg</span>/main/install.sh)</code></pre></figure>
+  <div class="tw"><table>
+    <tr><th>Мастер спросит</th><th>Что проверит</th></tr>
+    <tr><td>Сценарий A, B или C</td><td>aarch64, UniFi OS, <code>/dev/net/tun</code>, место на <code>/data</code>, доступ к GitHub, остатки старых установок</td></tr>
+    <tr><td>Откуда взять бинарники</td><td>что они запускаются на роутере</td></tr>
+    <tr><td>Конфиг основного туннеля (вставить текстом или путь к файлу)</td><td>секции, ключи, Address, Endpoint; предупредит, если это обычный WireGuard</td></tr>
+    <tr><td>Для своего VPS: IP, SSH-порт, порт AWG, параметры обфускации</td><td>SSH и root, ОС; соберёт и настроит сервер, заберёт конфиг; при сбое — tcpdump одновременно на роутере и на VPS</td></tr>
+    <tr><td>Какой профиль VPN Client использовать как рельсу</td><td>есть ли правило PBR; если нет — создаст фиктивный конфиг и покажет шаги в UniFi</td></tr>
+    <tr><td>Подсети VPN-сервера роутера, время возврата</td><td>что сторож положил маршрут и <code>blackhole</code> в таблицу PBR; переключение на запасной канал</td></tr>
+    <tr><td>Панель, аудит, Telegram</td><td>токен бота, chat id (определит сам), доставку тестового сообщения</td></tr>
+  </table></div>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">после установки</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/install.sh            <span class="c"># меню: обновление, компоненты, диагностика, удаление</span>
+/data/awg/install.sh --update   <span class="c"># обновить скрипты, конфиги сохраняются</span>
+/data/awg/install.sh --restore  <span class="c"># после обновления прошивки UniFi</span>
+/data/awg/install.sh --uninstall</code></pre></figure>
+  <p class="muted">Части ниже — те же шаги вручную. Они нужны, чтобы понимать, что делает установщик, и для диагностики, если что-то пошло не так.</p>
 </section>
 
 <section id="how" class="part" data-n="·" data-title="Как это устроено" data-need="*">
@@ -502,7 +525,7 @@ rm -f /tmp/rail.conf</code></pre><button class="more" type="button" aria-expande
 
   <div class="step"><div class="sn">3.1</div><div class="sb">
     <h4>Соберите amneziawg-go и awg</h4>
-<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">сборка, ~3–5 минут</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /root/awg-server-build.sh &lt;&lt;'EOF'
+<figure class="cb long"><figcaption><span class="on on-vps">VPS</span><span class="cbt">сборка, ~3–5 минут</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /root/awg-server-build.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-server-build.sh — сборка amneziawg-go и awg на VPS (Ubuntu 22.04/24.04, x86_64), от root.</span>
 <span class="c"># Исходники берутся из того же архива, что и бинарники для роутера: версии протокола совпадут.</span>
@@ -510,8 +533,16 @@ set -e
 SRC_URL=${SRC_URL:-https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz}
 apt-get update -q
 apt-get install -y -q git make gcc curl
-command -v go &gt;/dev/null 2&gt;&amp;1 || [ -x /snap/bin/go ] || snap install go --classic
-export PATH=$PATH:/snap/bin
+<span class="c"># Go: snap (Ubuntu) или официальный архив go.dev (Debian и системы без snap)</span>
+if ! command -v go &gt;/dev/null 2&gt;&amp;1 &amp;&amp; [ ! -x /snap/bin/go ] &amp;&amp; [ ! -x /usr/local/go/bin/go ]; then
+  if ! { command -v snap &gt;/dev/null 2&gt;&amp;1 &amp;&amp; snap install go --classic; }; then
+    case "$(uname -m)" in x86_64) GA=amd64;; aarch64) GA=arm64;; *) echo "неизвестная архитектура $(uname -m)"; exit 1;; esac
+    curl -fL "https://go.dev/dl/go1.23.4.linux-$GA.tar.gz" -o /tmp/go.tgz
+    rm -rf /usr/local/go &amp;&amp; tar -C /usr/local -xzf /tmp/go.tgz &amp;&amp; rm -f /tmp/go.tgz
+  fi
+fi
+export PATH=$PATH:/snap/bin:/usr/local/go/bin
+export GOTOOLCHAIN=auto   # если исходникам нужна более новая версия Go, она скачается сама
 mkdir -p /root/awgbuild &amp;&amp; cd /root/awgbuild
 rm -rf go tools source
 curl -fL "$SRC_URL" -o src.tar.gz
@@ -526,7 +557,7 @@ amneziawg-go --version | head -1
 awg --version
 EOF
 chmod 755 /root/awg-server-build.sh
-/root/awg-server-build.sh</code></pre></figure>
+/root/awg-server-build.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 33 строк">Показать целиком · 33 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">конец вывода</span></figcaption><pre><code>amneziawg-go 0.0.20250522
 amneziawg-tools v3.1.20260812 - https://amnezia.org</code></pre></figure>
     <div class="note n-check"><b>Проверка</b><p>Обе версии напечатались. Утилита собирается под именем <code>wg</code> и устанавливается как <code>/usr/local/bin/awg</code>, чтобы не путаться с обычным WireGuard.</p></div>
@@ -1061,19 +1092,23 @@ systemctl enable --now awg-failover
 [ $NOTIFY = 1 ] &amp;&amp; systemctl enable --now awg-notify
 [ $MOTD = 1 ] &amp;&amp; systemctl enable --now awg-motd
 <span class="c"># панель и команды возвращаются, только если соответствующая часть ставилась</span>
-if [ -x "$D/status.sh" ] &amp;&amp; ! grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null; then
+<span class="c"># установщик отмечает выбранные компоненты файлами .panel/.audit; при ручной установке по гайду</span>
+<span class="c"># признак — наличие самих скриптов</span>
+want(){ [ -f "$D/.$1" ] || { [ -x "$D/$2" ] &amp;&amp; [ ! -f "$D/.installer" ]; }; }
+if want panel status.sh &amp;&amp; ! grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null; then
   cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
 alias awgs='/data/awg/status.sh'
 case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
 RC
 fi
-if [ -x "$D/audit.sh" ] &amp;&amp; ! grep -q "alias awg-audit=" /root/.bashrc 2&gt;/dev/null; then
+if want audit audit.sh &amp;&amp; ! grep -q "alias awg-audit=" /root/.bashrc 2&gt;/dev/null; then
   echo "alias awg-audit='/data/awg/audit.sh'" &gt;&gt; /root/.bashrc
 fi
 [ -f "$D/motd.orig" ] &amp;&amp; touch /root/.hushlogin
+[ -x "$D/install.sh" ] &amp;&amp; ! grep -q "alias awg-setup=" /root/.bashrc 2&gt;/dev/null &amp;&amp; echo "alias awg-setup='/data/awg/install.sh'" &gt;&gt; /root/.bashrc
 if [ -x "$D/audit.sh" ]; then echo "Готово. Проверьте: $D/audit.sh"; else echo "Готово. Проверьте: systemctl is-active awg-failover"; fi
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 27 строк">Показать целиком · 27 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 31 строк">Показать целиком · 31 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 
@@ -1423,8 +1458,8 @@ for u in awg-failover awg-notify awg-motd; do
     || W "$u.service в /etc отличается от копии в $DD или отсутствует" "cp $DD/$u.service /etc/systemd/system/ &amp;&amp; systemctl daemon-reload &amp;&amp; systemctl enable --now $u"
 done
 n=$(ps -eo pid,ppid,args | awk '/failover\.sh/ &amp;&amp; !/awk/ &amp;&amp; !/cleanup/ {p[$1]=$2; a[$1]=1} END{for(i in p) if(!(p[i] in a)) n++; print n+0}')
-if [ "$st" = active ]; then [ "$n" = 1 ] &amp;&amp; P "экземпляров failover.sh: 1" || W "экземпляров failover.sh: $n (нужен 1)" "systemctl stop awg-failover; pkill -f failover.sh; systemctl start awg-failover"
-else [ "$n" = 0 ] &amp;&amp; P "ручных экземпляров failover.sh нет" || W "failover.sh запущен вручную при остановленной службе" "pkill -f failover.sh; $DD/failover.sh cleanup"; fi
+if [ "$st" = active ]; then [ "$n" = 1 ] &amp;&amp; P "экземпляров failover.sh: 1" || W "экземпляров failover.sh: $n (нужен 1)" "systemctl stop awg-failover; pkill -f '/data/awg/failover[.]sh'; systemctl start awg-failover"
+else [ "$n" = 0 ] &amp;&amp; P "ручных экземпляров failover.sh нет" || W "failover.sh запущен вручную при остановленной службе" "pkill -f '/data/awg/failover[.]sh'; $DD/failover.sh cleanup"; fi
 c=$(pgrep -c amneziawg-go 2&gt;/dev/null); [ "${c:-0}" = "$NT" ] &amp;&amp; P "процессов amneziawg-go: $NT" || W "процессов amneziawg-go: ${c:-0} (нужно $NT)" "pgrep -a amneziawg-go; лишний интерфейс: ip link del &lt;имя&gt;"
 if [ -f "$DD/telegram.env" ]; then
   [ "$(systemctl is-active awg-notify 2&gt;/dev/null)" = active ] &amp;&amp; P "awg-notify: active" || W "awg-notify не запущен" "systemctl enable --now awg-notify"
@@ -1474,7 +1509,7 @@ done
 ls /run/*.awg.conf /run/*.raw &gt;/dev/null 2&gt;&amp;1 &amp;&amp; W "в /run остались временные конфиги с ключами" "rm -f /run/*.awg.conf /run/*.raw"
 k=$(grep -E -c '[A-Za-z0-9+/]{43}=' /root/.bash_history 2&gt;/dev/null)
 [ "${k:-0}" = 0 ] &amp;&amp; P "в .bash_history нет строк, похожих на ключи" || W ".bash_history: строк, похожих на ключи: $k" "history -c; : &gt; /root/.bash_history"
-if [ -x "$DD/status.sh" ]; then
+if [ -f "$DD/.panel" ] || { [ -x "$DD/status.sh" ] &amp;&amp; [ ! -f "$DD/.installer" ]; }; then
   grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null &amp;&amp; P "панель при входе по SSH настроена" || W "status.sh есть, но в /root/.bashrc нет показа панели" "часть 8, шаг 8.2"
 fi
 
@@ -1497,7 +1532,7 @@ grep -q "alias awg-audit=" /root/.bashrc 2&gt;/dev/null || echo "alias awg-audit
 ...
 == Итог ==
   OK: 27   WARN: 0   FAIL: 0</code></pre></figure>
-  <p>Команды из строк <code>fix:</code> выполняйте по одной, прочитав вывод. Если WARN про дубли не уходит через минуту, значит, работают два сторожа: <code>systemctl stop awg-failover; pkill -f failover.sh; systemctl start awg-failover</code>.</p>
+  <p>Команды из строк <code>fix:</code> выполняйте по одной, прочитав вывод. Если WARN про дубли не уходит через минуту, значит, работают два сторожа: <code>systemctl stop awg-failover; pkill -f '/data/awg/failover[.]sh'; systemctl start awg-failover</code>.</p>
 </section>
 
 <section id="p10" class="part" data-n="10" data-title="Уведомления в Telegram" data-need="O">
@@ -1899,7 +1934,7 @@ for u in awg-notify awg-failover awg-motd; do
   rm -f /etc/systemd/system/$u.service
 done
 systemctl daemon-reload
-pkill -f failover.sh 2&gt;/dev/null
+pkill -f "$D/failover[.]sh" 2&gt;/dev/null
 [ -x $D/failover.sh ] &amp;&amp; $D/failover.sh cleanup 2&gt;/dev/null
 for i in $MAIN $BACKUP; do
   while iptables -t nat -D POSTROUTING -o $i -j MASQUERADE 2&gt;/dev/null; do :; done
@@ -1910,7 +1945,7 @@ for i in $MAIN $BACKUP; do
   ip link del $i 2&gt;/dev/null
 done
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network $s 2&gt;/dev/null; done
-sed -i '/AWGS_SHOWN/d;/alias awgs=/d;/alias awg-audit=/d' /root/.bashrc 2&gt;/dev/null
+sed -i '/AWGS_SHOWN/d;/alias awgs=/d;/alias awg-audit=/d;/alias awg-setup=/d' /root/.bashrc 2&gt;/dev/null
 rm -f /root/.hushlogin
 [ -f $D/motd.orig ] &amp;&amp; cp -a $D/motd.orig /etc/motd
 if [ "$1" = --purge ]; then rm -rf $D; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
@@ -2007,6 +2042,7 @@ EOF</code></pre></figure>
     <tr><td><code>telegram.env</code> 🔒, <code>notify.sh</code>, <code>awg-notify.sh</code>, <code>awg-notify.service</code></td><td>Уведомления; <code>notify.log</code>, <code>notify.spool</code>, <code>notify.events</code>, <code>notify.state</code> — их служебные файлы</td><td>10</td></tr>
     <tr><td><code>awg-restore.sh</code></td><td>Восстановление автозапуска после обновления прошивки</td><td>5</td></tr>
     <tr><td><code>awg-uninstall.sh</code></td><td>Полное удаление</td><td>11</td></tr>
+    <tr><td><code>install.sh</code>, <code>install.log</code>, <code>.installer</code>, <code>.panel</code>, <code>.audit</code></td><td>Установщик и его журнал; отметки компонентов, выбранных в установщике</td><td>⚡</td></tr>
   </table></div>
 
   <h3>Файлы на VPS</h3>
@@ -2132,7 +2168,7 @@ chmod 755 /data/awg/amneziawg-go /data/awg/awg; /data/awg/awg --version</code></
   apply();
 
   /* ---------- подстановка своих значений в команды ---------- */
-  var IPRE = /^[A-Za-z0-9.:\-]{1,64}$/;
+  var IPRE = /^[A-Za-z0-9._:\/-]{1,80}$/;
   document.querySelectorAll('.vars input[data-var]').forEach(function(inp){
     var name = inp.dataset.var, saved = LS.get('awg-var-' + name);
     if (saved && IPRE.test(saved)) inp.value = saved;
