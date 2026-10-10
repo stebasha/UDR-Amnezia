@@ -1,0 +1,2174 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>AmneziaWG на UDR7 (Copy)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap">
+<style>
+/* Layout: полевой мануал. Слева липкое оглавление с номерами частей, справа колонка ~800px;
+   у каждого блока команд метка «где выполнять». Код всегда на тёмной «консоли». */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --ink:#141A21; --muted:#5A6573; --line:#D8DDE4;
+  --accent:#B4530F; --accent-strong:#D9741A; --accent-bg:#FCEFE2;
+  --ok:#1E7F47; --ok-bg:#E3F3EA; --warn:#9A6400; --warn-bg:#FBF0D9; --bad:#B42F25; --bad-bg:#FBE6E3;
+  --info:#2650B8; --info-bg:#E6EDFB;
+  --code-bg:#10151C; --code-fg:#DCE3EC; --code-dim:#7C8999; --code-line:#25303D; --code-var:#F2A65A;
+  --tag-router:#D9741A; --tag-vps:#3F7DE0; --tag-pc:#7A62D3; --tag-ui:#1E9E6A;
+  --f-display:"Unbounded","Golos Text",system-ui,sans-serif;
+  --f-body:"Golos Text",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0D1116; --surface:#141A21; --ink:#E2E7ED; --muted:#95A1AF; --line:#26303B;
+  --accent:#F29A4A; --accent-strong:#F29A4A; --accent-bg:#2B1D10;
+  --ok:#4CC27F; --ok-bg:#12291C; --warn:#E3B34D; --warn-bg:#2A2312; --bad:#F07A6E; --bad-bg:#2E1513;
+  --info:#7FA4F5; --info-bg:#141F36;
+  --code-bg:#090C10; --code-line:#1F2833;
+  color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#0D1116; --surface:#141A21; --ink:#E2E7ED; --muted:#95A1AF; --line:#26303B;
+  --accent:#F29A4A; --accent-strong:#F29A4A; --accent-bg:#2B1D10;
+  --ok:#4CC27F; --ok-bg:#12291C; --warn:#E3B34D; --warn-bg:#2A2312; --bad:#F07A6E; --bad-bg:#2E1513;
+  --info:#7FA4F5; --info-bg:#141F36;
+  --code-bg:#090C10; --code-line:#1F2833;
+  color-scheme:dark }
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.6;padding-inline:16px;padding-block:0 64px}
+a{color:var(--accent);text-underline-offset:2px}
+a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,label:focus-within{outline:2px solid var(--accent-strong);outline-offset:2px}
+code{font-family:var(--f-mono);font-size:.88em;background:color-mix(in srgb,var(--line) 55%,transparent);padding:.08em .35em;border-radius:4px;overflow-wrap:anywhere}
+h1,h2,h3{text-wrap:balance;line-height:1.2}
+h2{font-family:var(--f-display);font-weight:700;font-size:1.55rem;margin:0}
+h3{font-size:1.12rem;font-weight:600;margin:2.2rem 0 .6rem}
+p,li{max-width:68ch}
+ul,ol{padding-left:1.25rem}
+li+li{margin-top:.3rem}
+.muted{color:var(--muted)}
+.wrap{max-width:1180px;margin:0 auto}
+
+/* ---------- шапка ---------- */
+.hero{padding-block:48px 28px;border-bottom:1px solid var(--line);margin-bottom:28px}
+.eyebrow{font-family:var(--f-mono);font-size:.78rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.hero h1{font-family:var(--f-display);font-weight:700;font-size:clamp(2rem,5.4vw,3.6rem);letter-spacing:-.01em;margin:.35rem 0 .7rem}
+.hero h1 .thin{font-weight:500;color:var(--muted)}
+.lede{font-size:1.15rem;max-width:62ch;color:var(--ink)}
+.specs{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
+.specs span{font-family:var(--f-mono);font-size:.76rem;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:3px 10px;color:var(--muted)}
+.specs b{color:var(--ink);font-weight:600}
+
+/* ---------- сетка ---------- */
+.layout{display:grid;grid-template-columns:250px minmax(0,1fr);gap:48px;align-items:start}
+.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);max-height:calc(100vh - 32px);overflow:auto;font-size:.9rem;padding-right:4px}
+.toc details>summary{display:none}
+.toc .ttl{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.toc ol{list-style:none;padding:0;margin:0}
+.toc li{margin:0}
+.toc a{display:grid;grid-template-columns:2.1em 1fr auto;gap:4px;align-items:baseline;padding:5px 8px;border-radius:6px;color:var(--ink);text-decoration:none}
+.toc a:hover{background:var(--surface)}
+.toc a .n{font-family:var(--f-mono);font-size:.78rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.toc a .st{font-size:.68rem;font-family:var(--f-mono);border-radius:4px;padding:0 5px;white-space:nowrap}
+.toc a.need .st{color:var(--ok);background:var(--ok-bg)}
+.toc a.opt .st{color:var(--muted);background:color-mix(in srgb,var(--line) 50%,transparent)}
+.toc a.skip{opacity:.45}
+.toc a.skip .st{color:var(--muted)}
+.toc .grp{font-family:var(--f-mono);font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:14px 8px 4px}
+main{min-width:0;max-width:820px}
+
+@media (max-width:960px){
+  .layout{grid-template-columns:minmax(0,1fr);gap:16px}
+  .toc{position:static;max-height:none;overflow:visible}
+  .toc details{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:6px 8px}
+  .toc details>summary{display:block;cursor:pointer;font-weight:600;padding:6px 4px}
+  .toc .ttl{display:none}
+}
+
+/* ---------- сценарии ---------- */
+.chooser{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;margin:8px 0 36px}
+.chooser h2{font-size:1.2rem;margin-bottom:4px}
+.scen{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+@media (max-width:700px){.scen{grid-template-columns:minmax(0,1fr)}}
+.scen label{display:flex;flex-direction:column;gap:4px;border:1.5px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;background:var(--bg);min-width:0}
+.scen input{position:absolute;opacity:0;pointer-events:none}
+.scen label:has(input:checked){border-color:var(--accent-strong);background:var(--accent-bg)}
+.scen .k{font-family:var(--f-mono);font-size:.75rem;color:var(--accent)}
+.scen .h{font-weight:600}
+.scen .d{font-size:.88rem;color:var(--muted);line-height:1.45}
+.extra{display:flex;gap:10px;align-items:flex-start;margin-top:12px;font-size:.93rem;cursor:pointer}
+.extra input{margin-top:.3em;accent-color:var(--accent-strong)}
+.route{margin-top:14px;font-size:.92rem;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.route .pill{font-family:var(--f-mono);font-size:.78rem;padding:2px 8px;border-radius:999px;background:var(--ok-bg);color:var(--ok);text-decoration:none}
+.route .pill.o{background:color-mix(in srgb,var(--line) 50%,transparent);color:var(--muted)}
+.vars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+@media (max-width:700px){.vars{grid-template-columns:minmax(0,1fr)}}
+.vars label{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
+.vars input{font-family:var(--f-mono);font-size:.92rem;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-width:0}
+
+/* ---------- части ---------- */
+.part{padding-top:8px;margin-top:44px;border-top:1px solid var(--line)}
+.ph{display:flex;align-items:flex-start;gap:16px;margin:22px 0 10px}
+.ph .num{font-family:var(--f-display);font-weight:500;font-size:2.4rem;line-height:1;color:var(--accent-strong);font-variant-numeric:tabular-nums;min-width:1.6em}
+.ph .meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.badge{font-family:var(--f-mono);font-size:.72rem;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:var(--surface)}
+.badge.need{border-color:transparent;background:var(--ok-bg);color:var(--ok)}
+.badge.skip{border-style:dashed}
+.why{border-left:3px solid var(--line);padding:2px 0 2px 14px;color:var(--muted);margin:12px 0}
+
+/* шаг */
+.step{display:grid;grid-template-columns:2.2rem minmax(0,1fr);gap:4px 12px;margin-top:26px}
+.step>.sn{font-family:var(--f-mono);font-weight:600;font-size:.82rem;color:var(--accent);padding-top:.25rem;font-variant-numeric:tabular-nums}
+.step>.sb{min-width:0}
+.step h4{margin:0 0 .4rem;font-size:1.02rem;font-weight:600}
+
+/* блок кода */
+.cb{margin:12px 0;border-radius:10px;overflow:hidden;background:var(--code-bg);border:1px solid var(--code-line)}
+.cb figcaption{display:flex;align-items:center;gap:10px;padding:7px 10px 7px 12px;border-bottom:1px solid var(--code-line);font-size:.78rem;color:var(--code-dim);font-family:var(--f-mono)}
+.on{font-weight:600;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:4px;color:#0D1116;white-space:nowrap}
+.on-router{background:var(--tag-router)} .on-vps{background:var(--tag-vps);color:#fff} .on-pc{background:var(--tag-pc);color:#fff} .on-ui{background:var(--tag-ui);color:#fff} .on-out{background:transparent;color:var(--code-dim);border:1px solid var(--code-line)}
+.cbt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.copy{font:inherit;font-size:.74rem;color:var(--code-fg);background:transparent;border:1px solid var(--code-line);border-radius:6px;padding:3px 9px;cursor:pointer}
+.copy:hover{border-color:var(--code-dim)}
+.copy.done{color:#7BD69E;border-color:#2E6B47}
+.cb pre{margin:0;padding:12px 14px;overflow-x:auto;color:var(--code-fg);font-family:var(--f-mono);font-size:.82rem;line-height:1.55;tab-size:2}
+.cb pre code{background:none;padding:0;font-size:inherit;overflow-wrap:normal;color:inherit}
+.cb .c{color:var(--code-dim)}
+.cb .v{color:var(--code-var);border-bottom:1px dotted var(--code-var)}
+.cb.long pre{max-height:340px}
+.cb.long.open pre{max-height:none}
+.more{display:block;width:100%;font:inherit;font-size:.78rem;font-family:var(--f-mono);color:var(--code-dim);background:color-mix(in srgb,var(--code-bg) 80%,#fff 4%);border:0;border-top:1px solid var(--code-line);padding:7px;cursor:pointer}
+.more:hover{color:var(--code-fg)}
+.cb.out{background:var(--surface);border-color:var(--line)}
+.cb.out figcaption{border-color:var(--line);color:var(--muted)}
+.cb.out .on-out{color:var(--muted);border-color:var(--line)}
+.cb.out pre{color:var(--ink)}
+
+/* врезки */
+.note{border-radius:10px;padding:12px 14px 12px 14px;margin:14px 0;border:1px solid transparent;font-size:.95rem}
+.note>b:first-child{display:block;font-size:.74rem;font-family:var(--f-mono);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+.note p{margin:.3rem 0}
+.n-check{background:var(--ok-bg);border-color:color-mix(in srgb,var(--ok) 30%,transparent)} .n-check>b:first-child{color:var(--ok)}
+.n-warn{background:var(--warn-bg);border-color:color-mix(in srgb,var(--warn) 30%,transparent)} .n-warn>b:first-child{color:var(--warn)}
+.n-bad{background:var(--bad-bg);border-color:color-mix(in srgb,var(--bad) 30%,transparent)} .n-bad>b:first-child{color:var(--bad)}
+.n-info{background:var(--info-bg);border-color:color-mix(in srgb,var(--info) 30%,transparent)} .n-info>b:first-child{color:var(--info)}
+.n-exp{background:var(--surface);border-color:var(--line)} .n-exp>b:first-child{color:var(--accent)}
+
+/* таблицы */
+.tw{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font-size:.74rem;font-family:var(--f-mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600;background:color-mix(in srgb,var(--line) 25%,transparent)}
+tr:last-child td{border-bottom:0}
+td code{white-space:nowrap}
+td.wrapc code{white-space:normal}
+
+/* схема */
+.flow{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1.1fr) auto minmax(0,1.4fr);gap:10px;align-items:center;margin:18px 0}
+.flow .box{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:.86rem;min-width:0}
+.flow .box h5{margin:0 0 4px;font-size:.72rem;font-family:var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.flow .arr{color:var(--muted);font-family:var(--f-mono)}
+.rt{font-family:var(--f-mono);font-size:.76rem;display:grid;gap:4px}
+.rt div{display:flex;gap:8px;justify-content:space-between;border-radius:6px;padding:3px 7px;background:var(--bg)}
+.rt .a{background:var(--ok-bg);color:var(--ok)} .rt .b{background:var(--warn-bg);color:var(--warn)} .rt .k{background:var(--bad-bg);color:var(--bad)}
+@media (max-width:760px){.flow{grid-template-columns:minmax(0,1fr)}.flow .arr{transform:rotate(90deg);justify-self:center}}
+
+.feat{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 22px;margin:16px 0;padding:0;list-style:none}
+.feat li{max-width:none;margin:0;padding-left:16px;position:relative;font-size:.95rem}
+.feat li::before{content:"";position:absolute;left:0;top:.62em;width:7px;height:7px;border-radius:2px;background:var(--accent-strong)}
+@media (max-width:700px){.feat{grid-template-columns:minmax(0,1fr)}}
+
+details.src{border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:10px 0}
+details.src>summary{cursor:pointer;padding:10px 14px;font-family:var(--f-mono);font-size:.86rem}
+details.src>div{padding:0 12px 4px}
+.milestone{display:flex;gap:12px;align-items:center;margin:30px 0 0;padding:14px 16px;border-radius:12px;background:var(--ok-bg);color:var(--ok);font-weight:600}
+.milestone .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 25%,transparent);flex:none}
+footer{margin-top:60px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:.86rem}
+kbd{font-family:var(--f-mono);font-size:.82em;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 .35em;background:var(--surface)}
+</style>
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Полевой мануал · UniFi Dream Router 7</div>
+  <h1>AmneziaWG на UDR7 <span class="thin">своими руками</span></h1>
+  <p class="lede">Туннель AmneziaWG прямо на роутере, встроенный в штатные правила Policy-Based Routes UniFi. В туннель уходят только те устройства и сайты, которые вы выбрали в интерфейсе UniFi. Дальше по желанию: запасной канал на своём VPS с автопереключением, панель состояния при входе по SSH, аудит и уведомления в Telegram.</p>
+  <div class="specs">
+    <span>проверено: <b>UDR7</b></span><span>UniFi OS <b>5.1.33</b></span><span>Network <b>10.6.106</b></span><span>ядро <b>5.4.213 aarch64</b></span><span>amneziawg-go <b>0.0.20250522</b></span><span>amneziawg-tools <b>3.1.20260812</b></span><span>VPS <b>Ubuntu 24.04</b></span><span>октябрь <b>2026</b></span>
+  </div>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Содержание">
+  <details id="tocd"><summary>Содержание</summary>
+  <p class="ttl">Содержание</p>
+  <ol id="toclist"><li><a href="#how"><span class="n">·</span><span>Как это устроено</span><span class="st"></span></a></li>
+<li class="grp">Основа</li>
+<li><a href="#p0"><span class="n">0</span><span>Подготовка</span><span class="st"></span></a></li>
+<li><a href="#p1"><span class="n">1</span><span>Бинарники AmneziaWG</span><span class="st"></span></a></li>
+<li><a href="#p2"><span class="n">2</span><span>«Рельса» и PBR в UniFi</span><span class="st"></span></a></li>
+<li><a href="#p3"><span class="n">3</span><span>Свой сервер AWG на VPS</span><span class="st"></span></a></li>
+<li><a href="#p4"><span class="n">4</span><span>Основной туннель</span><span class="st"></span></a></li>
+<li><a href="#p5"><span class="n">5</span><span>Сторож и автозапуск</span><span class="st"></span></a></li>
+<li><a href="#p6"><span class="n">6</span><span>Запасной канал</span><span class="st"></span></a></li>
+<li class="grp">Опции</li>
+<li><a href="#p7"><span class="n">7</span><span>Клиенты VPN-сервера роутера</span><span class="st"></span></a></li>
+<li><a href="#p8"><span class="n">8</span><span>Панель при входе по SSH</span><span class="st"></span></a></li>
+<li><a href="#p9"><span class="n">9</span><span>Аудит установки</span><span class="st"></span></a></li>
+<li><a href="#p10"><span class="n">10</span><span>Уведомления в Telegram</span><span class="st"></span></a></li>
+<li class="grp">Сопровождение</li>
+<li><a href="#p11"><span class="n">11</span><span>Обслуживание</span><span class="st"></span></a></li>
+<li><a href="#p12"><span class="n">12</span><span>Диагностика и грабли</span><span class="st"></span></a></li>
+<li><a href="#p13"><span class="n">13</span><span>Справочник</span><span class="st"></span></a></li></ol>
+  </details>
+</nav>
+
+<main>
+
+<section class="chooser" id="scenario" aria-labelledby="sc-h">
+  <h2 id="sc-h">Выберите свой сценарий</h2>
+  <p class="muted" style="margin:0">Роутер у всех один и тот же, а задачи разные. Отметьте свой вариант: в оглавлении и в заголовках частей появится, что делать обязательно, а что можно пропустить. Скрипты одинаковые для всех сценариев, различаются только настройки в файле <code>awg.env</code>.</p>
+  <div class="scen" role="radiogroup" aria-label="Сценарий">
+    <label><input type="radio" name="scen" id="scA" value="A" checked><span class="k">Сценарий A</span><span class="h">Один туннель от провайдера</span><span class="d">У вас есть готовый конфиг AmneziaWG (<code>.conf</code>) от VPN-сервиса или из приложения Amnezia.</span></label>
+    <label><input type="radio" name="scen" id="scB" value="B"><span class="k">Сценарий B</span><span class="h">Один туннель до своего VPS</span><span class="d">Провайдера нет, есть арендованный сервер с Ubuntu. Сервер AWG поднимаете сами.</span></label>
+    <label><input type="radio" name="scen" id="scC" value="C"><span class="k">Сценарий C</span><span class="h">Основной + запасной</span><span class="d">Два туннеля и автопереключение: при сбое основного трафик уходит в запасной, через 10 минут стабильной работы возвращается.</span></label>
+  </div>
+  <label class="extra"><input type="checkbox" id="scX"><span>Через туннель должны ходить и <b>клиенты VPN-сервера самого роутера</b> (WireGuard Server, Teleport). Например, телефон, подключённый к дому извне.</span></label>
+  <div class="route" id="route" aria-live="polite"></div>
+  <div class="vars">
+    <label for="v-router">IP роутера в вашей сети (подставится в команды)<input id="v-router" data-var="ROUTER_IP" value="192.168.1.1" autocomplete="off" spellcheck="false"></label>
+    <label for="v-vps">Внешний IP вашего VPS (для сценариев B и C)<input id="v-vps" data-var="VPS_IP" value="203.0.113.10" autocomplete="off" spellcheck="false"></label>
+  </div>
+</section>
+
+<section id="how" class="part" data-n="·" data-title="Как это устроено" data-need="*">
+  <div class="ph"><div class="num">·</div><div><h2>Как это устроено</h2></div></div>
+  <p>Главная хитрость в том, что UniFi сам умеет выбирать, какой трафик пускать в VPN, но не умеет AmneziaWG. Поэтому мы разделяем работу: <b>UniFi решает, что направить в туннель, а наш туннель решает, как это доставить.</b></p>
+  <div class="flow" role="img" aria-label="Схема: устройство под правилом PBR получает метку, правило ip rule отправляет его в таблицу VPN-профиля, где активный маршрут указывает на туннель AmneziaWG">
+    <div class="box"><h5>Устройство</h5>Попало под правило Policy-Based Route в UniFi: телефон, ТВ, домен, подсеть</div>
+    <div class="arr">→</div>
+    <div class="box"><h5>UniFi</h5>Ставит пакету метку <code>fwmark</code>, правило <code>ip rule</code> отправляет его в таблицу профиля VPN Client</div>
+    <div class="arr">→</div>
+    <div class="box"><h5>Таблица PBR (у нас 178)</h5>
+      <div class="rt">
+        <div class="a"><span>default dev awgmain</span><span>metric 5</span></div>
+        <div class="b"><span>default dev awgbackup</span><span>при сбое</span></div>
+        <div><span>default dev wgclt1 («рельса»)</span><span>metric 37</span></div>
+        <div class="k"><span>blackhole default</span><span>metric 200</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="feat">
+    <li><b>Туннель AmneziaWG</b> поднимает userspace-демон <code>amneziawg-go</code>. Модуля AWG в ядре UDR7 нет, а <code>/dev/net/tun</code> есть.</li>
+    <li><b>«Рельса».</b> Профиль VPN Client в UniFi нужен только ради метки и таблицы PBR. Его собственный туннель не используется и может даже не подниматься.</li>
+    <li><b>Сторож</b> (<code>failover.sh</code>) каждые 5 секунд кладёт в эту таблицу маршрут на живой AWG-туннель с метрикой 5. Она меньше, чем у маршрута UniFi, поэтому выбирается наш.</li>
+    <li><b>Блокировка вместо утечки.</b> Маршрут <code>blackhole</code> с метрикой 200 гарантирует: если туннели лежат, PBR-трафик остановится, а не уйдёт напрямую через провайдера.</li>
+    <li><b>Остальной трафик не трогаем.</b> Всё, что не попало под PBR, идёт как обычно через WAN.</li>
+    <li><b>Всё хранится в <code>/data/awg</code>.</b> Этот раздел переживает обновления прошивки, а автозапуск восстанавливается одной командой.</li>
+  </ul>
+  <div class="note n-exp"><b>Почему не обычный WireGuard</b>
+    <p>Это первый урок из реальной установки. Обычный WireGuard до своего сервера поднимался, проходил handshake, отдавал 4–5 пингов и через 5–8 секунд замолкал в обе стороны. Обычный UDP на тот же сервер и порт жил без обрывов (40 из 40 пакетов), смена порта не помогала. Так ведёт себя DPI, который распознаёт WireGuard и рубит поток. AmneziaWG маскирует handshake и размеры пакетов, и с ним тот же сервер работал стабильно. Как проверить это у себя, описано в части «Диагностика».</p>
+  </div>
+  <div class="note n-info"><b>Что проверено вживую, а что нет</b>
+    <p><b>Вживую</b> на UDR7 работает вся схема: основной туннель от провайдера с параметрами AWG 2.0 (<code>S3</code>, <code>S4</code>, <code>I1</code>, <code>HeaderProtectionKey</code>), запасной до своего VPS, PBR по доменам и адресам, клиенты VPN-сервера роутера через ipset, переключение и возврат, панель, аудит, уведомления.</p>
+    <p><b>На заглушках</b> проверены универсальные версии скриптов из этого гайда: автоопределение таблицы и метки (<code>awg-detect.sh</code>), файл <code>awg.env</code>, режим одного туннеля, фиктивный профиль-«рельса», установка сервера одним скриптом, удаление и восстановление. Логика у них та же, что в рабочей установке, но на чужом роутере они ещё не запускались. Поэтому каждый шаг заканчивается проверкой.</p>
+  </div>
+</section>
+
+<section id="p0" class="part" data-n="0" data-title="Подготовка" data-need="ABC">
+  <div class="ph"><div class="num">0</div><div><h2>Подготовка</h2><div class="meta"></div></div></div>
+
+  <h3>Что понадобится</h3>
+  <div class="tw"><table>
+    <tr><th>Что</th><th>Зачем</th><th>Сценарий</th></tr>
+    <tr><td>UDR7 с доступом по SSH (root)</td><td>Установка</td><td>все</td></tr>
+    <tr><td>Конфиг AmneziaWG <code>.conf</code> со строкой <code>Address</code></td><td>Основной туннель</td><td>A, C</td></tr>
+    <tr><td>VPS: Ubuntu 22.04/24.04 x86_64, публичный IPv4, root</td><td>Свой сервер AWG</td><td>B, C</td></tr>
+    <tr><td>Два тестовых устройства: одно под правилом PBR, другое нет</td><td>Проверка, что в туннель уходит только нужное</td><td>все</td></tr>
+    <tr><td>Бот Telegram</td><td>Уведомления</td><td>по желанию</td></tr>
+  </table></div>
+  <p>Белый IP роутеру не нужен: AmneziaWG-клиент только подключается наружу и работает за NAT провайдера (CGNAT). Белый IP нужен серверу, к которому подключаетесь.</p>
+
+  <h3>Правила безопасности</h3>
+  <div class="note n-bad"><b>Важнее удобства</b>
+    <ul>
+      <li><b>Один конфиг = одно устройство.</b> Если один ключ работает на двух клиентах сразу (например, роутер и старый контейнер), сервер будет перекидывать endpoint между ними, и оба канала станут нестабильными. Для роутера запросите у провайдера отдельный конфиг.</li>
+      <li><b>Ключи и токены не вставляются в чаты, тикеты и скриншоты.</b> Всё, что туда попало, считается скомпрометированным: ключ перевыпускается, токен бота отзывается в @BotFather.</li>
+      <li>Файлы с ключами получают права <code>600</code>. Все команды гайда создают их так.</li>
+      <li>Перед вставкой команды смотрите на приглашение терминала: <code>root@UDR7</code> или <code>root@ваш-vps</code>. Скрипты сервера сами отказываются работать на роутере, но лучше не ошибаться.</li>
+    </ul>
+  </div>
+
+  <h3>Как читать блоки команд</h3>
+  <p>У каждого блока есть метка, где его выполнять, и кнопка «Копировать». Большие блоки вида <code>cat &gt; файл &lt;&lt;'EOF' … EOF</code> вставляйте целиком, одним куском: они создают файл.</p>
+  <div class="tw"><table>
+    <tr><th>Метка</th><th>Где</th></tr>
+    <tr><td><span class="on on-router">Роутер</span></td><td>SSH на UDR7 под root</td></tr>
+    <tr><td><span class="on on-vps">VPS</span></td><td>SSH на ваш сервер под root</td></tr>
+    <tr><td><span class="on on-pc">ПК</span></td><td>Терминал вашего компьютера (PowerShell в Windows 10/11 тоже подойдёт)</td></tr>
+    <tr><td><span class="on on-ui">UniFi</span></td><td>Веб-интерфейс UniFi Network</td></tr>
+  </table></div>
+
+  <div class="step"><div class="sn">0.1</div><div class="sb">
+    <h4>Включите SSH и подключитесь</h4>
+    <p>В веб-интерфейсе UniFi включите SSH для консоли и задайте пароль root. Пункт находится в настройках консоли UniFi OS (Control Plane → Console, раздел SSH); точное название зависит от версии.</p>
+<figure class="cb"><figcaption><span class="on on-pc">ПК</span><span class="cbt">подключение</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>ssh root@<span class="v" data-v="ROUTER_IP">192.168.1.1</span></code></pre></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">0.2</div><div class="sb">
+    <h4>Проверьте платформу</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">только чтение</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>uname -m; uname -r
+ls -l /dev/net/tun
+df -h /data | tail -1
+command -v curl python3 tcpdump iptables ipset</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>aarch64
+5.4.213-ui-ipq5322-wireless
+crw-rw-rw- 1 root root 10, 200 ... /dev/net/tun
+/dev/...   ...  ...  ...  ..% /data
+/usr/bin/curl
+/usr/bin/python3
+...</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>Архитектура <code>aarch64</code>, устройство <code>/dev/net/tun</code> существует, на <code>/data</code> есть хотя бы 50 МБ свободного места. Без <code>/dev/net/tun</code> userspace-туннель не создать, дальше идти нет смысла.</p></div>
+  </div></div>
+</section>
+
+<section id="p1" class="part" data-n="1" data-title="Бинарники AmneziaWG" data-need="ABC">
+  <div class="ph"><div class="num">1</div><div><h2>Бинарники AmneziaWG на роутер</h2><div class="meta"></div></div></div>
+  <p class="why">Нужны два файла под aarch64: демон <code>amneziawg-go</code> (создаёт интерфейс туннеля) и утилита <code>awg</code> (настраивает его, аналог <code>wg</code>). Готовые сборки есть в архиве проекта <a href="https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine" target="_blank" rel="noopener">AmneziaWG-Unifi-DreamMachine</a>. Из него мы берём только бинарники.</p>
+  <div class="note n-bad"><b>Не запускайте install.sh этого проекта на UDR7</b>
+    <p>Установщик патчит JS-файлы веб-интерфейса UniFi и сверяет их контрольные суммы. На UDR7 с Network 10.6.106 он упал с <code>FileNotFoundError: …/react/js/94924.….js</code>: имена файлов меняются от сборки к сборке. Дорабатывать его не нужно, интерфейс UniFi в нашей схеме не меняется. Если вы уже запускали установщик, проверьте, что он ничего не оставил: <code>ls /data/awg-native</code> (каталога быть не должно).</p>
+  </div>
+
+  <div class="step"><div class="sn">1.1</div><div class="sb">
+    <h4>Скачайте архив и достаньте бинарники</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">скачать и установить в /data/awg</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>mkdir -p /data/awg &amp;&amp; cd /tmp
+curl -fL https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz -o awg-src.tar.gz
+mkdir -p awgx &amp;&amp; tar xzf awg-src.tar.gz -C awgx
+ls -l awgx/bin
+cp awgx/bin/amneziawg-go awgx/bin/awg /data/awg/
+chmod 755 /data/awg/amneziawg-go /data/awg/awg
+sha256sum /data/awg/amneziawg-go /data/awg/awg
+rm -rf /tmp/awgx /tmp/awg-src.tar.gz</code></pre></figure>
+    <p>Контрольные суммы сохраните себе: по ним потом видно, не подменились ли файлы. Если ссылка перестала работать (автор мог выпустить новую версию), откройте страницу проекта и возьмите актуальный архив <code>…-source.tar.gz</code>: внутри должны быть <code>bin/amneziawg-go</code> и <code>bin/awg</code>.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">1.2</div><div class="sb">
+    <h4>Проверьте, что бинарники запускаются</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/awg --version</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>amneziawg-tools v3.1.20260812 - https://amnezia.org</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>Версия печатается. Ошибки <code>Exec format error</code> или <code>not found</code> означают, что скачались файлы не под ту архитектуру.</p></div>
+    <p class="muted">Это сторонние сборки. Если не хотите им доверять, соберите сами (см. «Справочник → Сборка бинарников для роутера»).</p>
+  </div></div>
+</section>
+
+<section id="p2" class="part" data-n="2" data-title="«Рельса» и PBR в UniFi" data-need="ABC">
+  <div class="ph"><div class="num">2</div><div><h2>Профиль-«рельса» и правила PBR</h2><div class="meta"></div></div></div>
+  <p class="why">Штатный VPN Client UniFi поддерживает только обычный WireGuard. Зато когда вы создаёте профиль VPN Client и правило Policy-Based Route, UniFi сам делает всю «механику» отбора трафика: метит пакеты нужных устройств и доменов и отправляет их в отдельную таблицу маршрутов. Этот профиль мы и используем как рельсу: в его таблицу сторож положит маршрут на AWG-туннель.</p>
+
+  <div class="step"><div class="sn">2.1</div><div class="sb">
+    <h4>Сгенерируйте конфиг для рельсы</h4>
+    <p>Подойдёт любой корректный WireGuard-конфиг. Проще всего сделать фиктивный: свои ключи, несуществующий сервер из документационного диапазона <code>192.0.2.0/24</code>. Туннель этого профиля никогда не поднимется, и это нормально.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создаёт /tmp/rail.conf</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cd /data/awg
+RK=$(./awg genkey); RP=$(./awg genkey | ./awg pubkey)
+cat &gt; /tmp/rail.conf &lt;&lt;EOF
+[Interface]
+PrivateKey = $RK
+Address = 10.255.255.2/32
+
+[Peer]
+PublicKey = $RP
+AllowedIPs = 0.0.0.0/0
+Endpoint = 192.0.2.1:51820
+EOF
+unset RK RP
+cat /tmp/rail.conf</code></pre></figure>
+    <p>Перенесите файл на компьютер одним из способов: скопируйте текст из терминала в файл <code>rail.conf</code> или заберите его командой:</p>
+<figure class="cb"><figcaption><span class="on on-pc">ПК</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>scp root@<span class="v" data-v="ROUTER_IP">192.168.1.1</span>:/tmp/rail.conf .</code></pre></figure>
+    <div class="note n-info"><b>Если у вас уже есть обычный WireGuard-конфиг</b><p>Например, от того же провайдера. Его можно поставить рельсой вместо фиктивного. Тогда он ещё и станет третьим резервом: его маршрут в таблице имеет метрику 37, хуже наших 5, но лучше blackhole. В нашей установке рельсой был старый WireGuard-канал, после его отключения всё продолжило работать.</p></div>
+  </div></div>
+
+  <div class="step"><div class="sn">2.2</div><div class="sb">
+    <h4>Создайте профиль VPN Client</h4>
+<figure class="cb"><figcaption><span class="on on-ui">UniFi</span><span class="cbt">Settings → VPN → VPN Client</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>Create New → VPN Type: WireGuard
+Name:  AWG-rail
+Configuration: Upload File → rail.conf  (или вручную: ключ, адрес, peer, endpoint)
+Apply / Save</code></pre></figure>
+    <p>Профиль останется в статусе «не подключён» или с ошибкой. <b>Не выключайте и не удаляйте его:</b> вместе с ним UniFi уберёт метку и таблицу, и PBR-трафик перестанет попадать в туннель.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">2.3</div><div class="sb">
+    <h4>Создайте правило Policy-Based Route</h4>
+<figure class="cb"><figcaption><span class="on on-ui">UniFi</span><span class="cbt">Settings → Routing → Policy-Based Routes (в старых версиях Traffic Routes)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>Create Entry
+Interface / VPN:  AWG-rail
+Source:           устройства или сети, которые пускаем в туннель
+Destination:      Any, домены или IP-адреса
+Kill Switch:      On
+Save</code></pre></figure>
+    <p>Для первой проверки достаточно одного правила: одно тестовое устройство, назначение Any. Остальные правила добавите потом, их число и вид роли не играют: все они ведут в одну таблицу. В нашей установке их было десять: по доменам и по адресам.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">2.4</div><div class="sb">
+    <h4>Определите таблицу и метку</h4>
+    <p>У каждого роутера номер таблицы, метка и имя профиля свои (у нас были <code>178</code>, <code>0x6a0000</code> и <code>wgclt1</code>). Скрипт найдёт их сам и запишет в <code>/data/awg/awg.env</code>.</p>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-detect.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-detect.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-detect.sh — находит PBR-обвязку UniFi (таблица, метка, профиль-«рельса»)</span>
+<span class="c"># и записывает её в /data/awg/awg.env.</span>
+<span class="c">#   awg-detect.sh            если профиль VPN Client один</span>
+<span class="c">#   awg-detect.sh wgclt2     если профилей несколько: укажите нужный</span>
+<span class="c"># Систему не меняет. Ваши MAIN/BACKUP/VPS_IP/RECOVER_SEC/EXTRA_SUBNETS сохраняются.</span>
+DD=${DD:-/data/awg}
+mkdir -p "$DD"
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+
+<span class="c"># Правило PBR профиля UniFi выглядит так:</span>
+<span class="c">#   32504:  from all fwmark 0x6a0000/0x7e0000 lookup 178.wgclt1</span>
+rules=$(ip -4 rule show | awk '
+  /fwmark/ &amp;&amp; /lookup [0-9]+\.[a-z]+clt[0-9]+/ {
+    prio=$1; sub(":","",prio); m=""; t=""
+    for(i=1;i&lt;=NF;i++){ if($i=="fwmark") m=$(i+1); if($i=="lookup") t=$(i+1) }
+    split(t,a,"."); print prio, m, a[1], a[2]
+  }')
+
+if [ -z "$rules" ]; then
+  echo "ОШИБКА: правило PBR для VPN Client не найдено."
+  echo "Проверьте: профиль VPN Client создан и включён, и на него ссылается"
+  echo "хотя бы одно правило Policy-Based Route. Затем запустите скрипт снова."
+  exit 1
+fi
+
+n=$(echo "$rules" | wc -l)
+echo "Найдено PBR-правил VPN Client: $n"
+echo "$rules" | awk '{printf "  приоритет %s, метка %s, таблица %s, профиль %s\n",$1,$2,$3,$4}'
+
+if [ -n "$1" ]; then
+  line=$(echo "$rules" | awk -v w="$1" '$4==w{print; exit}')
+  [ -z "$line" ] &amp;&amp; { echo "ОШИБКА: профиль $1 в правилах не найден"; exit 3; }
+elif [ "$n" -gt 1 ]; then
+  echo "Профилей несколько. Запустите: $0 &lt;профиль&gt;, например: $0 $(echo "$rules" | awk 'NR==1{print $4}')"
+  exit 2
+else
+  line=$rules
+fi
+read -r PRIO_D MARK_D TABLE_D RAIL_D &lt;&lt;&lt; "$line"
+
+WAN_D=$(ip -4 route get 1.1.1.1 2&gt;/dev/null | awk '{for(i=1;i&lt;=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+case "$WAN_D" in ""|awg*|wg*) WAN_D=eth3 ;; esac
+
+umask 077
+cat &gt; "$DD/awg.env" &lt;&lt;ENV
+<span class="c"># Параметры AWG failover. После ручной правки: systemctl restart awg-failover</span>
+<span class="c"># --- найдено awg-detect.sh (при повторном запуске перезаписывается) ---</span>
+TABLE=$TABLE_D
+MARK=$MARK_D
+PRIO=$PRIO_D
+RAIL_IF=$RAIL_D
+WANIF=${WANIF:-$WAN_D}
+<span class="c"># --- ваши настройки (при повторном запуске сохраняются) ---</span>
+MAIN=${MAIN:-awgmain}
+BACKUP=${BACKUP-}
+VPS_IP=${VPS_IP-}
+RECOVER_SEC=${RECOVER_SEC:-600}
+EXTRA_SUBNETS="${EXTRA_SUBNETS-}"
+ENV
+chmod 600 "$DD/awg.env"
+echo
+echo "Записано в $DD/awg.env:"
+sed 's/^/  /' "$DD/awg.env"
+EOF
+chmod 755 /data/awg/awg-detect.sh
+/data/awg/awg-detect.sh
+rm -f /tmp/rail.conf</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 69 строк">Показать целиком · 69 строк</button></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">пример вывода</span></figcaption><pre><code>Найдено PBR-правил VPN Client: 1
+  приоритет 32504, метка 0x6a0000/0x7e0000, таблица 178, профиль wgclt1
+
+Записано в /data/awg/awg.env:
+  TABLE=178
+  MARK=0x6a0000/0x7e0000
+  PRIO=32504
+  RAIL_IF=wgclt1
+  WANIF=eth3
+  MAIN=awgmain
+  BACKUP=
+  ...</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>Строка «Найдено PBR-правил: 1». Если правил не нашлось, значит, профиль выключен или на него не ссылается ни одно правило PBR. Если профилей VPN Client несколько, скрипт попросит указать нужный: <code>/data/awg/awg-detect.sh wgclt2</code>.</p></div>
+  </div></div>
+</section>
+
+<section id="p3" class="part" data-n="3" data-title="Свой сервер AWG на VPS" data-need="BC">
+  <div class="ph"><div class="num">3</div><div><h2>Свой сервер AmneziaWG на VPS</h2><div class="meta"></div></div></div>
+  <p class="why">В сценарии B это ваш единственный туннель, в сценарии C это запасной канал. На сервере ставится тот же <code>amneziawg-go</code> из тех же исходников, что и на роутере, поэтому версии протокола совпадают. Сервер живёт отдельно от любых панелей, порт по умолчанию <code>51823/udp</code>, подсеть туннеля <code>10.0.1.0/24</code>.</p>
+  <div class="note n-warn"><b>Не делайте это через 3x-ui / Xray</b>
+    <p>Xray-core не поддерживает AmneziaWG. А его WireGuard-inbound в нашей установке не записывал peers в рабочий <code>config.json</code>: порт слушался, пакеты приходили, но сервер молча их отбрасывал. Если на VPS стоит 3x-ui, пусть стоит, просто выберите для AWG свободный порт.</p>
+  </div>
+
+  <div class="step"><div class="sn">3.1</div><div class="sb">
+    <h4>Соберите amneziawg-go и awg</h4>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">сборка, ~3–5 минут</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /root/awg-server-build.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-server-build.sh — сборка amneziawg-go и awg на VPS (Ubuntu 22.04/24.04, x86_64), от root.</span>
+<span class="c"># Исходники берутся из того же архива, что и бинарники для роутера: версии протокола совпадут.</span>
+set -e
+SRC_URL=${SRC_URL:-https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz}
+apt-get update -q
+apt-get install -y -q git make gcc curl
+command -v go &gt;/dev/null 2&gt;&amp;1 || [ -x /snap/bin/go ] || snap install go --classic
+export PATH=$PATH:/snap/bin
+mkdir -p /root/awgbuild &amp;&amp; cd /root/awgbuild
+rm -rf go tools source
+curl -fL "$SRC_URL" -o src.tar.gz
+tar xzf src.tar.gz
+mkdir -p go tools
+tar xzf source/awg-go.tar.gz -C go
+tar xzf source/awg-tools.tar.gz -C tools
+( cd go/amneziawg-go-*/ &amp;&amp; go build -o /usr/local/bin/amneziawg-go . )
+( cd tools/amneziawg-tools-*/src &amp;&amp; make &amp;&amp; install -m 755 wg /usr/local/bin/awg )
+echo
+amneziawg-go --version | head -1
+awg --version
+EOF
+chmod 755 /root/awg-server-build.sh
+/root/awg-server-build.sh</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">конец вывода</span></figcaption><pre><code>amneziawg-go 0.0.20250522
+amneziawg-tools v3.1.20260812 - https://amnezia.org</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>Обе версии напечатались. Утилита собирается под именем <code>wg</code> и устанавливается как <code>/usr/local/bin/awg</code>, чтобы не путаться с обычным WireGuard.</p></div>
+  </div></div>
+
+  <div class="step"><div class="sn">3.2</div><div class="sb">
+    <h4>Создайте сервер, ключи и конфиг для роутера</h4>
+    <p>Скрипт генерирует ключи и параметры обфускации, пишет <code>/etc/amnezia/server.conf</code> и конфиг клиента для роутера, ставит службу <code>awg-server</code> (автозапуск, NAT, <code>ip_forward</code>) и открывает порт в ufw, если он включён. Повторный запуск ключи не трогает, только переустанавливает автозапуск.</p>
+<figure class="cb long"><figcaption><span class="on on-vps">VPS</span><span class="cbt">создать awg-server-setup.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /root/awg-server-setup.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-server-setup.sh — сервер AmneziaWG на VPS (от root, после awg-server-build.sh).</span>
+<span class="c"># Создаёт ключи, параметры обфускации, /etc/amnezia/server.conf, конфиг клиента для роутера</span>
+<span class="c"># и службу awg-server (автозапуск, NAT, ip_forward).</span>
+<span class="c">#   VPS_IP=203.0.113.10 ./awg-server-setup.sh</span>
+<span class="c"># Необязательно: PORT=51823 SUBNET=10.0.1 MTU=1380</span>
+<span class="c">#   OBF_FILE=/root/obf.txt — взять Jc/Jmin/Jmax/S1/S2/H1-H4 из файла (например, из конфига,</span>
+<span class="c">#   который точно проходит через вашего провайдера); иначе параметры генерируются случайно.</span>
+set -e
+PORT=${PORT:-51823}
+SUBNET=${SUBNET:-10.0.1}
+MTU=${MTU:-1380}
+ETC=/etc/amnezia
+OUT=/root/awgbuild
+[ -d /data/unifi-core ] &amp;&amp; { echo "Это роутер UniFi. Скрипт запускается на VPS."; exit 1; }
+command -v awg &gt;/dev/null &amp;&amp; command -v amneziawg-go &gt;/dev/null || { echo "Сначала awg-server-build.sh"; exit 1; }
+umask 077; mkdir -p $ETC $OUT
+
+if [ -e $ETC/server.conf ]; then
+  echo "$ETC/server.conf уже есть: ключи не трогаю, переустанавливаю только автозапуск."
+else
+  VPS_IP=${VPS_IP:?задайте внешний IP сервера: VPS_IP=203.0.113.10 $0}
+  if ss -ulpn | grep -q ":$PORT "; then echo "UDP-порт $PORT занят, выберите другой: PORT=... $0"; exit 1; fi
+  if [ -n "$OBF_FILE" ]; then
+    OBF=$(grep -E '^[[:space:]]*(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4)[[:space:]]*=' "$OBF_FILE" | sed 's/^[[:space:]]*//')
+    [ "$(echo "$OBF" | wc -l)" = 9 ] || { echo "В $OBF_FILE нужно ровно 9 строк Jc..H4"; exit 1; }
+  else
+    rnd(){ shuf -i "$1"-"$2" -n 1; }
+    JC=$(rnd 4 8); JMIN=$(rnd 40 80); JMAX=$((JMIN + $(rnd 60 200)))
+    S1=$(rnd 15 150); S2=$(rnd 15 150)
+    while [ $((S1+56)) -eq $S2 ] || [ $S1 -eq $S2 ]; do S2=$(rnd 15 150); done
+    mapfile -t HH &lt; &lt;(shuf -i 5-2147483647 -n 4)
+    OBF=$(printf 'Jc = %s\nJmin = %s\nJmax = %s\nS1 = %s\nS2 = %s\nH1 = %s\nH2 = %s\nH3 = %s\nH4 = %s' \
+      $JC $JMIN $JMAX $S1 $S2 ${HH[0]} ${HH[1]} ${HH[2]} ${HH[3]})
+  fi
+  SK=$(awg genkey); SP=$(echo "$SK" | awg pubkey)
+  CK=$(awg genkey); CP=$(echo "$CK" | awg pubkey)
+  cat &gt; $ETC/server.conf &lt;&lt;CONF
+[Interface]
+PrivateKey = $SK
+ListenPort = $PORT
+$OBF
+
+[Peer]
+PublicKey = $CP
+AllowedIPs = $SUBNET.2/32
+CONF
+  cat &gt; $OUT/client.conf &lt;&lt;CONF
+[Interface]
+PrivateKey = $CK
+Address = $SUBNET.2/32
+MTU = $MTU
+$OBF
+
+[Peer]
+PublicKey = $SP
+AllowedIPs = 0.0.0.0/0
+Endpoint = $VPS_IP:$PORT
+PersistentKeepalive = 25
+CONF
+  chmod 600 $ETC/server.conf $OUT/client.conf
+  echo "Созданы $ETC/server.conf и $OUT/client.conf"
+fi
+
+cat &gt; /usr/local/bin/awg-up.sh &lt;&lt;UP
+<span class="c">#!/bin/bash</span>
+ip link show awg0 &gt;/dev/null 2&gt;&amp;1 &amp;&amp; exit 0
+amneziawg-go awg0
+for k in 1 2 3 4 5 6 7 8 9 10; do ip link show awg0 &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
+awg setconf awg0 $ETC/server.conf
+ip addr add $SUBNET.1/24 dev awg0
+ip link set awg0 up mtu $MTU
+IFACE=\$(ip -4 route show default | awk '{print \$5; exit}')
+iptables -t nat -C POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE 2&gt;/dev/null || iptables -t nat -A POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE
+iptables -C FORWARD -i awg0 -j ACCEPT 2&gt;/dev/null || iptables -I FORWARD -i awg0 -j ACCEPT
+iptables -C FORWARD -o awg0 -j ACCEPT 2&gt;/dev/null || iptables -I FORWARD -o awg0 -j ACCEPT
+UP
+chmod 755 /usr/local/bin/awg-up.sh
+
+cat &gt; /etc/systemd/system/awg-server.service &lt;&lt;'UNIT'
+[Unit]
+Description=AmneziaWG server awg0
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/awg-up.sh
+ExecStop=/sbin/ip link del awg0
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+echo 'net.ipv4.ip_forward=1' &gt; /etc/sysctl.d/99-awg.conf
+sysctl -q -p /etc/sysctl.d/99-awg.conf
+P=$(awk -F'=' '/^ListenPort/{gsub(/ /,"",$2); print $2}' $ETC/server.conf)
+if command -v ufw &gt;/dev/null &amp;&amp; ufw status | grep -q "Status: active"; then ufw allow "$P/udp"; fi
+systemctl daemon-reload
+ip link show awg0 &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link del awg0
+systemctl enable --now awg-server
+echo
+awg show awg0 | head -4 || true
+ss -ulpn | grep ":$P " || echo "ВНИМАНИЕ: UDP $P пока не слушается: journalctl -u awg-server -n 20"
+echo
+echo "Конфиг для роутера: $OUT/client.conf (перенесите на роутер как /data/awg/backup.conf или main.conf)"
+echo "Не забудьте открыть UDP $P в файрволе хостера, если он есть."
+EOF
+chmod 755 /root/awg-server-setup.sh
+VPS_IP=<span class="v" data-v="VPS_IP">203.0.113.10</span> /root/awg-server-setup.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 112 строк">Показать целиком · 112 строк</button></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">конец вывода</span></figcaption><pre><code>interface: awg0
+  public key: …
+  private key: (hidden)
+  listening port: 51823
+UNCONN 0 0 0.0.0.0:51823 0.0.0.0:* users:(("amneziawg-go",pid=…,fd=4))
+
+Конфиг для роутера: /root/awgbuild/client.conf</code></pre></figure>
+    <div class="note n-exp"><b>Параметры обфускации: случайные или проверенные</b>
+      <p>По умолчанию <code>Jc, Jmin, Jmax, S1, S2, H1–H4</code> генерируются случайно с соблюдением правил AWG (например, <code>S1 + 56 ≠ S2</code>). Если у вас уже есть конфиг AWG, который точно проходит через вашего провайдера, можно взять параметры из него. В нашей установке так и сделали:</p>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">вариант: параметры из проверенного конфига</span><button class="copy" type="button">Копировать</button></figcaption><pre><code><span class="c"># положите в файл строки Jc..H4 (только их, без ключей!)</span>
+nano /root/obf.txt
+OBF_FILE=/root/obf.txt VPS_IP=<span class="v" data-v="VPS_IP">203.0.113.10</span> /root/awg-server-setup.sh</code></pre></figure>
+      <p>Совпадение параметров с чужим сервером ничем не грозит: ключи и адреса у вас свои. Важно только, чтобы параметры на сервере и в <code>client.conf</code> совпадали, а скрипт это гарантирует.</p>
+    </div>
+  </div></div>
+
+  <div class="step"><div class="sn">3.3</div><div class="sb">
+    <h4>Откройте порт у хостера</h4>
+    <p>Если у хостера есть свой файрвол (Security Groups, «Сетевой экран» в панели), разрешите в нём входящий <code>UDP 51823</code>. Скрипт его не видит. Признак закрытого порта: на сервере <code>tcpdump -ni any udp port 51823</code> молчит, пока роутер шлёт handshake.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">3.4</div><div class="sb">
+    <h4>Перенесите конфиг на роутер</h4>
+    <p>Сценарий C: файл станет запасным туннелем <code>backup.conf</code>. Сценарий B: это ваш основной туннель, назовите его <code>main.conf</code>.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">сценарий C</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>scp root@<span class="v" data-v="VPS_IP">203.0.113.10</span>:/root/awgbuild/client.conf /data/awg/backup.conf
+chmod 600 /data/awg/backup.conf
+grep -c '^Jc' /data/awg/backup.conf</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">сценарий B</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>scp root@<span class="v" data-v="VPS_IP">203.0.113.10</span>:/root/awgbuild/client.conf /data/awg/main.conf
+chmod 600 /data/awg/main.conf
+grep -c '^Jc' /data/awg/main.conf</code></pre></figure>
+    <p><code>grep</code> должен вывести <code>1</code>. Если <code>scp</code> недоступен, выведите файл на сервере (<code>cat /root/awgbuild/client.conf</code>), а на роутере выполните <code>cat &gt; /data/awg/backup.conf</code>, вставьте текст и нажмите <kbd>Ctrl</kbd>+<kbd>D</kbd>. Когда файл на месте, удалите копию с сервера:</p>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>shred -u /root/awgbuild/client.conf</code></pre></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">3.5</div><div class="sb">
+    <h4>Аудит сервера</h4>
+<figure class="cb long"><figcaption><span class="on on-vps">VPS</span><span class="cbt">создать audit-server.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /root/audit-server.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># audit-server.sh — проверка VPS с сервером AmneziaWG. Только чтение.</span>
+[ -d /data/unifi-core ] &amp;&amp; { echo "Это роутер UniFi: запускайте на VPS"; exit 1; }
+ok=0; warn=0; bad=0
+if [ -t 1 ] &amp;&amp; [ -z "$NO_COLOR" ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'; else G=; R=; Y=; B=; N=; fi
+P(){ echo "  ${G}OK${N}    $1"; ok=$((ok+1)); }
+W(){ echo "  ${Y}WARN${N}  $1"; [ -n "$2" ] &amp;&amp; echo "        fix: $2"; warn=$((warn+1)); }
+F(){ echo "  ${R}FAIL${N}  $1"; [ -n "$2" ] &amp;&amp; echo "        fix: $2"; bad=$((bad+1)); }
+sec(){ echo; echo "${B}== $1 ==${N}"; }
+CONF=/etc/amnezia/server.conf
+PORT=$(awk -F'=' '/^ListenPort/{gsub(/ /,"",$2); print $2}' $CONF 2&gt;/dev/null)
+
+sec "AmneziaWG (awg0)"
+ip link show awg0 &gt;/dev/null 2&gt;&amp;1 &amp;&amp; P "awg0 поднят" || F "awg0 отсутствует" "systemctl restart awg-server; journalctl -u awg-server -n 20"
+en=$(systemctl is-enabled awg-server 2&gt;/dev/null)
+[ "$en" = enabled ] &amp;&amp; P "awg-server: автозапуск включён" || F "awg-server: ${en:-не найден}" "awg-server-setup.sh"
+c=$(pgrep -c amneziawg-go 2&gt;/dev/null); [ "${c:-0}" = 1 ] &amp;&amp; P "процессов amneziawg-go: 1" || W "процессов amneziawg-go: ${c:-0} (нужен 1)" "pgrep -a amneziawg-go"
+if ip link show awg0 &gt;/dev/null 2&gt;&amp;1; then
+  np=$(awg show awg0 peers 2&gt;/dev/null | wc -l); [ "$np" -ge 1 ] &amp;&amp; P "peer на awg0: $np" || W "на awg0 нет peer" "awg show awg0"
+  ts=$(awg show awg0 latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}')
+  if [ -n "$ts" ] &amp;&amp; [ "$ts" != 0 ]; then P "handshake роутера: $(( $(date +%s) - ts ))с назад"; else W "handshake с роутера не было" "проверьте туннель на роутере"; fi
+fi
+[ "$(stat -c %a $CONF 2&gt;/dev/null)" = 600 ] &amp;&amp; P "$CONF: права 600" || W "$CONF: нет файла или права не 600" "chmod 600 $CONF"
+[ -n "$PORT" ] &amp;&amp; { ss -ulpn 2&gt;/dev/null | grep ":$PORT " | grep -q amneziawg-go &amp;&amp; P "UDP $PORT слушает amneziawg-go" || F "UDP $PORT не слушается amneziawg-go" "ss -ulpn | grep :$PORT"; }
+
+sec "Маршрутизация и NAT"
+[ "$(sysctl -n net.ipv4.ip_forward 2&gt;/dev/null)" = 1 ] &amp;&amp; P "ip_forward = 1" || F "ip_forward не 1" "sysctl -w net.ipv4.ip_forward=1"
+ls /etc/sysctl.d/*awg* /etc/sysctl.d/*wg* &gt;/dev/null 2&gt;&amp;1 &amp;&amp; P "ip_forward закреплён в /etc/sysctl.d" || W "ip_forward не закреплён" "echo 'net.ipv4.ip_forward=1' &gt; /etc/sysctl.d/99-awg.conf"
+SUB=$(ip -4 -br addr show awg0 2&gt;/dev/null | awk '{print $3}' | cut -d. -f1-3)
+if [ -n "$SUB" ]; then
+  c=$(iptables -t nat -S POSTROUTING 2&gt;/dev/null | grep -c -- "-s $SUB.0/24")
+  [ "$c" = 1 ] &amp;&amp; P "NAT для $SUB.0/24: 1 правило" || W "NAT для $SUB.0/24: $c (нужно 1)" "iptables -t nat -S POSTROUTING"
+fi
+c=$(iptables -S FORWARD 2&gt;/dev/null | grep -c -E -- '(-i|-o) awg0 -j ACCEPT')
+[ "$c" = 2 ] &amp;&amp; P "FORWARD для awg0: 2 правила" || W "FORWARD для awg0: $c (нужно 2)" "iptables -S FORWARD | grep awg0"
+
+sec "Файрвол"
+if command -v ufw &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ufw status 2&gt;/dev/null | grep -q "Status: active"; then
+  ufw status | grep -q "^$PORT/udp" &amp;&amp; P "ufw: $PORT/udp открыт" || F "ufw: $PORT/udp не открыт" "ufw allow $PORT/udp"
+else
+  echo "        ufw не активен: его правила не применяются"
+fi
+echo "        Файрвол в панели хостера скрипт не видит: UDP $PORT должен быть открыт и там."
+
+sec "Файлы с ключами"
+for f in /root/awgbuild/client.conf /root/awgbuild/server.conf; do
+  [ -e "$f" ] &amp;&amp; W "остаток: $f (после переноса на роутер не нужен)" "shred -u $f"
+done
+k=$(grep -E -c '[A-Za-z0-9+/]{43}=' /root/.bash_history 2&gt;/dev/null)
+[ "${k:-0}" = 0 ] &amp;&amp; P "в .bash_history нет строк, похожих на ключи" || W ".bash_history: строк, похожих на ключи: $k" "history -c; : &gt; /root/.bash_history"
+
+sec "Итог"
+echo "  ${G}OK: $ok${N}   ${Y}WARN: $warn${N}   ${R}FAIL: $bad${N}"
+echo "  Скрипт ничего не меняет."
+EOF
+chmod 755 /root/audit-server.sh
+/root/audit-server.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 58 строк">Показать целиком · 58 строк</button></figure>
+    <div class="note n-check"><b>Проверка</b><p>Все пункты OK, кроме «handshake с роутера не было»: роутер ещё не подключён. Запустите аудит повторно после части 4 или 6, там должно появиться «handshake роутера: …с назад».</p></div>
+  </div></div>
+</section>
+
+<section id="p4" class="part" data-n="4" data-title="Основной туннель" data-need="ABC">
+  <div class="ph"><div class="num">4</div><div><h2>Основной туннель awgmain</h2><div class="meta"></div></div></div>
+  <p class="why">Конфиг AmneziaWG кладётся в <code>/data/awg/main.conf</code> как есть, со всеми строками. Скрипт <code>up.sh</code> сам выкинет то, что утилита <code>awg</code> не понимает (<code>Address</code>, <code>DNS</code>, <code>MTU</code>, директивы wg-quick), назначит адрес и MTU и оставит в <code>AllowedIPs</code> только IPv4: маршрутами управляет сторож, а IPv6 через туннель не идёт.</p>
+
+  <div class="step"><div class="sn">4.1</div><div class="sb">
+    <h4>Положите конфиг</h4>
+    <p>Сценарий B: файл уже на месте после шага 3.4, пропустите. Сценарии A и C: вставьте конфиг провайдера прямо в терминал роутера (в чат, мессенджер или тикет его не отправляйте):</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">вставьте конфиг и нажмите Ctrl+D</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/main.conf</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>chmod 600 /data/awg/main.conf
+grep -E -c '^(Address|Endpoint|Jc)' /data/awg/main.conf</code></pre></figure>
+    <p>Должно получиться <code>3</code>. Поддерживаются конфиги AWG 1.x и 2.0: в нашей установке основной конфиг провайдера содержал <code>S3</code>, <code>S4</code>, <code>I1 = &lt;r 198&gt;</code>, <code>HeaderProtectionKey</code>, <code>RekeyAfterTime</code> и т. п., и бинарник из части 1 их принял.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">4.2</div><div class="sb">
+    <h4>Создайте up.sh и поднимите туннель</h4>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать up.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/up.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># up.sh — поднимает туннели AmneziaWG из конфигов в /data/awg</span>
+<span class="c">#   up.sh            все туннели: MAIN и, если задан, BACKUP (из awg.env)</span>
+<span class="c">#   up.sh awgmain    один туннель (интерфейс пересоздаётся; так применяют новый конфиг)</span>
+<span class="c"># Конфиги: main.conf — основной, backup.conf — запасной.</span>
+DD=${DD:-/data/awg}
+cd "$DD" || exit 1
+[ -r awg.env ] &amp;&amp; . ./awg.env
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
+umask 077
+
+conf_of(){
+  if [ "$1" = "$MAIN" ]; then echo main.conf
+  elif [ -n "$BACKUP" ] &amp;&amp; [ "$1" = "$BACKUP" ]; then
+    if [ -f backup.conf ] || [ ! -f client.conf ]; then echo backup.conf; else echo client.conf; fi
+  fi
+}
+
+bring_up(){
+  local n=$1 conf raw tmp addr mtu k
+  conf=$(conf_of "$n")
+  [ -z "$conf" ] &amp;&amp; { echo "ОШИБКА: $n не указан в awg.env как MAIN или BACKUP"; return 1; }
+  [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
+  raw=/run/$n.raw; tmp=/run/$n.awg.conf
+  sed 's/\r$//' "$conf" &gt; "$raw"
+<span class="c">  # Address и MTU утилита awg не понимает: берём их сами, из Address только IPv4</span>
+  addr=$(awk -F'=' 'tolower($1) ~ /^[ \t]*address[ \t]*$/ {print $2; exit}' "$raw" | tr ',' '\n' | tr -d ' \t' | grep -m1 '\.')
+  mtu=$(awk -F'=' 'tolower($1) ~ /^[ \t]*mtu[ \t]*$/ {gsub(/[ \t]/,"",$2); print $2; exit}' "$raw")
+  [ -z "$addr" ] &amp;&amp; { echo "ОШИБКА: в $conf нет IPv4-адреса в строке Address"; rm -f "$raw"; return 1; }
+  case "$addr" in */*) ;; *) addr=$addr/32 ;; esac
+  [ -z "$mtu" ] &amp;&amp; mtu=1380
+<span class="c">  # убираем директивы wg-quick; маршрутизирует сторож, поэтому AllowedIPs = только IPv4 default</span>
+  grep -v -i -E '^[[:space:]]*(Address|DNS|MTU|Table|PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=' "$raw" \
+    | sed -E 's/^[[:space:]]*AllowedIPs[[:space:]]*=.*/AllowedIPs = 0.0.0.0\/0/' &gt; "$tmp"
+  rm -f "$raw"
+
+  ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link del "$n"
+  ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
+  for k in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
+  if ! ./awg setconf "$n" "$tmp"; then
+    echo "ОШИБКА: awg setconf $n (строка, которую awg не понял, указана выше)"
+    ip link del "$n" 2&gt;/dev/null; rm -f "$tmp"; return 1
+  fi
+  rm -f "$tmp"
+  ip addr add "$addr" dev "$n"
+  ip link set "$n" up mtu "$mtu"
+  sysctl -qw "net.ipv4.conf.$n.rp_filter=0" 2&gt;/dev/null
+  echo "$n поднят: адрес $addr, MTU $mtu, конфиг $conf"
+}
+
+if [ -n "$1" ]; then bring_up "$1"; exit $?; fi
+rc=0
+bring_up "$MAIN" || rc=1
+if [ -n "$BACKUP" ]; then bring_up "$BACKUP" || rc=1; fi
+exit $rc
+EOF
+chmod 755 /data/awg/up.sh
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 59 строк">Показать целиком · 59 строк</button></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">4.3</div><div class="sb">
+    <h4>Проверьте туннель с самого роутера</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>curl -s -m 8 --interface awgmain https://ifconfig.me; echo
+/data/awg/awg show awgmain | grep -E 'endpoint|handshake|transfer'</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>198.51.100.20                         ← внешний IP сервера VPN, не ваш домашний
+  endpoint: 198.51.100.20:51822
+  latest handshake: 3 seconds ago
+  transfer: 4.12 KiB received, 1.98 KiB sent</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p><code>curl</code> показывает IP сервера VPN, handshake свежий, <code>received</code> больше нуля. Если в конфиге нет <code>PersistentKeepalive</code>, handshake появляется только после первого трафика, поэтому сначала идёт <code>curl</code>.</p></div>
+    <div class="note n-warn"><b>Если не так</b>
+      <ul>
+        <li><code>ОШИБКА: awg setconf</code> и строка с непонятным параметром: бинарник старее конфига. Соберите свежий (Справочник) или попросите у провайдера конфиг без новых параметров.</li>
+        <li>Handshake нет, <code>received: 0 B</code>: пакеты не доходят или сервер их не принимает. Смотрите «Диагностика → Handshake не проходит».</li>
+        <li>Handshake есть, но <code>ping -I awgmain 1.1.1.1</code> молчит, а <code>curl</code> работает: у части провайдеров ICMP через туннель не ходит. Это не поломка, сторож проверяет канал по HTTPS.</li>
+      </ul>
+    </div>
+  </div></div>
+</section>
+
+<section id="p5" class="part" data-n="5" data-title="Сторож и автозапуск" data-need="ABC">
+  <div class="ph"><div class="num">5</div><div><h2>Сторож и автозапуск</h2><div class="meta"></div></div></div>
+  <p class="why">После этой части основа готова: PBR-трафик идёт в туннель, после перезагрузки всё поднимается само, а при падении туннеля трафик блокируется, а не утекает. Сторож — один скрипт под systemd. Он поднимает туннели, если их нет, держит NAT, MSS clamping и разрешения форварда, проверяет каналы и раз в 5 секунд подтверждает маршрут в таблице PBR: UniFi при перепровижне может её пересобрать.</p>
+
+  <div class="tw"><table>
+    <tr><th>Параметр</th><th>Значение</th><th>Что значит</th></tr>
+    <tr><td>Проверка канала</td><td>каждые 5 с</td><td>HTTPS к <code>1.1.1.1</code> и <code>8.8.8.8</code> через интерфейс туннеля; если не ответил, то ping. Живой, если ответил хоть один.</td></tr>
+    <tr><td>Падение</td><td>3 сбоя подряд, ~15 с</td><td>При запасном канале: переключение на него, если он жив. Без запасного: запись в журнал, трафик блокируется.</td></tr>
+    <tr><td>Возврат</td><td><code>RECOVER_SEC</code>, по умолчанию 600 с</td><td>Основной должен отвечать 10 минут без единого сбоя. Любой сбой обнуляет отсчёт.</td></tr>
+    <tr><td>Запасной сломался</td><td>3 сбоя</td><td>Если основной в этот момент жив, возврат на него сразу, без ожидания.</td></tr>
+    <tr><td>Оба канала лежат</td><td>—</td><td>Маршрут остаётся на основном, за ним <code>blackhole</code>: PBR-трафик стоит, в WAN не утекает.</td></tr>
+  </table></div>
+
+  <div class="step"><div class="sn">5.1</div><div class="sb">
+    <h4>Создайте сторожа и службу</h4>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать failover.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/failover.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># failover.sh — сторож: держит AWG-туннель в таблице PBR UniFi и переключает каналы.</span>
+<span class="c">#   failover.sh            основной цикл (запускает systemd: awg-failover.service)</span>
+<span class="c">#   failover.sh cleanup    убрать свои маршруты из таблицы PBR</span>
+<span class="c"># Параметры: /data/awg/awg.env (создаёт awg-detect.sh).</span>
+DD=${DD:-/data/awg}
+RS_ENV=$RECOVER_SEC                # RECOVER_SEC из командной строки важнее awg.env (для тестов)
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+[ -n "$RS_ENV" ] &amp;&amp; RECOVER_SEC=$RS_ENV
+TABLE=${TABLE:?нет TABLE в awg.env: запустите awg-detect.sh}
+MARK=${MARK:?нет MARK в awg.env: запустите awg-detect.sh}
+PRIO=${PRIO:-32504}
+MAIN=${MAIN:-awgmain}
+BACKUP=${BACKUP:-}
+RECOVER_SEC=${RECOVER_SEC:-600}   # сколько основной должен проработать без сбоев до возврата
+TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8"}
+INTERVAL=${INTERVAL:-5}           # секунд между проверками
+FAIL_MAX=${FAIL_MAX:-3}           # сбоев подряд до переключения
+METRIC=5                          # метрика активного туннеля в таблице PBR
+SIM=/tmp/awg-sim-down             # флаг имитации падения основного канала
+LOGF=$DD/failover.log
+
+log(){
+  local m; m="$(date '+%F %T') $*"
+  echo "$m"; logger -t awg-failover "$*" 2&gt;/dev/null; echo "$m" &gt;&gt; "$LOGF"
+  if [ "$(wc -l &lt; "$LOGF")" -gt 1000 ]; then tail -n 500 "$LOGF" &gt; "$LOGF.tmp" &amp;&amp; mv "$LOGF.tmp" "$LOGF"; fi
+}
+
+<span class="c"># Канал жив, если через него открывается HTTPS (или, если не открылся, проходит ping).</span>
+<span class="c"># Первым идёт HTTPS: ICMP через туннели многих операторов не проходит.</span>
+check(){
+  [ "$1" = "$MAIN" ] &amp;&amp; [ -e "$SIM" ] &amp;&amp; return 1
+  local t c
+  for t in $TARGETS; do
+    c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2&gt;/dev/null)
+    [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; return 0
+    ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; return 0
+  done
+  return 1
+}
+
+ensure(){ local t=$1; shift; iptables -t "$t" -C "$@" 2&gt;/dev/null || iptables -t "$t" -I "$@"; }
+
+prepare(){
+  local i s
+  for i in $MAIN $BACKUP; do
+    ensure nat POSTROUTING -o "$i" -j MASQUERADE
+    ensure mangle FORWARD -o "$i" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    ensure mangle FORWARD -i "$i" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    ensure filter FORWARD -o "$i" -j ACCEPT
+    ensure filter FORWARD -i "$i" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+  done
+  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
+<span class="c">  # дополнительные подсети (например, клиенты VPN-сервера роутера) в ipset локальных сетей UniFi</span>
+  for s in $EXTRA_SUBNETS; do
+    ipset test UBIOS4local_network "$s" &gt;/dev/null 2&gt;&amp;1 || ipset add UBIOS4local_network "$s" 2&gt;/dev/null
+  done
+}
+
+declare -A NEXT_TRY
+ensure_tunnels(){
+  local i now; now=$(date +%s)
+  for i in $MAIN $BACKUP; do
+    ip link show "$i" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; continue
+    [ "${NEXT_TRY[$i]:-0}" -gt "$now" ] &amp;&amp; continue
+    NEXT_TRY[$i]=$((now + 30))
+    log "$i отсутствует, поднимаю"
+    "$DD/up.sh" "$i" &gt;/dev/null 2&gt;&amp;1 || log "$i: не удалось поднять (проверьте: $DD/up.sh $i)"
+  done
+}
+
+set_active(){
+  local a=$1 o
+  if [ "$a" = "$MAIN" ]; then o=$BACKUP; else o=$MAIN; fi
+  ip route replace default dev "$a" metric $METRIC table "$TABLE"
+  [ -n "$o" ] &amp;&amp; ip route del default dev "$o" table "$TABLE" 2&gt;/dev/null
+  ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+}
+
+cleanup(){
+  ip route del default dev "$MAIN" table "$TABLE" 2&gt;/dev/null
+  [ -n "$BACKUP" ] &amp;&amp; ip route del default dev "$BACKUP" table "$TABLE" 2&gt;/dev/null
+  ip route del blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+}
+
+[ "$1" = cleanup ] &amp;&amp; { cleanup; exit 0; }
+trap 'cleanup; log "остановка: маршруты убраны"; exit 0' INT TERM
+
+<span class="c"># после загрузки роутера даём UniFi 30 с собрать свои правила и таблицы</span>
+[ "$(cut -d. -f1 /proc/uptime)" -lt 300 ] &amp;&amp; sleep "${BOOT_WAIT:-30}"
+
+state=$MAIN; fails=0; bfails=0; ok_since=0; both_flag=0
+log "старт: основной $MAIN, запасной ${BACKUP:-нет}, таблица $TABLE, возврат через ${RECOVER_SEC}с"
+
+while true; do
+  ensure_tunnels
+  prepare
+
+  if [ "$state" = "$MAIN" ]; then
+    if check "$MAIN"; then
+      [ $both_flag -eq 1 ] &amp;&amp; log "ВОССТАНОВЛЕН канал $MAIN, трафик по PBR снова идёт"
+      fails=0; both_flag=0
+    else
+      fails=$((fails+1))
+    fi
+    if [ $fails -ge $FAIL_MAX ]; then
+      if [ -n "$BACKUP" ] &amp;&amp; check "$BACKUP"; then
+        state=$BACKUP; fails=0; bfails=0; ok_since=0; both_flag=0
+        log "ПЕРЕКЛЮЧЕНИЕ на запасной канал $BACKUP"
+      elif [ $both_flag -eq 0 ]; then
+        both_flag=1
+        if [ -n "$BACKUP" ]; then log "оба канала не отвечают, остаюсь на $MAIN (трафик по PBR блокируется)"
+        else log "единственный канал $MAIN не отвечает (трафик по PBR блокируется)"; fi
+      fi
+    fi
+  else
+    if check "$MAIN"; then
+      [ $ok_since -eq 0 ] &amp;&amp; { ok_since=$(date +%s); log "основной снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
+      if [ $(( $(date +%s) - ok_since )) -ge "$RECOVER_SEC" ]; then
+        state=$MAIN; fails=0; ok_since=0
+        log "ВОЗВРАТ на основной канал $MAIN"
+      fi
+    else
+      [ $ok_since -ne 0 ] &amp;&amp; log "основной снова сбоит, отсчёт возврата сброшен"
+      ok_since=0
+    fi
+    if [ "$state" = "$BACKUP" ]; then
+      if check "$BACKUP"; then bfails=0; else bfails=$((bfails+1)); fi
+      if [ $bfails -ge $FAIL_MAX ] &amp;&amp; check "$MAIN"; then
+        state=$MAIN; fails=0; bfails=0; ok_since=0
+        log "запасной не отвечает, основной жив: возврат на $MAIN"
+      fi
+    fi
+  fi
+
+  set_active "$state"
+  sleep "$INTERVAL"
+done
+EOF
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 141 строк">Показать целиком · 141 строк</button></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
+[Unit]
+Description=AmneziaWG failover for UniFi PBR
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/data/awg/failover.sh
+ExecStopPost=/data/awg/failover.sh cleanup
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cp /data/awg/awg-failover.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now awg-failover</code></pre></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">5.2</div><div class="sb">
+    <h4>Проверьте таблицу PBR</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>sleep 8
+. /data/awg/awg.env; ip route show table $TABLE
+tail -n 3 /data/awg/failover.log</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>default dev wgclt1 proto VPN scope link metric 37     ← маршрут UniFi (может отсутствовать, если рельса не поднята)
+default dev awgmain scope link metric 5
+blackhole default metric 200
+2026-10-11 09:00:01 старт: основной awgmain, запасной нет, таблица 178, возврат через 600с</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>В таблице ровно один маршрут <code>dev awg…</code> с <code>metric 5</code> и <code>blackhole</code> с <code>metric 200</code>.</p></div>
+  </div></div>
+
+  <div class="step"><div class="sn">5.3</div><div class="sb">
+    <h4>Проверьте с устройств</h4>
+    <div class="tw"><table>
+      <tr><th>Устройство</th><th>Откройте 2ip.io или ifconfig.me</th></tr>
+      <tr><td>Под правилом PBR</td><td>IP сервера VPN (тот же, что в шаге 4.3)</td></tr>
+      <tr><td>Вне PBR</td><td>Ваш обычный домашний IP</td></tr>
+    </table></div>
+    <p>Если правило PBR по доменам, проверяйте на сайте из списка: 2ip.io при этом может показать домашний адрес, и это верно.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">5.4</div><div class="sb">
+    <h4>Перезагрузите роутер</h4>
+    <p>Когда никто не пользуется сетью, перезагрузите роутер и через 2–3 минуты повторите шаги 5.2 и 5.3. Сразу после загрузки сторож ждёт 30 секунд, пока UniFi соберёт свои правила.</p>
+  </div></div>
+
+  <div class="milestone"><span class="dot"></span>Основа готова. Сценарий A закончен; дальше только опции.</div>
+</section>
+
+<section id="p6" class="part" data-n="6" data-title="Запасной канал" data-need="C">
+  <div class="ph"><div class="num">6</div><div><h2>Запасной канал и автопереключение</h2><div class="meta"></div></div></div>
+  <p class="why">Нужны готовый сервер из части 3 и <code>/data/awg/backup.conf</code> на роутере. Запасной туннель держится поднятым постоянно, поэтому переключение занимает около 15 секунд, а не время на подключение.</p>
+
+  <div class="step"><div class="sn">6.1</div><div class="sb">
+    <h4>Включите запасной туннель</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>sed -i 's/^BACKUP=.*/BACKUP=awgbackup/; s/^VPS_IP=.*/VPS_IP=<span class="v" data-v="VPS_IP">203.0.113.10</span>/' /data/awg/awg.env
+/data/awg/up.sh awgbackup
+curl -s -m 8 --interface awgbackup https://ifconfig.me; echo
+systemctl restart awg-failover
+sleep 5; tail -n 2 /data/awg/failover.log</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgbackup поднят: адрес 10.0.1.2/32, MTU 1380, конфиг backup.conf
+<span class="v" data-v="VPS_IP">203.0.113.10</span>
+2026-10-11 09:10:02 остановка: маршруты убраны
+2026-10-11 09:10:02 старт: основной awgmain, запасной awgbackup, таблица 178, возврат через 600с</code></pre></figure>
+    <p>Перезапуск сторожа даёт около 5 секунд без PBR-трафика. Теперь на сервере <code>/root/audit-server.sh</code> должен показать свежий handshake роутера.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">6.2</div><div class="sb">
+    <h4>Проверьте переключение</h4>
+    <p>Падение основного канала имитируется файлом-флагом: пока он есть, сторож считает основной мёртвым. Раньше мы имитировали сбой правилом iptables, но UniFi пересобирал свои цепочки и стирал его. Флаг надёжнее.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">падение</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>touch /tmp/awg-sim-down
+sleep 20; . /data/awg/awg.env; ip route show table $TABLE; tail -n 2 /data/awg/failover.log</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>default dev awgbackup scope link metric 5
+blackhole default metric 200
+2026-10-11 09:12:20 ПЕРЕКЛЮЧЕНИЕ на запасной канал awgbackup</code></pre></figure>
+    <p>Устройство под PBR теперь показывает IP вашего VPS. Уже открытые соединения рвутся и переподключаются сами: у них меняется внешний адрес.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">возврат</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>rm /tmp/awg-sim-down
+tail -f /data/awg/failover.log</code></pre></figure>
+    <p>Сразу появится «основной снова отвечает, жду 600с без сбоев», через 10 минут «ВОЗВРАТ на основной канал awgmain». Выход из <code>tail</code>: <kbd>Ctrl</kbd>+<kbd>C</kbd>.</p>
+    <div class="note n-info"><b>Быстрый тест без 10 минут ожидания</b>
+      <p>Остановите службу и запустите сторожа вручную с коротким возвратом. Во втором окне SSH делайте <code>touch</code> и <code>rm</code> флага. <kbd>Ctrl</kbd>+<kbd>C</kbd> корректно убирает маршруты (раньше версия без обработчика оставляла маршрут запасного канала, так что после теста обязательно верните службу).</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>systemctl stop awg-failover
+RECOVER_SEC=60 /data/awg/failover.sh
+<span class="c"># ... тест, затем Ctrl+C и:</span>
+systemctl start awg-failover</code></pre></figure>
+    </div>
+  </div></div>
+
+  <div class="step"><div class="sn">6.3</div><div class="sb">
+    <h4>Время возврата</h4>
+    <p>Меняется в <code>/data/awg/awg.env</code> (<code>RECOVER_SEC=600</code>), затем <code>systemctl restart awg-failover</code>.</p>
+  </div></div>
+</section>
+
+<section id="p7" class="part" data-n="7" data-title="Клиенты VPN-сервера роутера" data-need="X">
+  <div class="ph"><div class="num">7</div><div><h2>Клиенты VPN-сервера роутера через туннель</h2><div class="meta"></div></div></div>
+  <p class="why">Если на UDR7 работает VPN-сервер (WireGuard Server или Teleport) и вы хотите, чтобы его клиенты, например ваш телефон вне дома, тоже ходили через AWG по тем же правилам PBR. UniFi применяет PBR к источникам из своего списка локальных сетей (ipset <code>UBIOS4local_network</code>), а подсети VPN-сервера в нём может не быть. Сторож умеет держать их в этом списке и возвращает их туда каждые 5 секунд, если UniFi пересоберёт ipset.</p>
+  <div class="note n-info"><b>Проверено на одной установке</b><p>Клиент WireGuard-сервера роутера (подсеть 192.168.3.0/24) после этого выходил в интернет с IP туннеля по правилам PBR. Как именно это сработает у вас, зависит от того, как задан источник в правиле PBR, поэтому обязательно сделайте проверку в конце.</p></div>
+
+  <div class="step"><div class="sn">7.1</div><div class="sb">
+    <h4>Узнайте подсеть VPN-сервера</h4>
+    <p>Она указана в настройках сервера: Settings → VPN → VPN Server. Или посмотрите адреса интерфейсов на роутере:</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>ip -4 -br addr | grep -v -E '^(lo|eth|br|awg|wgclt)'</code></pre></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">7.2</div><div class="sb">
+    <h4>Добавьте подсеть в awg.env</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">подставьте свою подсеть; несколько через пробел</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>sed -i 's|^EXTRA_SUBNETS=.*|EXTRA_SUBNETS="192.168.3.0/24"|' /data/awg/awg.env
+systemctl restart awg-failover
+sleep 6; ipset test UBIOS4local_network 192.168.3.0/24</code></pre></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>192.168.3.0/24 is in set UBIOS4local_network.</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>С телефона, подключённого к VPN-серверу роутера по мобильному интернету, откройте сайт из правил PBR или 2ip.io (если правило на все адреса): должен быть IP туннеля.</p></div>
+  </div></div>
+</section>
+
+<section id="p8" class="part" data-n="8" data-title="Панель при входе по SSH" data-need="R">
+  <div class="ph"><div class="num">8</div><div><h2>Панель состояния при входе по SSH</h2><div class="meta"></div></div></div>
+  <p class="why">При каждом входе по SSH вместо стандартного баннера UniFi вы видите сводку: состояние (HEALTHY / DEGRADED / CRITICAL), предупреждения, активный канал, handshake и скорость обоих туннелей, нагрузку, последние 20 событий, где лежат файлы и шпаргалку команд. Вызвать вручную можно командой <code>awgs</code>.</p>
+
+  <div class="step"><div class="sn">8.1</div><div class="sb">
+    <h4>Скрипт панели</h4>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать status.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/status.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awgs — панель состояния AmneziaWG failover (только чтение)</span>
+<span class="c">#   awgs        полная панель    awgs -s   кратко    awgs -i   с внешними IP туннелей</span>
+DD=${DD:-/data/awg}
+AWG=${AWG:-$DD/awg}
+LOG=$DD/failover.log
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+TABLE=${TABLE:-0}; MARK=${MARK:-0x0/0x0}; RAIL_IF=${RAIL_IF:-wgclt1}; WANIF=${WANIF:-eth3}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; IFACES="$MAIN${BACKUP:+ $BACKUP}"
+MODE=full; WANT_IP=0
+for a in "$@"; do case $a in
+  -s) MODE=short;;
+  -i) WANT_IP=1;;
+  -h|--help) echo "awgs [-s кратко] [-i внешние IP через туннели]"; exit 0;;
+esac; done
+
+if [ -t 1 ] &amp;&amp; [ -z "$NO_COLOR" ]; then
+  G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; C=$'\e[36m'; B=$'\e[1m'; D=$'\e[2m'; N=$'\e[0m'
+else G=; R=; Y=; C=; B=; D=; N=; fi
+
+W=78
+if [ "$AWGS_ASCII" = 1 ]; then LN='-'; else LN='━'; fi
+rep(){ local s='' k; for ((k=0;k&lt;$2;k++)); do s+=$1; done; printf '%s' "$s"; }
+hdr(){ local t=" $1 "; echo "${D}$(rep "$LN" 2)${N}${B}${t}${N}${D}$(rep "$LN" $((W-${#t}-2)))${N}"; }
+hum(){ awk -v b="${1:-0}" 'BEGIN{split("B KiB MiB GiB TiB",u," ");i=1;while(b&gt;=1024&amp;&amp;i&lt;5){b/=1024;i++} if(i==1) printf("%d %s",b,u[i]); else printf("%.1f %s",b,u[i])}'; }
+mbit(){ awk -v b="${1:-0}" 'BEGIN{printf("%.2f",b*8/1000000)}'; }
+age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+age_f(){ local s=$1; if [ "$s" -lt 0 ]; then echo never; elif [ "$s" -lt 120 ]; then echo "${s}s"; elif [ "$s" -lt 7200 ]; then echo "$((s/60))m$((s%60))s"; elif [ "$s" -lt 172800 ]; then echo "$((s/3600))h$(((s%3600)/60))m"; else echo "$((s/86400))d"; fi; }
+st_of(){ local a=$1; if [ "$a" -lt 0 ]; then echo DOWN; elif [ "$a" -lt 180 ]; then echo UP; elif [ "$a" -lt 900 ]; then echo IDLE; else echo STALE; fi; }
+col_of(){ case $1 in UP) printf '%s' "$G";; IDLE) printf '%s' "$Y";; *) printf '%s' "$R";; esac; }
+rd(){ cat "/sys/class/net/$1/statistics/$2" 2&gt;/dev/null || echo 0; }
+
+declare -A r0 t0 r1 t1
+for i in $IFACES; do r0[$i]=$(rd $i rx_bytes); t0[$i]=$(rd $i tx_bytes); done
+sleep 1
+for i in $IFACES; do r1[$i]=$(rd $i rx_bytes); t1[$i]=$(rd $i tx_bytes); done
+
+rt=$(ip route show table "$TABLE" 2&gt;/dev/null)
+active=$(echo "$rt" | awk '$1=="default"{for(i=1;i&lt;=NF;i++) if($i=="dev" &amp;&amp; $(i+1) ~ /^awg/){print $(i+1); exit}}')
+svc=$(systemctl is-active awg-failover 2&gt;/dev/null)
+a_main=$(age_s "$MAIN"); a_bak=-1; [ -n "$BACKUP" ] &amp;&amp; a_bak=$(age_s "$BACKUP")
+s_main=$(st_of $a_main); s_bak=$(st_of $a_bak)
+
+alerts=(); level=0
+add(){ alerts+=("$2|$1"); [ "$2" -gt "$level" ] &amp;&amp; level=$2; }
+[ "$TABLE" = 0 ] &amp;&amp; add "Нет $DD/awg.env: запустите awg-detect.sh" 2
+[ "$svc" != active ] &amp;&amp; add "Сторож awg-failover не запущен (systemctl start awg-failover)" 2
+[ -z "$active" ] &amp;&amp; add "В таблице PBR $TABLE нет маршрута на AWG-туннель: трафик по PBR не проходит" 2
+[ -n "$BACKUP" ] &amp;&amp; [ "$active" = "$BACKUP" ] &amp;&amp; add "Работает ЗАПАСНОЙ канал, основной: $s_main" 1
+[ "$active" = "$MAIN" ] &amp;&amp; [ "$s_main" != UP ] &amp;&amp; add "Основной канал: handshake $s_main ($(age_f $a_main))" 1
+[ -n "$BACKUP" ] &amp;&amp; [ "$s_bak" != UP ] &amp;&amp; add "Запасной канал: $s_bak, защиты от падения основного нет" 1
+[ -e /tmp/awg-sim-down ] &amp;&amp; add "Включён флаг имитации падения /tmp/awg-sim-down (rm /tmp/awg-sim-down)" 1
+ip rule show 2&gt;/dev/null | grep -q "fwmark ${MARK%%/*}" || add "Нет PBR-правила fwmark ${MARK%%/*}" 2
+for f in main.conf backup.conf client.conf telegram.env awg.env; do
+  [ -e "$DD/$f" ] &amp;&amp; [ "$(stat -c %a "$DD/$f" 2&gt;/dev/null)" != 600 ] &amp;&amp; add "Права $DD/$f не 600 (chmod 600 $DD/$f)" 1
+done
+du_pct=$(df /data 2&gt;/dev/null | awk 'NR==2{gsub("%","",$5); print $5}')
+[ -n "$du_pct" ] &amp;&amp; [ "$du_pct" -ge 90 ] &amp;&amp; add "Раздел /data заполнен на ${du_pct}%" 1
+
+case $level in
+  0) badge="${G}${B}● HEALTHY${N}";;
+  1) badge="${Y}${B}▲ DEGRADED${N}";;
+  *) badge="${R}${B}✖ CRITICAL${N}";;
+esac
+
+echo
+echo "${B}${C}AmneziaWG Failover${N}  ${D}$(hostname) · $(date '+%F %T') · $(uptime -p 2&gt;/dev/null)${N}"
+hdr "STATUS"
+if [ -n "$active" ] &amp;&amp; [ "$active" = "$MAIN" ]; then ap="${G}${B}$active${N} (основной)"
+elif [ -n "$active" ]; then ap="${Y}${B}$active${N} (ЗАПАСНОЙ)"
+else ap="${R}${B}нет${N}"; fi
+[ "$svc" = active ] &amp;&amp; sv="${G}active${N}" || sv="${R}${svc:-unknown}${N}"
+echo " Состояние    : $badge"
+echo " Канал PBR    : $ap"
+echo " Сторож       : $sv"
+lastline=$(grep -E "ПЕРЕКЛЮЧЕНИЕ|ВОЗВРАТ|возврат на" "$LOG" 2&gt;/dev/null | tail -n 1)
+if [ -n "$lastline" ]; then
+  lts=$(date -d "${lastline:0:19}" +%s 2&gt;/dev/null)
+  la=""; [ -n "$lts" ] &amp;&amp; la=" ($(age_f $(( $(date +%s) - lts ))) назад)"
+  echo " Последняя смена: ${lastline}${la}"
+  echo " Переключений в логе: $(grep -c 'ПЕРЕКЛЮЧЕНИЕ' "$LOG" 2&gt;/dev/null)"
+fi
+if [ -n "$BACKUP" ]; then
+  iv=${INTERVAL:-5}; fm=${FAIL_MAX:-3}
+  echo " Политика     : проверка каждые ${iv}с, переключение после ${fm} сбоев (~$((iv*fm))с), возврат после ${RECOVER_SEC:-600}с без сбоев"
+else
+  echo " Политика     : один туннель, проверка каждые ${INTERVAL:-5}с; если он упал, PBR-трафик блокируется (без утечки в WAN)"
+fi
+if [ $WANT_IP = 1 ]; then
+  for i in $IFACES; do ( curl -s -m 4 --interface $i https://ifconfig.me &gt; /tmp/awgs.$i 2&gt;/dev/null ) &amp; done; wait
+  echo " Внешний IP   : $(for i in $IFACES; do printf '%s=%s  ' $i "$(cat /tmp/awgs.$i 2&gt;/dev/null)"; done)"
+  rm -f /tmp/awgs.*
+fi
+
+if [ ${#alerts[@]} -gt 0 ]; then
+  echo
+  hdr "ALERTS"
+  for e in "${alerts[@]}"; do
+    l=${e%%|*}; m=${e#*|}
+    if [ "$l" = 2 ]; then echo " ${R}✖${N} $m"; else echo " ${Y}▲${N} $m"; fi
+  done
+fi
+
+echo
+hdr "TUNNELS"
+printf "${B}   %-10s %-7s %-7s %-9s %-22s %10s %10s %8s %8s${N}\n" TUNNEL ROLE STATE HANDSHK ENDPOINT RX TX "DN Mb/s" "UP Mb/s"
+for i in $IFACES; do
+  if [ "$i" = "$MAIN" ]; then role=main; a=$a_main; s=$s_main; else role=backup; a=$a_bak; s=$s_bak; fi
+  mark=" "; [ "$i" = "$active" ] &amp;&amp; mark="▶"
+  if ! ip link show "$i" &gt;/dev/null 2&gt;&amp;1; then
+    printf " %s ${B}%-10s${N} %-7s ${R}%-7s${N}\n" "$mark" "$i" "$role" "NO-IFACE"; continue
+  fi
+  ep=$($AWG show "$i" endpoints 2&gt;/dev/null | awk 'NR==1{print $2}')
+  read -r rx tx &lt; &lt;($AWG show "$i" transfer 2&gt;/dev/null | awk '{r+=$2;t+=$3} END{print r+0, t+0}')
+  dr=$(( ${r1[$i]} - ${r0[$i]} )); dt=$(( ${t1[$i]} - ${t0[$i]} ))
+  printf " %s ${B}%-10s${N} %-7s $(col_of $s)%-7s${N} %-9s %-22s %10s %10s %8s %8s\n" "$mark" "$i" "$role" "$s" "$(age_f $a)" "${ep:--}" "$(hum $rx)" "$(hum $tx)" "$(mbit $dr)" "$(mbit $dt)"
+done
+ip link show "$RAIL_IF" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo " ${D}  $RAIL_IF: профиль-«рельса» UniFi, держит PBR-правило, трафик не несёт${N}"
+echo " ${D}▶ активный канал PBR · скорость за 1 с внутри туннеля · UP = handshake &lt; 3 мин${N}"
+
+echo
+hdr "SYSTEM"
+load=$(cut -d' ' -f1-3 /proc/loadavg 2&gt;/dev/null)
+mem=$(free -m 2&gt;/dev/null | awk '/^Mem:/{printf "%d/%d MiB (%d%%)",$3,$2,$3*100/$2}')
+disk=$(df -h /data 2&gt;/dev/null | awk 'NR==2{print $3"/"$2" ("$5")"}')
+temp=""; for z in /sys/class/thermal/thermal_zone*/temp; do [ -r "$z" ] &amp;&amp; { temp=" · temp $(( $(cat "$z") / 1000 ))°C"; break; }; done
+wan=$(ip -4 -br addr show "$WANIF" 2&gt;/dev/null | awk '{print $2, $3}')
+echo " Нагрузка : ${load:-?} · RAM ${mem:-?} · /data ${disk:-?}${temp}"
+echo " WAN $WANIF : ${wan:-нет данных}"
+if systemctl is-enabled awg-notify &gt;/dev/null 2&gt;&amp;1; then echo " Telegram : awg-notify $(systemctl is-active awg-notify 2&gt;/dev/null)"; fi
+
+echo
+hdr "EVENTS (last 20)"
+if [ -s "$LOG" ]; then ev=$(tail -n 20 "$LOG"); else ev=$(journalctl -t awg-failover -n 20 --no-pager -o short 2&gt;/dev/null | sed -E 's/ [^ ]+ awg-failover(\[[0-9]+\])?:/ /'); fi
+[ -z "$ev" ] &amp;&amp; ev="(событий пока нет)"
+echo "$ev" | sed -e "s/^/ /" -e "s/ПЕРЕКЛЮЧЕНИЕ/${R}&amp;${N}/" -e "s/ВОЗВРАТ/${G}&amp;${N}/" -e "s/ВОССТАНОВЛЕН/${G}&amp;${N}/" -e "s/не отвечает/${Y}&amp;${N}/" -e "s/оба канала/${R}&amp;${N}/"
+
+[ "$MODE" = short ] &amp;&amp; { echo; exit 0; }
+
+f(){ printf " ${C}%-48s${N} %s\n" "$1" "$2"; }
+echo
+hdr "FILES"
+f "$DD/awg.env" "параметры: таблица PBR, метка, имена туннелей, возврат"
+f "$DD/main.conf" "конфиг основного туннеля ($MAIN), ключи, chmod 600"
+[ -n "$BACKUP" ] &amp;&amp; f "$DD/backup.conf" "конфиг запасного туннеля ($BACKUP), ключи"
+f "$DD/up.sh" "поднять туннели: up.sh [имя туннеля]"
+f "$DD/failover.sh" "сторож: проверка, переключение, возврат"
+f "$DD/failover.log" "журнал сторожа (~1000 строк)"
+f "$DD/status.sh · audit.sh" "эта панель (awgs) · аудит (awg-audit)"
+f "/etc/systemd/system/awg-*.service" "автозапуск (копии в $DD, восстановление: awg-restore.sh)"
+[ -n "$VPS_IP" ] &amp;&amp; f "сервер $VPS_IP: /etc/amnezia/server.conf" "сервер запасного канала (служба awg-server)"
+
+echo
+hdr "CHEAT SHEET"
+f "awgs | awgs -s | awgs -i" "панель | кратко | с внешними IP"
+f "awg-audit" "проверка на лишние правила и файлы (только чтение)"
+f "tail -f $DD/failover.log" "события сторожа в реальном времени"
+f "ip route show table $TABLE" "активный канал PBR (metric 5)"
+f "$DD/awg show $MAIN" "детали туннеля"
+f "curl -s --interface $MAIN https://ifconfig.me" "внешний IP через туннель"
+[ -n "$BACKUP" ] &amp;&amp; f "touch /tmp/awg-sim-down  /  rm /tmp/awg-sim-down" "имитация падения основного / отмена"
+f "$DD/up.sh $MAIN" "применить новый main.conf"
+f "systemctl restart awg-failover" "перезапуск сторожа (~5 с без PBR-трафика)"
+echo
+EOF
+chmod 755 /data/awg/status.sh
+/data/awg/status.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 168 строк">Показать целиком · 168 строк</button></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">8.2</div><div class="sb">
+    <h4>Показ при входе и команды awgs, awg-audit</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null || cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
+alias awgs='/data/awg/status.sh'
+alias awg-audit='/data/awg/audit.sh'
+case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
+RC</code></pre></figure>
+    <p>Панель выводится только в интерактивной сессии, поэтому <code>scp</code> и <code>rsync</code> не ломаются. Если терминал неправильно рисует линии, добавьте в <code>/root/.bashrc</code> строку <code>export AWGS_ASCII=1</code>. Живой режим: <code>watch -n2 -c '/data/awg/status.sh -s'</code>.</p>
+  </div></div>
+
+  <div class="step"><div class="sn">8.3</div><div class="sb">
+    <h4>Уберите стандартный баннер UniFi</h4>
+    <p>Баннер с логотипом и текстом NOTICE берётся из <code>/etc/motd</code>. Строка <code>PrintMotd no</code> в sshd его не отключает. Оригинал сохраняем в <code>/data/awg/motd.orig</code>, файл очищаем, а маленькая служба очищает его при каждой загрузке, если прошивка его вернёт.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">/data/awg/awg-motd.service</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>touch /root/.hushlogin
+cp -a /etc/motd /data/awg/motd.orig
+: &gt; /etc/motd
+cat &gt; /data/awg/awg-motd.service &lt;&lt;'EOF'
+[Unit]
+Description=Clear UniFi SSH banner (/etc/motd)
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c ': &gt; /etc/motd'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cp /data/awg/awg-motd.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable awg-motd</code></pre></figure>
+    <p>Откройте <b>новое</b> окно SSH: должна появиться только панель. Если панели нет, ваша оболочка не читает <code>.bashrc</code>: добавьте в <code>/root/.profile</code> строку <code>[ -f ~/.bashrc ] &amp;&amp; . ~/.bashrc</code>.</p>
+  </div></div>
+
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">так выглядит панель (пример, без цветов)</span></figcaption><pre><code>AmneziaWG Failover  UDR7 · 2026-10-11 09:31:25 · up 3 days, 2 hours
+━━ STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Состояние    : ● HEALTHY
+ Канал PBR    : awgmain (основной)
+ Сторож       : active
+ Последняя смена: 2026-10-10 08:22:50 ВОЗВРАТ на основной канал awgmain (1d)
+ Переключений в логе: 1
+ Политика     : проверка каждые 5с, переключение после 3 сбоев (~15с), возврат после 600с без сбоев
+
+━━ TUNNELS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   TUNNEL     ROLE    STATE   HANDSHK   ENDPOINT                       RX         TX  DN Mb/s  UP Mb/s
+ ▶ awgmain    main    UP      41s       198.51.100.20:51822     812.4 MiB   96.1 MiB     3.41     0.52
+   awgbackup  backup  UP      72s       203.0.113.10:51823        2.1 MiB    1.9 MiB     0.00     0.00
+   wgclt1: профиль-«рельса» UniFi, держит PBR-правило, трафик не несёт
+
+━━ SYSTEM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Нагрузка : 0.31 0.28 0.25 · RAM 1201/1952 MiB (61%) · /data 2.1G/9.8G (22%) · temp 58°C
+ WAN eth3 : UP 188.0.2.34/24
+ Telegram : awg-notify active
+
+━━ EVENTS (last 20) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 2026-10-10 08:12:40 ПЕРЕКЛЮЧЕНИЕ на запасной канал awgbackup
+ 2026-10-10 08:12:58 основной снова отвечает, жду 600с без сбоев
+ 2026-10-10 08:22:50 ВОЗВРАТ на основной канал awgmain
+ ...
+(дальше FILES и CHEAT SHEET)</code></pre></figure>
+</section>
+
+<section id="p9" class="part" data-n="9" data-title="Аудит установки" data-need="R">
+  <div class="ph"><div class="num">9</div><div><h2>Аудит установки</h2><div class="meta"></div></div></div>
+  <p class="why">После экспериментов на роутере остаются лишние правила, дубли, тестовые флаги и файлы с ключами. Именно так было у нас: аудит нашёл забытую старую службу, третий процесс <code>amneziawg-go</code>, дубли NAT и FORWARD от двух одновременно запущенных сторожей и ключи в истории команд. <code>awg-audit</code> ничего не меняет, а только показывает OK / WARN / FAIL с готовой командой исправления.</p>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать audit.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/audit.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-audit — проверка установки на роутере: службы, туннели, правила, файлы. Только чтение.</span>
+DD=${DD:-/data/awg}
+AWG=${AWG:-$DD/awg}
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+TABLE=${TABLE:-0}; MARK=${MARK:-0x0/0x0}; RAIL_IF=${RAIL_IF:-wgclt1}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}"
+NT=$(echo $TUNS | wc -w)
+ok=0; warn=0; bad=0
+if [ -t 1 ] &amp;&amp; [ -z "$NO_COLOR" ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'; else G=; R=; Y=; B=; N=; fi
+P(){ echo "  ${G}OK${N}    $1"; ok=$((ok+1)); }
+W(){ echo "  ${Y}WARN${N}  $1"; [ -n "$2" ] &amp;&amp; echo "        fix: $2"; warn=$((warn+1)); }
+F(){ echo "  ${R}FAIL${N}  $1"; [ -n "$2" ] &amp;&amp; echo "        fix: $2"; bad=$((bad+1)); }
+sec(){ echo; echo "${B}== $1 ==${N}"; }
+age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+
+sec "Параметры"
+if [ "$TABLE" = 0 ]; then F "нет $DD/awg.env" "$DD/awg-detect.sh"
+else P "awg.env: таблица $TABLE, метка $MARK, рельса $RAIL_IF, туннели: $TUNS"; fi
+for b in amneziawg-go awg; do [ -x "$DD/$b" ] &amp;&amp; P "бинарник $b на месте" || F "нет $DD/$b" "часть 1, шаг 2"; done
+
+sec "Службы и процессы"
+st=$(systemctl is-active awg-failover 2&gt;/dev/null); en=$(systemctl is-enabled awg-failover 2&gt;/dev/null)
+[ "$st" = active ] &amp;&amp; P "awg-failover: active" || F "awg-failover: ${st:-нет}" "systemctl start awg-failover"
+[ "$en" = enabled ] &amp;&amp; P "awg-failover: автозапуск включён" || W "awg-failover: автозапуск ${en:-нет}" "$DD/awg-restore.sh"
+for u in awg-failover awg-notify awg-motd; do
+  [ -f "$DD/$u.service" ] || continue
+  [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; continue   # Telegram не настраивался
+  [ $u = awg-motd ] &amp;&amp; [ ! -f "$DD/motd.orig" ] &amp;&amp; continue        # баннер не отключался
+  cmp -s "/etc/systemd/system/$u.service" "$DD/$u.service" &amp;&amp; P "$u.service совпадает с копией в $DD" \
+    || W "$u.service в /etc отличается от копии в $DD или отсутствует" "$DD/awg-restore.sh"
+done
+n=$(ps -eo pid,ppid,args | awk '/failover\.sh/ &amp;&amp; !/awk/ &amp;&amp; !/cleanup/ {p[$1]=$2; a[$1]=1} END{for(i in p) if(!(p[i] in a)) n++; print n+0}')
+if [ "$st" = active ]; then [ "$n" = 1 ] &amp;&amp; P "экземпляров failover.sh: 1" || W "экземпляров failover.sh: $n (нужен 1)" "systemctl stop awg-failover; pkill -f failover.sh; systemctl start awg-failover"
+else [ "$n" = 0 ] &amp;&amp; P "ручных экземпляров failover.sh нет" || W "failover.sh запущен вручную при остановленной службе" "pkill -f failover.sh; $DD/failover.sh cleanup"; fi
+c=$(pgrep -c amneziawg-go 2&gt;/dev/null); [ "${c:-0}" = "$NT" ] &amp;&amp; P "процессов amneziawg-go: $NT" || W "процессов amneziawg-go: ${c:-0} (нужно $NT)" "pgrep -a amneziawg-go; лишний интерфейс: ip link del &lt;имя&gt;"
+if [ -f "$DD/telegram.env" ]; then
+  [ "$(systemctl is-active awg-notify 2&gt;/dev/null)" = active ] &amp;&amp; P "awg-notify: active" || W "awg-notify не запущен" "systemctl enable --now awg-notify"
+fi
+
+sec "Туннели"
+for i in $TUNS; do ip link show "$i" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; P "$i существует" || F "$i отсутствует" "$DD/up.sh $i"; done
+for i in $TUNS; do
+  a=$(age_s "$i")
+  if [ "$a" -ge 0 ] &amp;&amp; [ "$a" -lt 180 ]; then P "$i: handshake ${a}с назад"
+  else W "$i: handshake давно или не было ($a)" "curl -s --interface $i https://ifconfig.me; $DD/awg show $i"; fi
+done
+ip link show "$RAIL_IF" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; P "$RAIL_IF на месте (рельса PBR)" || W "$RAIL_IF отсутствует: UniFi мог убрать PBR-обвязку" "проверьте профиль VPN Client в UniFi, затем $DD/awg-detect.sh"
+
+sec "Маршрутизация"
+n=$(ip rule show | grep -c "fwmark ${MARK%%/*}")
+[ "$n" = 1 ] &amp;&amp; P "правило PBR fwmark ${MARK%%/*}: одно" || W "правил fwmark ${MARK%%/*}: $n (нужно 1)" "ip rule show"
+t=$(ip route show table "$TABLE" 2&gt;/dev/null)
+echo "        таблица $TABLE:"; echo "$t" | sed 's/^/          /'
+c=$(echo "$t" | grep -c 'dev awg')
+[ "$c" = 1 ] &amp;&amp; P "в таблице PBR ровно один AWG-маршрут" || { [ "$c" = 0 ] &amp;&amp; F "в таблице PBR нет AWG-маршрута" "systemctl restart awg-failover" || W "AWG-маршрутов в таблице: $c (нужен 1)" "systemctl restart awg-failover"; }
+echo "$t" | grep -q blackhole &amp;&amp; P "blackhole на месте: при падении туннелей утечки в WAN нет" || W "в таблице нет blackhole" "systemctl restart awg-failover"
+[ "$(sysctl -n net.ipv4.ip_forward 2&gt;/dev/null)" = 1 ] &amp;&amp; P "ip_forward = 1" || F "ip_forward не 1" "sysctl -w net.ipv4.ip_forward=1"
+for s in $EXTRA_SUBNETS; do
+  ipset test UBIOS4local_network "$s" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; P "подсеть $s в ipset UBIOS4local_network" || W "подсети $s нет в ipset" "сторож добавит её сам через 5 с; если нет — systemctl restart awg-failover"
+done
+
+sec "iptables"
+for i in $TUNS; do
+  c=$(iptables -t nat -S POSTROUTING 2&gt;/dev/null | grep -c -- "-o $i -j MASQUERADE")
+  [ "$c" = 1 ] &amp;&amp; P "NAT MASQUERADE на $i: 1" || W "NAT MASQUERADE на $i: $c (нужно 1)" "iptables -t nat -D POSTROUTING -o $i -j MASQUERADE  (до одного правила)"
+done
+d1=$(iptables -S FORWARD 2&gt;/dev/null | sort | uniq -d); d2=$(iptables -t mangle -S FORWARD 2&gt;/dev/null | sort | uniq -d)
+[ -z "$d1$d2" ] &amp;&amp; P "дублей в FORWARD (filter/mangle) нет" || W "дубли в FORWARD: $(echo "$d1$d2" | wc -l) строк" "iptables -S FORWARD | sort | uniq -d; удалите лишнюю копию: iptables -D ..."
+iptables -S OUTPUT 2&gt;/dev/null | grep -q -E 'icmp.*(DROP|REJECT)' &amp;&amp; W "в OUTPUT есть DROP для icmp (остаток теста?)" "iptables -S OUTPUT"
+
+sec "Файлы"
+for f in main.conf ${BACKUP:+backup.conf} awg.env; do
+  [ "$f" = backup.conf ] &amp;&amp; [ ! -e "$DD/backup.conf" ] &amp;&amp; [ -e "$DD/client.conf" ] &amp;&amp; f=client.conf
+  [ -e "$DD/$f" ] || { F "нет $DD/$f"; continue; }
+  [ "$(stat -c %a "$DD/$f")" = 600 ] &amp;&amp; P "$f: права 600" || W "$f: права $(stat -c %a "$DD/$f")" "chmod 600 $DD/$f"
+done
+[ -e "$DD/telegram.env" ] &amp;&amp; { [ "$(stat -c %a "$DD/telegram.env")" = 600 ] &amp;&amp; P "telegram.env: права 600" || W "telegram.env: права не 600" "chmod 600 $DD/telegram.env"; }
+for f in /tmp/awg-src.tar.gz /tmp/awgx /tmp/awg-sim-down /tmp/rail.conf; do
+  [ -e "$f" ] &amp;&amp; W "остаток: $f" "rm -rf $f"
+done
+ls /run/*.awg.conf /run/*.raw &gt;/dev/null 2&gt;&amp;1 &amp;&amp; W "в /run остались временные конфиги с ключами" "rm -f /run/*.awg.conf /run/*.raw"
+k=$(grep -E -c '[A-Za-z0-9+/]{43}=' /root/.bash_history 2&gt;/dev/null)
+[ "${k:-0}" = 0 ] &amp;&amp; P "в .bash_history нет строк, похожих на ключи" || W ".bash_history: строк, похожих на ключи: $k" "history -c; : &gt; /root/.bash_history"
+grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null &amp;&amp; P "панель при входе по SSH настроена" || W "в /root/.bashrc нет панели" "$DD/awg-restore.sh"
+
+sec "Итог"
+echo "  ${G}OK: $ok${N}   ${Y}WARN: $warn${N}   ${R}FAIL: $bad${N}"
+echo "  Скрипт ничего не меняет. Команды fix выполняйте по одной, прочитав вывод."
+EOF
+chmod 755 /data/awg/audit.sh
+/data/awg/audit.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 93 строк">Показать целиком · 93 строк</button></figure>
+<figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">пример здоровой установки</span></figcaption><pre><code>== Службы и процессы ==
+  OK    awg-failover: active
+  OK    экземпляров failover.sh: 1
+  OK    процессов amneziawg-go: 2
+== Маршрутизация ==
+  OK    правило PBR fwmark 0x6a0000: одно
+  OK    в таблице PBR ровно один AWG-маршрут
+  OK    blackhole на месте: при падении туннелей утечки в WAN нет
+...
+== Итог ==
+  OK: 27   WARN: 0   FAIL: 0</code></pre></figure>
+  <p>Команды из строк <code>fix:</code> выполняйте по одной, прочитав вывод. Если WARN про дубли не уходит через минуту, значит, работают два сторожа: <code>systemctl stop awg-failover; pkill -f failover.sh; systemctl start awg-failover</code>.</p>
+</section>
+
+<section id="p10" class="part" data-n="10" data-title="Уведомления в Telegram" data-need="O">
+  <div class="ph"><div class="num">10</div><div><h2>Уведомления в Telegram</h2><div class="meta"></div></div></div>
+  <p class="why">Два скрипта. <code>notify.sh</code> отправляет сообщение через основной туннель, при неудаче через запасной, потом напрямую через WAN; если не вышло нигде, сообщение откладывается и уходит при первой возможности. Токен передаётся через stdin, в списке процессов его не видно. <code>awg-notify.sh</code> читает журнал сторожа и присылает события, раз в минуту проверяет здоровье, а раз в сутки шлёт отчёт.</p>
+  <div class="tw"><table>
+    <tr><th>Сообщение</th><th>Когда</th></tr>
+    <tr><td>⚠️ Переключение на запасной канал</td><td>сразу, со снимком: активный канал, handshake, внешний IP</td></tr>
+    <tr><td>✅ Возврат на основной</td><td>сразу, плюс сколько проработали на запасном</td></tr>
+    <tr><td>🛑 Нет рабочего канала / ✅ Канал восстановлен</td><td>не чаще раза в 5 минут</td></tr>
+    <tr><td>⚠️ Запасной канал потерян</td><td>handshake запасного старше 5 минут три проверки подряд: самый опасный тихий сбой</td></tr>
+    <tr><td>🛑 awg-failover остановлен</td><td>три проверки подряд</td></tr>
+    <tr><td>📊 Суточный отчёт</td><td>в 09:00 по часам роутера: состояние, трафик за сутки, переключения, время на запасном, журнал, система</td></tr>
+    <tr><td>🔄 Роутер загрузился</td><td>при старте службы</td></tr>
+  </table></div>
+
+  <div class="step"><div class="sn">10.1</div><div class="sb">
+    <h4>Бот и chat id</h4>
+    <ol>
+      <li>В Telegram откройте @BotFather → <code>/newbot</code> и получите токен. Заведите <b>отдельного</b> бота для роутера, не берите бота, который уже используется, например в 3x-ui: утечка одного токена не заденет другой.</li>
+      <li>Откройте своего нового бота и нажмите <b>Start</b>: без этого бот не может вам писать (ошибка 400).</li>
+      <li>Узнайте свой числовой chat id, например у бота @userinfobot. Это не секрет.</li>
+    </ol>
+  </div></div>
+
+  <div class="step"><div class="sn">10.2</div><div class="sb">
+    <h4>Сохраните токен на роутере</h4>
+    <p>Токен вводится скрыто и в историю команд не попадает.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>read -rsp "Токен бота: " T; echo
+read -rp "Ваш chat id: " C
+printf 'TG_TOKEN=%s\nTG_CHAT=%s\n' "$T" "$C" &gt; /data/awg/telegram.env
+chmod 600 /data/awg/telegram.env; unset T C</code></pre></figure>
+    <p>Дополнительно в этот файл можно дописать <code>REPORT_TIME=0830</code> (время отчёта) и <code>TG_NO_WAN=1</code> (не слать напрямую через провайдера).</p>
+  </div></div>
+
+  <div class="step"><div class="sn">10.3</div><div class="sb">
+    <h4>Скрипты</h4>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/notify.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># notify.sh — отправка в Telegram с резервированием: основной туннель -&gt; запасной -&gt; WAN.</span>
+<span class="c">#   notify.sh [--html] "текст"</span>
+<span class="c"># Не доставилось никуда — сообщение откладывается в notify.spool и уходит при следующей удачной отправке.</span>
+export LC_ALL=C.UTF-8
+DD=${DD:-/data/awg}
+. "$DD/telegram.env" || exit 2
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
+
+MODE=""
+[ "$1" = "--html" ] &amp;&amp; { MODE=html; shift; }
+TEXT="${1:0:3900}"
+[ -z "$TEXT" ] &amp;&amp; exit 0
+
+LOG=$DD/notify.log
+SPOOL=$DD/notify.spool
+<span class="c"># Порядок попыток. Пустая строка = напрямую через WAN. Если WAN не нужен, задайте TG_NO_WAN=1 в telegram.env.</span>
+IFACES=("$MAIN")
+[ -n "$BACKUP" ] &amp;&amp; IFACES+=("$BACKUP")
+[ "${TG_NO_WAN:-0}" = 1 ] || IFACES+=("")
+
+log() {
+  echo "$(date '+%F %T') $*" &gt;&gt; "$LOG"
+  if [ "$(wc -l &lt; "$LOG")" -gt 300 ]; then tail -n 200 "$LOG" &gt; "$LOG.t" &amp;&amp; mv "$LOG.t" "$LOG"; fi
+}
+
+<span class="c"># $1=интерфейс или "", $2=таймаут, $3=текст. Токен идёт через stdin: в списке процессов его не видно.</span>
+send_via() {
+  local args=(-4 -s -m "$2" -o /dev/null -w '%{http_code}')
+  [ -n "$1" ] &amp;&amp; args+=(--interface "$1")
+  [ "$MODE" = html ] &amp;&amp; args+=(--data-urlencode "parse_mode=HTML")
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TG_TOKEN" |
+    curl "${args[@]}" -K - \
+      --data-urlencode "chat_id=${TG_CHAT}" \
+      --data-urlencode "text=$3" \
+      --data-urlencode "disable_web_page_preview=true" 2&gt;/dev/null
+}
+
+send_text() {
+  local i to code
+  for i in "${IFACES[@]}"; do
+    if [ "$i" = "$MAIN" ]; then to=10; else to=15; fi
+    code=$(send_via "$i" "$to" "$1")
+    if [ "$code" = 200 ]; then
+      [ "$i" != "$MAIN" ] &amp;&amp; log "доставлено через ${i:-WAN}"
+      return 0
+    fi
+    log "не удалось через ${i:-WAN}: HTTP ${code:-000}"
+  done
+  return 1
+}
+
+spool_add() {
+  printf '%s|%s\n' "$MODE" "$(printf '%s' "$1" | base64 -w0)" &gt;&gt; "$SPOOL"
+  chmod 600 "$SPOOL"
+  tail -n 20 "$SPOOL" &gt; "$SPOOL.t" &amp;&amp; mv "$SPOOL.t" "$SPOOL"
+}
+
+spool_flush() {
+  [ -s "$SPOOL" ] || return 0
+  local m b t keep=$MODE
+  mv "$SPOOL" "$SPOOL.run"
+  while IFS='|' read -r m b; do
+    t=$(printf '%s' "$b" | base64 -d)
+    MODE=$m
+    send_text "$t" || printf '%s|%s\n' "$m" "$b" &gt;&gt; "$SPOOL"
+  done &lt; "$SPOOL.run"
+  rm -f "$SPOOL.run"
+  MODE=$keep
+}
+
+<span class="c"># одна отправка за раз (событие и отчёт могут совпасть)</span>
+exec 9&gt;/tmp/awg-notify.lock
+command -v flock &gt;/dev/null &amp;&amp; flock -w 120 9
+
+if send_text "$TEXT"; then
+  spool_flush
+  exit 0
+fi
+log "ВСЕ КАНАЛЫ НЕДОСТУПНЫ, сообщение отложено"
+spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
+exit 1
+EOF
+chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 86 строк">Показать целиком · 86 строк</button></figure>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-notify.sh — уведомления в Telegram о работе failover.</span>
+<span class="c">#   awg-notify.sh          демон (запускает systemd: awg-notify.service)</span>
+<span class="c">#   awg-notify.sh report   отправить суточный отчёт сейчас</span>
+<span class="c">#   awg-notify.sh test     тестовое сообщение со снимком состояния</span>
+export LC_ALL=C.UTF-8
+DD=${DD:-/data/awg}
+AWG=$DD/awg
+LOGF=$DD/failover.log
+EV=$DD/notify.events          # epoch|тип (switch / return / both)
+ST=$DD/notify.state           # счётчики трафика на момент прошлого отчёта
+LASTREP=$DD/notify.lastreport
+[ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
+[ -r "$DD/telegram.env" ] &amp;&amp; . "$DD/telegram.env"
+TABLE=${TABLE:-0}; MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}"
+REPORT_TIME=${REPORT_TIME:-0900}   # время суточного отчёта ЧЧММ по часам роутера (можно задать в telegram.env)
+H=$(hostname)
+
+<span class="c"># ---------- утилиты ----------</span>
+esc()  { sed -e 's/&amp;/\&amp;amp;/g' -e 's/&lt;/\&amp;lt;/g' -e 's/&gt;/\&amp;gt;/g'; }
+trunc(){ cut -c1-"$1" | iconv -c -f UTF-8 -t UTF-8; }   # обрезка без битых символов
+send() { "$DD/notify.sh" --html "$1" &gt;/dev/null 2&gt;&amp;1; }
+hum()  { awk -v b="$1" 'BEGIN{split("B KB MB GB TB",u," "); i=1; while(b&gt;=1024&amp;&amp;i&lt;5){b/=1024;i++}; f=(i==1?"%d %s":"%.1f %s"); printf f, b, u[i]}'; }
+cnt()  { cat "/sys/class/net/$1/statistics/$2_bytes" 2&gt;/dev/null || echo 0; }
+hs_age() {
+  local ts
+  ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}')
+  if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi
+}
+fa() {
+  local a=$1
+  if   [ "$a" -lt 0 ];    then echo "нет"
+  elif [ "$a" -lt 120 ];  then echo "${a}с назад"
+  elif [ "$a" -lt 7200 ]; then echo "$((a/60))м назад"
+  else echo "$((a/3600))ч назад"; fi
+}
+fd() {
+  local s=$1
+  if [ "$s" -ge 3600 ]; then printf '%dч %02dм' $((s/3600)) $((s%3600/60)); else printf '%dм %02dс' $((s/60)) $((s%60)); fi
+}
+active() {
+  local r
+  r=$(ip route show table "$TABLE" 2&gt;/dev/null | awk '$1=="default" &amp;&amp; /dev awg/ {for(i=1;i&lt;=NF;i++) if($i=="dev") print $(i+1)}' | head -1)
+  echo "${r:-none}"
+}
+extip() {
+  local ip u
+  [ "$1" = none ] &amp;&amp; { echo "-"; return; }
+  for u in https://api.ipify.org https://ifconfig.me; do
+    ip=$(curl -4 -s -m 6 --interface "$1" "$u" 2&gt;/dev/null)
+    [[ "$ip" =~ ^[0-9.]+$ ]] &amp;&amp; { echo "$ip"; return; }
+  done
+  echo "-"
+}
+health() {   # $1=active $2=возраст handshake основного $3=запасного
+  if ! systemctl is-active --quiet awg-failover; then echo "CRITICAL: сторож awg-failover не работает"
+  elif [ "$1" = none ]; then echo "CRITICAL: нет AWG-маршрута в таблице PBR"
+  elif [ -n "$BACKUP" ] &amp;&amp; [ "$1" = "$BACKUP" ]; then echo "DEGRADED: работаем на запасном канале"
+  elif [ -n "$BACKUP" ] &amp;&amp; { [ "$3" -lt 0 ] || [ "$3" -gt 300 ]; }; then echo "DEGRADED: запасной канал не отвечает"
+  else echo "HEALTHY"; fi
+}
+snapshot() {
+  local a t; a=$(active)
+  echo "Активный канал : $a"
+  for t in $TUNS; do printf '%-14s : handshake %s\n' "$t" "$(fa "$(hs_age "$t")")"; done
+  echo "Внешний IP     : $(extip "$a")"
+  echo "Время роутера  : $(date '+%F %T')"
+}
+
+<span class="c"># ---------- статистика ----------</span>
+evcount() { awk -F'|' -v w=$(( $(date +%s) - 86400 )) -v t="$1" '$2==t &amp;&amp; $1&gt;=w {n++} END{print n+0}' "$EV" 2&gt;/dev/null || echo 0; }
+backup_secs() {
+  awk -F'|' -v now="$(date +%s)" 'BEGIN{w=now-86400; s=0; on=0; st=0}
+    $2=="switch" { if(!on){on=1; st=($1&lt;w?w:$1)} }
+    $2=="return" { if(on){on=0; e=$1; if(e&gt;st) s+=e-st} }
+    END{ if(on) s+=now-st; print s+0 }' "$EV" 2&gt;/dev/null || echo 0
+}
+delta() {
+  local cur base
+  cur=$(cnt "$1" "$2")
+  base=$(awk -v i="$1" -v d="$2" '$1==i{print (d=="rx"?$2:$3)}' "$ST" 2&gt;/dev/null)
+  base=${base:-0}
+  [ "$cur" -lt "$base" ] &amp;&amp; base=0     # интерфейс пересоздавался
+  echo $((cur - base))
+}
+save_base() { local i; for i in $TUNS; do echo "$i $(cnt "$i" rx) $(cnt "$i" tx)"; done &gt; "$ST"; }
+
+<span class="c"># ---------- суточный отчёт ----------</span>
+report() {
+  local a m b ip up body journal evs t i
+  a=$(active); m=$(hs_age "$MAIN"); b=-1; [ -n "$BACKUP" ] &amp;&amp; b=$(hs_age "$BACKUP"); ip=$(extip "$a")
+  up=$(awk '{s=int($1); printf "%dд %dч %dм", s/86400, s%86400/3600, s%3600/60}' /proc/uptime)
+  evs=$(grep -E 'ПЕРЕКЛЮЧЕНИЕ|ВОЗВРАТ|ВОССТАНОВЛЕН|не отвечает' "$LOGF" 2&gt;/dev/null | tail -5 | trunc 110)
+  journal=$(tail -n 8 "$LOGF" 2&gt;/dev/null | trunc 110)
+  body=$(
+    printf 'Состояние : %s\n' "$(health "$a" "$m" "$b")"
+    printf 'Активный  : %s (внешний IP %s)\n' "$a" "$ip"
+    printf 'Аптайм    : %s\n\n' "$up"
+    printf '%-10s %-10s %-10s %s\n' Tunnel RX-24h TX-24h handshake
+    for i in $TUNS; do
+      printf '%-10s %-10s %-10s %s\n' "$i" "$(hum "$(delta "$i" rx)")" "$(hum "$(delta "$i" tx)")" "$(fa "$(hs_age "$i")")"
+    done
+    printf '\nСобытия за 24 ч:\n'
+    if [ -n "$BACKUP" ]; then
+      printf '  переключений на запасной: %s\n' "$(evcount switch)"
+      printf '  возвратов на основной: %s\n' "$(evcount return)"
+      printf '  время на запасном: %s\n' "$(fd "$(backup_secs)")"
+    fi
+    printf '  канал(ы) не отвечали: %s раз\n' "$(evcount both)"
+    printf '\nПоследние события:\n'
+    if [ -n "$evs" ]; then echo "$evs" | sed 's/^/  /'; else echo "  нет"; fi
+    printf '\nЖурнал failover (последние 8 строк):\n'
+    if [ -n "$journal" ]; then echo "$journal" | sed 's/^/  /'; else echo "  пусто"; fi
+    printf '\nСистема:\n'
+    printf '  нагрузка: %s\n' "$(cut -d' ' -f1-3 /proc/loadavg)"
+    printf '  RAM: %s\n' "$(free -m | awk '/^Mem:/{print $3"/"$2" MB"}')"
+    t=/sys/class/thermal/thermal_zone0/temp
+    [ -r $t ] &amp;&amp; printf '  температура: %s°C\n' $(( $(cat $t) / 1000 ))
+    printf '  /data: %s\n' "$(df -h "$DD" | awk 'NR==2{print $5" занято, свободно "$4}')"
+    printf '  службы: failover=%s notify=%s\n' "$(systemctl is-active awg-failover)" "$(systemctl is-active awg-notify)"
+    printf '  процессов amneziawg-go: %s\n' "$(pgrep -c amneziawg-go)"
+    printf '  сбоев доставки в Telegram за 24 ч: %s\n' "$(awk -v s="$(date -d '24 hours ago' '+%F %T')" '($1" "$2)&gt;=s &amp;&amp; /не удалось/{n++} END{print n+0}' "$DD/notify.log" 2&gt;/dev/null)"
+  )
+  send "&lt;b&gt;📊 Суточный отчёт&lt;/b&gt; · $H · $(date '+%F')"$'\n'"&lt;pre&gt;$(printf '%s' "$body" | esc)&lt;/pre&gt;"
+  save_base
+  [ -f "$EV" ] &amp;&amp; tail -n 500 "$EV" &gt; "$EV.t" &amp;&amp; mv "$EV.t" "$EV"
+}
+
+<span class="c"># ---------- реакция на строку журнала сторожа ----------</span>
+last_both=0
+on_line() {
+  local l="$1" now title extra lastsw
+  now=$(date +%s)
+  case "$l" in
+    *ПЕРЕКЛЮЧЕНИЕ*)
+      echo "$now|switch" &gt;&gt; "$EV"
+      title="⚠️ Переключение на запасной канал"
+      extra="Основной канал не проходит проверку. PBR-трафик идёт через $BACKUP." ;;
+    *ВОЗВРАТ*|*"возврат на"*)
+      lastsw=$(awk -F'|' '$2=="switch"{t=$1} END{print t}' "$EV" 2&gt;/dev/null)
+      echo "$now|return" &gt;&gt; "$EV"
+      title="✅ Возврат на основной канал"
+      extra="PBR-трафик снова через $MAIN."
+      [ -n "$lastsw" ] &amp;&amp; extra="$extra На запасном проработали: $(fd $((now - lastsw)))." ;;
+    *"оба канала не отвечают"*|*"единственный канал"*)
+      [ $((now - last_both)) -lt 300 ] &amp;&amp; return
+      last_both=$now
+      echo "$now|both" &gt;&gt; "$EV"
+      title="🛑 Нет рабочего канала"
+      extra="PBR-трафик заблокирован (утечки в WAN нет)." ;;
+    *ВОССТАНОВЛЕН*)
+      title="✅ Канал восстановлен"
+      extra="PBR-трафик снова идёт через $MAIN." ;;
+    *) return ;;
+  esac
+  sleep 4   # даём маршрутам устояться
+  send "&lt;b&gt;${title}&lt;/b&gt; · $H"$'\n'"$(printf '%s' "$extra" | esc)"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"$'\n'"&lt;code&gt;$(printf '%s' "$l" | trunc 200 | esc)&lt;/code&gt;"
+}
+
+<span class="c"># ---------- фоновый контроль раз в минуту ----------</span>
+declare -A BAD ALR
+chk() {   # $1=имя $2=1 если плохо $3=тревога $4=восстановление; тревога после 3 плохих проверок подряд
+  local n=$1
+  if [ "$2" = 1 ]; then
+    BAD[$n]=$(( ${BAD[$n]:-0} + 1 ))
+    if [ "${BAD[$n]}" -ge 3 ] &amp;&amp; [ "${ALR[$n]:-0}" = 0 ]; then
+      ALR[$n]=1; send "&lt;b&gt;$3&lt;/b&gt; · $H"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"
+    fi
+  else
+    BAD[$n]=0
+    if [ "${ALR[$n]:-0}" = 1 ]; then
+      ALR[$n]=0; send "&lt;b&gt;$4&lt;/b&gt; · $H"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"
+    fi
+  fi
+}
+monitor() {
+  local a bad
+  while sleep 60; do
+    if [ -n "$BACKUP" ]; then
+      a=$(hs_age "$BACKUP"); bad=0; { [ "$a" -lt 0 ] || [ "$a" -gt 300 ]; } &amp;&amp; bad=1
+      chk backup "$bad" "⚠️ Запасной канал потерян: при падении основного переключаться некуда" "✅ Запасной канал восстановлен"
+    fi
+    a=$(hs_age "$MAIN"); bad=0; { [ "$a" -lt 0 ] || [ "$a" -gt 300 ]; } &amp;&amp; bad=1
+    chk main "$bad" "⚠️ $MAIN: handshake старше 5 минут" "✅ $MAIN: handshake в норме"
+    bad=0; systemctl is-active --quiet awg-failover || bad=1
+    chk svc "$bad" "🛑 awg-failover остановлен: автопереключения нет" "✅ awg-failover снова работает"
+    if [ $((10#$(date +%H%M))) -ge $((10#$REPORT_TIME)) ] &amp;&amp; [ "$(cat "$LASTREP" 2&gt;/dev/null)" != "$(date +%F)" ]; then
+      date +%F &gt; "$LASTREP"
+      report
+    fi
+  done
+}
+
+daemon() {
+  local up t
+  [ -f "$ST" ] || save_base
+  monitor &amp; MON=$!
+  trap 'kill $MON 2&gt;/dev/null' EXIT INT TERM
+  sleep 20   # после загрузки даём туннелям подняться
+  up=$(awk '{print int($1)}' /proc/uptime)
+  if [ "$up" -lt 900 ]; then t="🔄 Роутер загрузился, наблюдатель запущен"; else t="🟢 Наблюдатель awg-notify перезапущен"; fi
+  send "&lt;b&gt;$t&lt;/b&gt; · $H"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"
+  tail -n0 -F "$LOGF" 2&gt;/dev/null | while IFS= read -r l; do on_line "$l"; done
+}
+
+case "${1:-daemon}" in
+  report) report ;;
+  test)   if send "&lt;b&gt;✅ Тест уведомлений&lt;/b&gt; · $H"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"; then echo "отправлено"; else echo "ошибка, см. $DD/notify.log"; fi ;;
+  daemon) daemon ;;
+  *)      echo "использование: $0 [daemon|report|test]"; exit 1 ;;
+esac
+EOF
+chmod 700 /data/awg/awg-notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 214 строк">Показать целиком · 214 строк</button></figure>
+  </div></div>
+
+  <div class="step"><div class="sn">10.4</div><div class="sb">
+    <h4>Тест без службы</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/awg-notify.sh test
+/data/awg/awg-notify.sh report
+cat /data/awg/notify.log 2&gt;/dev/null</code></pre></figure>
+    <div class="note n-check"><b>Проверка</b><p>В Telegram пришли два сообщения, <code>notify.log</code> пуст или его нет. Коды в логе: <code>401</code> означает неверный токен, <code>400</code> означает, что не нажат Start у бота, <code>000</code> означает, что Telegram недоступен по этому пути.</p></div>
+  </div></div>
+
+  <div class="step"><div class="sn">10.5</div><div class="sb">
+    <h4>Служба</h4>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">/data/awg/awg-notify.service</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.service &lt;&lt;'EOF'
+[Unit]
+Description=AmneziaWG failover Telegram notifications
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/awg-notify.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+cp /data/awg/awg-notify.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now awg-notify</code></pre></figure>
+    <p>Через ~20 секунд придёт «Наблюдатель awg-notify перезапущен». В сценарии C проверьте событие: <code>touch /tmp/awg-sim-down</code>, через 15–20 секунд придёт «Переключение», затем <code>rm /tmp/awg-sim-down</code> и через 10 минут «Возврат».</p>
+    <p class="muted">Если роутер выключится целиком, сообщить об этом будет некому. Для такого случая нужен внешний мониторинг (например, healthchecks.io с пингом раз в 5 минут).</p>
+  </div></div>
+</section>
+
+<section id="p11" class="part" data-n="11" data-title="Обслуживание" data-need="R">
+  <div class="ph"><div class="num">11</div><div><h2>Обслуживание</h2><div class="meta"></div></div></div>
+
+  <h3>После обновления прошивки UniFi</h3>
+  <p>Обновление может очистить <code>/etc/systemd/system</code> и <code>/root/.bashrc</code>. Раздел <code>/data</code> сохраняется, а вместе с ним все копии. Создайте скрипт восстановления заранее:</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-restore.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-restore.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-restore.sh — вернуть автозапуск и панель после обновления прошивки</span>
+<span class="c"># (UniFi может очистить /etc/systemd/system и /root/.bashrc; /data при этом сохраняется).</span>
+D=/data/awg
+cp "$D/awg-failover.service" /etc/systemd/system/
+NOTIFY=0; MOTD=0
+[ -f "$D/awg-notify.service" ] &amp;&amp; [ -f "$D/telegram.env" ] &amp;&amp; { NOTIFY=1; cp "$D/awg-notify.service" /etc/systemd/system/; }
+[ -f "$D/awg-motd.service" ] &amp;&amp; [ -f "$D/motd.orig" ] &amp;&amp; { MOTD=1; cp "$D/awg-motd.service" /etc/systemd/system/; }
+systemctl daemon-reload
+systemctl enable --now awg-failover
+[ $NOTIFY = 1 ] &amp;&amp; systemctl enable --now awg-notify
+[ $MOTD = 1 ] &amp;&amp; systemctl enable --now awg-motd
+grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null || cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
+alias awgs='/data/awg/status.sh'
+alias awg-audit='/data/awg/audit.sh'
+case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
+RC
+touch /root/.hushlogin
+echo "Готово. Проверьте: /data/awg/audit.sh"
+EOF
+chmod 755 /data/awg/awg-restore.sh</code></pre></figure>
+  <p>После обновления: <code>/data/awg/awg-restore.sh</code>, затем <code>/data/awg/audit.sh</code>. Если UniFi пересоздал профиль VPN Client, а метка или таблица поменялись, сначала <code>/data/awg/awg-detect.sh</code>, затем <code>systemctl restart awg-failover</code>. Если после крупного обновления UniFi перестанет создавать PBR-правило с меткой, схема работать не будет: проверьте <code>ip rule show | grep fwmark</code>.</p>
+
+  <h3>Частые операции</h3>
+  <div class="tw"><table>
+    <tr><th>Задача</th><th>Команды</th></tr>
+    <tr><td>Новый конфиг от провайдера</td><td class="wrapc">замените <code>/data/awg/main.conf</code> (<code>cat &gt;</code>, <kbd>Ctrl</kbd>+<kbd>D</kbd>, <code>chmod 600</code>), затем <code>/data/awg/up.sh awgmain</code>. Разрыв пара секунд.</td></tr>
+    <tr><td>Перевыпустить ключи своего VPS</td><td class="wrapc">на VPS: <code>systemctl stop awg-server; mv /etc/amnezia/server.conf /root/server.conf.old</code>, затем <code>VPS_IP=… /root/awg-server-setup.sh</code>. Новый <code>client.conf</code> перенесите на роутер (шаг 3.4) и выполните <code>/data/awg/up.sh awgbackup</code>. Старый файл удалите: <code>shred -u /root/server.conf.old</code>.</td></tr>
+    <tr><td>Время возврата, подсети</td><td class="wrapc">правка <code>/data/awg/awg.env</code>, затем <code>systemctl restart awg-failover</code></td></tr>
+    <tr><td>Пересоздали профиль VPN Client</td><td class="wrapc"><code>/data/awg/awg-detect.sh</code>, затем <code>systemctl restart awg-failover</code></td></tr>
+    <tr><td>Временно отключить AWG</td><td class="wrapc"><code>systemctl stop awg-failover</code>. Маршруты уберутся, PBR-трафик пойдёт по правилам UniFi, то есть в мёртвую рельсу или в kill switch.</td></tr>
+    <tr><td>Очистить историю команд</td><td class="wrapc"><code>history -c; : &gt; /root/.bash_history</code> на роутере и на VPS, в конце установки</td></tr>
+  </table></div>
+
+  <h3>Полное удаление</h3>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-uninstall.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-uninstall.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-uninstall.sh — полностью убрать установку с роутера.</span>
+<span class="c">#   awg-uninstall.sh          остановить и убрать службы, маршруты, правила, интерфейсы</span>
+<span class="c">#   awg-uninstall.sh --purge  то же + удалить /data/awg (конфиги с ключами тоже!)</span>
+D=/data/awg
+[ -r $D/awg.env ] &amp;&amp; . $D/awg.env
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
+for u in awg-notify awg-failover awg-motd; do
+  systemctl disable --now $u 2&gt;/dev/null
+  rm -f /etc/systemd/system/$u.service
+done
+systemctl daemon-reload
+pkill -f failover.sh 2&gt;/dev/null
+[ -x $D/failover.sh ] &amp;&amp; $D/failover.sh cleanup 2&gt;/dev/null
+for i in $MAIN $BACKUP; do
+  while iptables -t nat -D POSTROUTING -o $i -j MASQUERADE 2&gt;/dev/null; do :; done
+  while iptables -t mangle -D FORWARD -o $i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2&gt;/dev/null; do :; done
+  while iptables -t mangle -D FORWARD -i $i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2&gt;/dev/null; do :; done
+  while iptables -D FORWARD -o $i -j ACCEPT 2&gt;/dev/null; do :; done
+  while iptables -D FORWARD -i $i -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2&gt;/dev/null; do :; done
+  ip link del $i 2&gt;/dev/null
+done
+for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network $s 2&gt;/dev/null; done
+sed -i '/AWGS_SHOWN/d;/alias awgs=/d;/alias awg-audit=/d' /root/.bashrc 2&gt;/dev/null
+rm -f /root/.hushlogin
+[ -f $D/motd.orig ] &amp;&amp; cp -a $D/motd.orig /etc/motd
+if [ "$1" = --purge ]; then rm -rf $D; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
+echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
+EOF
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 31 строк">Показать целиком · 31 строк</button></figure>
+  <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
+</section>
+
+<section id="p12" class="part" data-n="12" data-title="Диагностика и грабли" data-need="*">
+  <div class="ph"><div class="num">12</div><div><h2>Диагностика и грабли</h2></div></div>
+  <p class="why">Всё ниже случилось на самом деле, пока собиралась эта схема. Таблица экономит часы: найдите свой симптом.</p>
+
+  <div class="tw"><table>
+    <tr><th>Симптом</th><th>Причина</th><th>Что делать</th></tr>
+    <tr><td>Handshake прошёл, 4–5 пингов, потом тишина в обе стороны через 5–8 с. Смена порта не помогает</td><td>DPI распознаёт WireGuard и рубит поток</td><td>AmneziaWG вместо WireGuard. Подтвердить можно тестом ниже</td></tr>
+    <tr><td>На сервере <code>tcpdump</code> пуст, роутер шлёт handshake по 148 байт</td><td>Порт закрыт у хостера или в ufw, неверный IP или порт</td><td>Файрвол хостера, <code>ufw status</code>, Endpoint в конфиге</td></tr>
+    <tr><td>Пакеты до сервера доходят, ответа (92 байта) нет</td><td>Сервер не знает ключ клиента: peer не загружен или ключи перепутаны</td><td><code>awg show awg0</code> на сервере: peer с публичным ключом роутера и <code>allowed ips</code>. Через WireGuard-inbound 3x-ui так и было</td></tr>
+    <tr><td>Handshake есть, ping через туннель не идёт, сайты открываются</td><td>ICMP режется у оператора или в его цепочке</td><td>Не поломка. Сторож проверяет по HTTPS</td></tr>
+    <tr><td>Handshake есть, трафика из интернета через свой VPS нет</td><td>Нет <code>ip_forward</code> или NAT на сервере</td><td><code>/root/audit-server.sh</code></td></tr>
+    <tr><td><code>awg setconf</code>: <code>Line unrecognized</code></td><td>Бинарник не знает параметр конфига</td><td>Свежая сборка или конфиг без новых параметров</td></tr>
+    <tr><td>Устройства под PBR без интернета</td><td>Сторож не работает, или в <code>awg.env</code> не та таблица/метка (профиль пересоздан)</td><td><code>awgs</code>, <code>awg-detect.sh</code>, <code>systemctl restart awg-failover</code></td></tr>
+    <tr><td>В туннель ушли и устройства вне PBR</td><td>Правило по подсети вместо метки (так выглядела наша первая версия)</td><td><code>ip rule show</code>: лишних правил с приоритетом меньше 32504 быть не должно; <code>awg-audit</code></td></tr>
+    <tr><td>Оба канала нестабильны, endpoint «прыгает»</td><td>Один ключ на двух устройствах</td><td>Отдельный конфиг для роутера, старый клиент выключить</td></tr>
+    <tr><td>Дубли правил NAT/FORWARD, третий процесс <code>amneziawg-go</code></td><td>Два экземпляра сторожа или старая служба</td><td><code>awg-audit</code> и его подсказки</td></tr>
+    <tr><td>Имитация сбоя правилом iptables «сама пропала»</td><td>UniFi пересобирает свои цепочки</td><td>Флаг <code>/tmp/awg-sim-down</code></td></tr>
+    <tr><td>После <code>wg-quick down/up</code> пропали маршруты</td><td>Интерфейс пересоздан, ядро удаляет привязанные к нему маршруты</td><td>Сторож восстанавливает маршрут за 5 с</td></tr>
+    <tr><td>Скрипт сервера выполнился на роутере</td><td>Перепутали окно SSH</td><td>Смотрите на приглашение; серверные скрипты гайда на роутере не запускаются</td></tr>
+    <tr><td>Баннер UniFi не убирается настройкой sshd</td><td>Он печатается из <code>/etc/motd</code></td><td>Шаг 8.3</td></tr>
+    <tr><td>После обновления прошивки нет панели и автозапуска</td><td>Очищены <code>/etc</code> и <code>.bashrc</code></td><td><code>/data/awg/awg-restore.sh</code></td></tr>
+    <tr><td>Telegram: в логе 409 Conflict</td><td>Тот же бот читается другой программой (например, 3x-ui)</td><td>Отдельный бот для роутера</td></tr>
+  </table></div>
+
+  <h3 id="hs">Handshake не проходит: смотрим с двух сторон</h3>
+  <p>Запустите одновременно и сравните: что ушло с роутера и что пришло на сервер.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">что уходит и приходит на WAN</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>. /data/awg/awg.env
+tcpdump -ni $WANIF udp and host <span class="v" data-v="VPS_IP">203.0.113.10</span></code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">что доходит до сервера</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>tcpdump -ni any udp port 51823</code></pre></figure>
+  <div class="tw"><table>
+    <tr><th>Роутер</th><th>Сервер</th><th>Вывод</th></tr>
+    <tr><td>Исходящие есть, входящих нет</td><td>пусто</td><td>Пакеты теряются по пути: файрвол хостера, порт, IP</td></tr>
+    <tr><td>Исходящие есть</td><td>входящие есть, ответов нет</td><td>Ключи или peer на сервере</td></tr>
+    <tr><td>Обмен идёт, потом обрывается в обе стороны</td><td>то же</td><td>DPI. Тест ниже</td></tr>
+    <tr><td>Исходящих нет</td><td>—</td><td>Маршрутизация на роутере: <code>ip route get <span class="v" data-v="VPS_IP">203.0.113.10</span></code></td></tr>
+  </table></div>
+
+  <h3>Тест: режет ли провайдер WireGuard</h3>
+  <p>Проверяем, живёт ли обычный двусторонний UDP-поток до сервера 40 секунд. Если он живёт, а настоящий WireGuard умирает за 5–8 секунд, причина в распознавании WireGuard, и нужна обфускация. На сервере временно откройте порт 5555 (<code>ufw allow 5555/udp</code>, если ufw включён, и у хостера).</p>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">эхо-сервер, остановка Ctrl+C</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>python3 - &lt;&lt;'EOF'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('0.0.0.0', 5555))
+while True:
+    d, a = s.recvfrom(2048)
+    s.sendto(d, a)
+EOF</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">40 пакетов по 128 байт, раз в секунду</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>python3 - &lt;&lt;'EOF'
+import socket, os, time
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(1)
+ok = 0
+for i in range(40):
+    s.sendto(os.urandom(128), ('<span class="v" data-v="VPS_IP">203.0.113.10</span>', 5555))
+    try:
+        s.recvfrom(2048); ok += 1
+    except socket.timeout:
+        pass
+    time.sleep(1)
+print("ответов:", ok, "из 40")
+EOF</code></pre></figure>
+  <div class="note n-exp"><b>Как это было у нас</b>
+    <p>Обычный UDP: 40 из 40. UDP с поддельными заголовками WireGuard (тип 1, 2 и 4) тоже прошёл, 80 из 80. А настоящий WireGuard обрывался через 5–8 секунд на любом порту. Значит, DPI смотрит на настоящий handshake, а не на размеры и первые байты, и поддельный тест его не воспроизводит. Решающим оказался запуск настоящего AWG: он сразу дал 30 из 30 пингов и работал стабильно. После теста закройте порт: <code>ufw delete allow 5555/udp</code>.</p>
+  </div>
+</section>
+
+<section id="p13" class="part" data-n="13" data-title="Справочник" data-need="*">
+  <div class="ph"><div class="num">13</div><div><h2>Справочник</h2></div></div>
+
+  <h3>Файлы на роутере (<code>/data/awg</code>)</h3>
+  <div class="tw"><table>
+    <tr><th>Файл</th><th>Назначение</th><th>Часть</th></tr>
+    <tr><td><code>amneziawg-go</code>, <code>awg</code></td><td>Бинарники AmneziaWG (aarch64)</td><td>1</td></tr>
+    <tr><td><code>awg-detect.sh</code></td><td>Находит таблицу, метку и рельсу PBR, пишет <code>awg.env</code></td><td>2</td></tr>
+    <tr><td><code>awg.env</code> 🔒</td><td>Все параметры установки</td><td>2</td></tr>
+    <tr><td><code>main.conf</code> 🔒, <code>backup.conf</code> 🔒</td><td>Конфиги туннелей, содержат ключи</td><td>4, 3</td></tr>
+    <tr><td><code>up.sh</code></td><td>Поднять туннель(и): <code>up.sh [awgmain|awgbackup]</code></td><td>4</td></tr>
+    <tr><td><code>failover.sh</code>, <code>failover.log</code></td><td>Сторож и его журнал (~1000 строк)</td><td>5</td></tr>
+    <tr><td><code>awg-failover.service</code></td><td>Копия юнита для восстановления</td><td>5</td></tr>
+    <tr><td><code>status.sh</code></td><td>Панель <code>awgs</code></td><td>8</td></tr>
+    <tr><td><code>awg-motd.service</code>, <code>motd.orig</code></td><td>Очистка баннера, оригинал баннера</td><td>8</td></tr>
+    <tr><td><code>audit.sh</code></td><td>Аудит <code>awg-audit</code></td><td>9</td></tr>
+    <tr><td><code>telegram.env</code> 🔒, <code>notify.sh</code>, <code>awg-notify.sh</code>, <code>awg-notify.service</code></td><td>Уведомления; <code>notify.log</code>, <code>notify.spool</code>, <code>notify.events</code>, <code>notify.state</code> — их служебные файлы</td><td>10</td></tr>
+    <tr><td><code>awg-restore.sh</code>, <code>awg-uninstall.sh</code></td><td>Восстановление после обновления, удаление</td><td>11</td></tr>
+  </table></div>
+
+  <h3>Файлы на VPS</h3>
+  <div class="tw"><table>
+    <tr><th>Файл</th><th>Назначение</th></tr>
+    <tr><td><code>/etc/amnezia/server.conf</code> 🔒</td><td>Ключ сервера, порт, параметры обфускации, peer роутера</td></tr>
+    <tr><td><code>/usr/local/bin/awg-up.sh</code></td><td>Поднимает <code>awg0</code>, NAT, FORWARD</td></tr>
+    <tr><td><code>/etc/systemd/system/awg-server.service</code></td><td>Автозапуск</td></tr>
+    <tr><td><code>/etc/sysctl.d/99-awg.conf</code></td><td><code>ip_forward=1</code></td></tr>
+    <tr><td><code>/root/awg-server-build.sh</code>, <code>awg-server-setup.sh</code>, <code>audit-server.sh</code></td><td>Сборка, установка, аудит</td></tr>
+  </table></div>
+
+  <h3>Параметры <code>awg.env</code></h3>
+  <div class="tw"><table>
+    <tr><th>Параметр</th><th>Пример</th><th>Смысл</th></tr>
+    <tr><td><code>TABLE</code>, <code>MARK</code>, <code>PRIO</code>, <code>RAIL_IF</code></td><td><code>178</code>, <code>0x6a0000/0x7e0000</code>, <code>32504</code>, <code>wgclt1</code></td><td>Находит <code>awg-detect.sh</code>; руками не правятся</td></tr>
+    <tr><td><code>WANIF</code></td><td><code>eth3</code></td><td>WAN-интерфейс для панели и диагностики</td></tr>
+    <tr><td><code>MAIN</code>, <code>BACKUP</code></td><td><code>awgmain</code>, <code>awgbackup</code> или пусто</td><td>Имена туннелей; пустой <code>BACKUP</code> означает режим одного туннеля</td></tr>
+    <tr><td><code>RECOVER_SEC</code></td><td><code>600</code></td><td>Сколько основной должен работать без сбоев до возврата</td></tr>
+    <tr><td><code>EXTRA_SUBNETS</code></td><td><code>"192.168.3.0/24"</code></td><td>Подсети VPN-сервера роутера для PBR</td></tr>
+    <tr><td><code>VPS_IP</code></td><td><code>203.0.113.10</code></td><td>Только для подсказок в панели</td></tr>
+  </table></div>
+
+  <h3>Адреса и числа по умолчанию</h3>
+  <div class="tw"><table>
+    <tr><th>Что</th><th>Значение</th></tr>
+    <tr><td>Порт сервера AWG, подсеть, адреса</td><td><code>51823/udp</code>, <code>10.0.1.0/24</code>: сервер <code>.1</code>, роутер <code>.2</code></td></tr>
+    <tr><td>MTU</td><td>из конфига; если там нет, то <code>1380</code> (запас под обфускацию). TCP MSS выравнивается автоматически</td></tr>
+    <tr><td>Метрики в таблице PBR</td><td>активный туннель <code>5</code>, рельса UniFi <code>37</code>, <code>blackhole</code> <code>200</code></td></tr>
+    <tr><td>Проверка канала</td><td>HTTPS к <code>1.1.1.1</code> и <code>8.8.8.8</code>, потом ping; раз в 5 с; 3 сбоя</td></tr>
+    <tr><td>Флаг имитации падения</td><td><code>/tmp/awg-sim-down</code> (исчезает при перезагрузке)</td></tr>
+    <tr><td>Рельса</td><td><code>10.255.255.2/32</code> → <code>192.0.2.1:51820</code> (несуществующий узел)</td></tr>
+  </table></div>
+
+  <h3>Шпаргалка</h3>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">самое нужное</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgs                          <span class="c"># панель;  awgs -s кратко;  awgs -i с внешними IP</span>
+awg-audit                     <span class="c"># аудит (только чтение)</span>
+tail -f /data/awg/failover.log
+. /data/awg/awg.env; ip route show table $TABLE     <span class="c"># активный канал = metric 5</span>
+/data/awg/awg show awgmain
+curl -s --interface awgmain https://ifconfig.me
+touch /tmp/awg-sim-down       <span class="c"># имитация падения основного;  rm /tmp/awg-sim-down — отмена</span>
+/data/awg/up.sh awgmain       <span class="c"># применить новый main.conf</span>
+systemctl restart awg-failover
+journalctl -t awg-failover -n 30 --no-pager</code></pre></figure>
+
+  <h3 id="build">Сборка бинарников для роутера самостоятельно</h3>
+  <p>Если не хотите брать готовые файлы. Собирается на любом Linux x86_64 (например, на вашем VPS после шага 3.1, исходники уже лежат в <code>/root/awgbuild</code>). <b>Этот путь в нашей установке не проверялся</b>, мы использовали готовые бинарники; проверяйте результат командой из шага 1.2.</p>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">кросс-сборка под aarch64</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>apt-get install -y gcc-aarch64-linux-gnu
+export PATH=$PATH:/snap/bin
+cd /root/awgbuild/go/amneziawg-go-*/ &amp;&amp; GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /root/awgbuild/amneziawg-go-arm64 .
+cd /root/awgbuild/tools/amneziawg-tools-*/src &amp;&amp; make clean &amp;&amp; make CC=aarch64-linux-gnu-gcc LDFLAGS=-static &amp;&amp; cp wg /root/awgbuild/awg-arm64
+make clean &amp;&amp; make &amp;&amp; install -m 755 wg /usr/local/bin/awg      <span class="c"># вернуть серверную сборку awg</span>
+file /root/awgbuild/*-arm64</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">забрать на роутер</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>scp root@<span class="v" data-v="VPS_IP">203.0.113.10</span>:/root/awgbuild/amneziawg-go-arm64 /data/awg/amneziawg-go
+scp root@<span class="v" data-v="VPS_IP">203.0.113.10</span>:/root/awgbuild/awg-arm64 /data/awg/awg
+chmod 755 /data/awg/amneziawg-go /data/awg/awg; /data/awg/awg --version</code></pre></figure>
+</section>
+
+<footer>
+  <p>Гайд собран по реальной установке на UniFi Dream Router 7 в октябре 2026 года. Адреса в примерах условные: <code>203.0.113.10</code> — ваш VPS, <code>198.51.100.20</code> — сервер провайдера. Интерфейс UniFi и пути в меню меняются от версии к версии; если пункт называется иначе, ищите по смыслу. Ubiquiti предупреждает, что изменения через CLI выходят за рамки штатной работы устройства: вы делаете это на свой риск, а <code>awg-uninstall.sh</code> убирает с роутера всё, что поставил этот гайд.</p>
+</footer>
+</main>
+</div>
+</div>
+<script>
+(function(){
+  var LS = {
+    get: function(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+    set: function(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  };
+
+  /* ---------- оглавление: открыто на широком экране ---------- */
+  var tocd = document.getElementById('tocd');
+  var mq = window.matchMedia('(min-width: 961px)');
+  function syncToc(){ if (mq.matches) tocd.open = true; }
+  syncToc();
+  if (mq.addEventListener) mq.addEventListener('change', syncToc);
+  document.querySelectorAll('#toclist a').forEach(function(a){
+    a.addEventListener('click', function(){ if (!mq.matches) tocd.open = false; });
+  });
+
+  /* ---------- сценарий ---------- */
+  var parts = Array.prototype.slice.call(document.querySelectorAll('section.part[data-need]'));
+  var LABEL = { need:'нужно', skip:'пропустить', rec:'рекомендуется', opt:'по желанию', ref:'справка' };
+  function status(need, scen, ext){
+    if (need === '*') return 'ref';
+    if (need === 'R') return 'rec';
+    if (need === 'O') return 'opt';
+    if (need === 'X') return ext ? 'need' : 'skip';
+    return need.indexOf(scen) >= 0 ? 'need' : 'skip';
+  }
+  function apply(){
+    var scen = (document.querySelector('input[name="scen"]:checked') || {}).value || 'A';
+    var ext = document.getElementById('scX').checked;
+    var route = [];
+    parts.forEach(function(sec){
+      var st = status(sec.dataset.need, scen, ext);
+      var meta = sec.querySelector('.ph .meta');
+      if (meta && st !== 'ref') {
+        var tail = (st === 'need' || st === 'skip') ? ' в сценарии ' + scen : '';
+        meta.innerHTML = '<span class="badge ' + (st==='need'?'need':st==='skip'?'skip':'') + '">' + LABEL[st] + tail + '</span>';
+      }
+      var a = document.querySelector('#toclist a[href="#' + sec.id + '"]');
+      if (a) {
+        a.classList.remove('need','skip','opt');
+        var s = a.querySelector('.st');
+        if (st === 'need') { a.classList.add('need'); s.textContent = 'нужно'; }
+        else if (st === 'skip') { a.classList.add('skip'); s.textContent = ''; }
+        else if (st === 'rec' || st === 'opt') { a.classList.add('opt'); s.textContent = st === 'rec' ? 'рекоменд.' : 'опция'; }
+        else { s.textContent = ''; }
+      }
+      if (st === 'need') route.push('<a class="pill" href="#' + sec.id + '">' + sec.dataset.n + ' ' + sec.dataset.title + '</a>');
+      if (st === 'rec' || st === 'opt') route.push('<a class="pill o" href="#' + sec.id + '">' + sec.dataset.n + ' ' + sec.dataset.title + '</a>');
+    });
+    document.getElementById('route').innerHTML = '<span class="muted">Ваш маршрут:</span> ' + route.join(' ');
+    LS.set('awg-scen', scen); LS.set('awg-ext', ext ? '1' : '0');
+  }
+  var savedScen = LS.get('awg-scen');
+  if (savedScen) { var r = document.querySelector('input[name="scen"][value="' + savedScen + '"]'); if (r) r.checked = true; }
+  if (LS.get('awg-ext') === '1') document.getElementById('scX').checked = true;
+  document.querySelectorAll('input[name="scen"], #scX').forEach(function(i){ i.addEventListener('change', apply); });
+  apply();
+
+  /* ---------- подстановка своих значений в команды ---------- */
+  var IPRE = /^[A-Za-z0-9.:\-]{1,64}$/;
+  document.querySelectorAll('.vars input[data-var]').forEach(function(inp){
+    var name = inp.dataset.var, saved = LS.get('awg-var-' + name);
+    if (saved && IPRE.test(saved)) inp.value = saved;
+    function upd(){
+      var v = inp.value.trim();
+      if (!IPRE.test(v)) { inp.setAttribute('aria-invalid','true'); return; }
+      inp.removeAttribute('aria-invalid');
+      document.querySelectorAll('.v[data-v="' + name + '"]').forEach(function(s){ s.textContent = v; });
+      LS.set('awg-var-' + name, v);
+    }
+    inp.addEventListener('input', upd); upd();
+  });
+
+  /* ---------- копирование ---------- */
+  document.querySelectorAll('.cb .copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var code = btn.closest('.cb').querySelector('pre code');
+      var text = code.textContent.replace(/\n$/, '') + '\n';
+      function ok(){ btn.textContent = 'Скопировано'; btn.classList.add('done'); setTimeout(function(){ btn.textContent = 'Копировать'; btn.classList.remove('done'); }, 1600); }
+      function fallback(){
+        var sel = window.getSelection(), rg = document.createRange();
+        rg.selectNodeContents(code); sel.removeAllRanges(); sel.addRange(rg);
+        btn.textContent = 'Выделено: Ctrl+C';
+        setTimeout(function(){ btn.textContent = 'Копировать'; }, 2500);
+      }
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
+        else fallback();
+      } catch(e) { fallback(); }
+    });
+  });
+
+  /* ---------- длинные блоки ---------- */
+  document.querySelectorAll('.cb.long .more').forEach(function(b){
+    b.addEventListener('click', function(){
+      var cb = b.closest('.cb'); var open = cb.classList.toggle('open');
+      b.textContent = open ? 'Свернуть' : b.dataset.label;
+      b.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
+
+  /* ---------- подсветка текущей части в оглавлении ---------- */
+  if ('IntersectionObserver' in window) {
+    var links = {};
+    document.querySelectorAll('#toclist a').forEach(function(a){ links[a.getAttribute('href').slice(1)] = a; });
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){
+        if (e.isIntersecting && links[e.target.id]) {
+          Object.keys(links).forEach(function(k){ links[k].style.background = ''; });
+          links[e.target.id].style.background = 'var(--surface)';
+        }
+      });
+    }, { rootMargin: '-10% 0px -80% 0px' });
+    parts.forEach(function(s){ io.observe(s); });
+  }
+})();
+</script>
+
+</body></html>
