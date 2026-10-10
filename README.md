@@ -7,7 +7,7 @@
 На роутере по SSH под root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/install.sh)
 ```
 
 Мастер спросит сценарий, конфиги и опции, проверит каждый шаг и при ошибке предложит варианты. Повторный запуск открывает меню обслуживания:
