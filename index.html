@@ -1,5 +1,5 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
-<title>AmneziaWG на UDR7 (Copy)</title>
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>
+<title>AmneziaWG на UDR7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap">
@@ -264,7 +264,7 @@ kbd{font-family:var(--f-mono);font-size:.82em;border:1px solid var(--line);borde
     <li><b>Всё хранится в <code>/data/awg</code>.</b> Этот раздел переживает обновления прошивки, а автозапуск восстанавливается одной командой.</li>
   </ul>
   <div class="note n-exp"><b>Почему не обычный WireGuard</b>
-    <p>Это первый урок из реальной установки. Обычный WireGuard до своего сервера поднимался, проходил handshake, отдавал 4–5 пингов и через 5–8 секунд замолкал в обе стороны. Обычный UDP на тот же сервер и порт жил без обрывов (40 из 40 пакетов), смена порта не помогала. Так ведёт себя DPI, который распознаёт WireGuard и рубит поток. AmneziaWG маскирует handshake и размеры пакетов, и с ним тот же сервер работал стабильно. Как проверить это у себя, описано в части «Диагностика».</p>
+    <p>Это первый урок из реальной установки. Обычный WireGuard до своего сервера поднимался, проходил handshake, отдавал 4–5 пингов и через 5–8 секунд замолкал в обе стороны. Обычный UDP на тот же сервер и порт жил без обрывов (40 из 40 пакетов), смена порта не помогала. Так ведёт себя DPI, который распознаёт WireGuard и рубит поток. AmneziaWG маскирует handshake и размеры пакетов, и с ним тот же сервер работал стабильно. Как проверить это у себя, описано в части <a href="#p12">12 «Диагностика и грабли»</a>.</p>
   </div>
   <div class="note n-info"><b>Что проверено вживую, а что нет</b>
     <p><b>Вживую</b> на UDR7 работает вся схема: основной туннель от провайдера с параметрами AWG 2.0 (<code>S3</code>, <code>S4</code>, <code>I1</code>, <code>HeaderProtectionKey</code>), запасной до своего VPS, PBR по доменам и адресам, клиенты VPN-сервера роутера через ipset, переключение и возврат, панель, аудит, уведомления.</p>
@@ -354,7 +354,7 @@ rm -rf /tmp/awgx /tmp/awg-src.tar.gz</code></pre></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/awg --version</code></pre></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>amneziawg-tools v3.1.20260812 - https://amnezia.org</code></pre></figure>
     <div class="note n-check"><b>Проверка</b><p>Версия печатается. Ошибки <code>Exec format error</code> или <code>not found</code> означают, что скачались файлы не под ту архитектуру.</p></div>
-    <p class="muted">Это сторонние сборки. Если не хотите им доверять, соберите сами (см. «Справочник → Сборка бинарников для роутера»).</p>
+    <p class="muted">Это сторонние сборки. Если не хотите им доверять, соберите сами: <a href="#build">часть 13, «Сборка бинарников для роутера»</a>. Для этого нужен сервер с Go, то есть сначала шаг 3.1.</p>
   </div></div>
 </section>
 
@@ -401,6 +401,7 @@ Source:           устройства или сети, которые пуск�
 Destination:      Any, домены или IP-адреса
 Kill Switch:      On
 Save</code></pre></figure>
+    <div class="note n-warn"><b>Тестовое устройство останется без интернета до конца части 5</b><p>Рельса не поднимается, а с включённым Kill Switch UniFi блокирует трафик правила, пока сторож из части 5 не положит маршрут на AWG-туннель. Поэтому первое правило делайте для одного тестового устройства, а не для всей сети или для своего рабочего компьютера.</p></div>
     <p>Для первой проверки достаточно одного правила: одно тестовое устройство, назначение Any. Остальные правила добавите потом, их число и вид роли не играют: все они ведут в одну таблицу. В нашей установке их было десять: по доменам и по адресам.</p>
   </div></div>
 
@@ -740,7 +741,7 @@ echo "  Скрипт ничего не меняет."
 EOF
 chmod 755 /root/audit-server.sh
 /root/audit-server.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 58 строк">Показать целиком · 58 строк</button></figure>
-    <div class="note n-check"><b>Проверка</b><p>Все пункты OK, кроме «handshake с роутера не было»: роутер ещё не подключён. Запустите аудит повторно после части 4 или 6, там должно появиться «handshake роутера: …с назад».</p></div>
+    <div class="note n-check"><b>Проверка</b><p>Все пункты OK, кроме «handshake с роутера не было»: роутер ещё не подключён. Запустите аудит повторно: в сценарии B после шага 4.2, в сценарии C после шага 6.1. Там должно появиться «handshake роутера: …с назад».</p></div>
   </div></div>
 </section>
 
@@ -832,8 +833,8 @@ chmod 755 /data/awg/up.sh
     <div class="note n-check"><b>Проверка</b><p><code>curl</code> показывает IP сервера VPN, handshake свежий, <code>received</code> больше нуля. Если в конфиге нет <code>PersistentKeepalive</code>, handshake появляется только после первого трафика, поэтому сначала идёт <code>curl</code>.</p></div>
     <div class="note n-warn"><b>Если не так</b>
       <ul>
-        <li><code>ОШИБКА: awg setconf</code> и строка с непонятным параметром: бинарник старее конфига. Соберите свежий (Справочник) или попросите у провайдера конфиг без новых параметров.</li>
-        <li>Handshake нет, <code>received: 0 B</code>: пакеты не доходят или сервер их не принимает. Смотрите «Диагностика → Handshake не проходит».</li>
+        <li><code>ОШИБКА: awg setconf</code> и строка с непонятным параметром: бинарник старее конфига. Соберите свежий (<a href="#build">часть 13, «Сборка бинарников для роутера»</a>) или попросите у провайдера конфиг без новых параметров.</li>
+        <li>Handshake нет, <code>received: 0 B</code>: пакеты не доходят или сервер их не принимает. Смотрите <a href="#hs">часть 12, «Handshake не проходит»</a>.</li>
         <li>Handshake есть, но <code>ping -I awgmain 1.1.1.1</code> молчит, а <code>curl</code> работает: у части провайдеров ICMP через туннель не ходит. Это не поломка, сторож проверяет канал по HTTPS.</li>
       </ul>
     </div>
@@ -1043,7 +1044,40 @@ blackhole default metric 200
     <p>Когда никто не пользуется сетью, перезагрузите роутер и через 2–3 минуты повторите шаги 5.2 и 5.3. Сразу после загрузки сторож ждёт 30 секунд, пока UniFi соберёт свои правила.</p>
   </div></div>
 
-  <div class="milestone"><span class="dot"></span>Основа готова. Сценарий A закончен; дальше только опции.</div>
+  <div class="step"><div class="sn">5.5</div><div class="sb">
+    <h4>Подготовьтесь к обновлениям прошивки</h4>
+    <p>Обновление UniFi может очистить <code>/etc/systemd/system</code> и <code>/root/.bashrc</code>. Раздел <code>/data</code> сохраняется, а с ним и копии всех юнитов. Этот скрипт возвращает автозапуск одной командой. Он восстанавливает только то, что у вас установлено: панель, Telegram и очистку баннера из частей 8–10, если вы их потом поставите, тоже.</p>
+<figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-restore.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-restore.sh &lt;&lt;'EOF'
+<span class="c">#!/bin/bash</span>
+<span class="c"># awg-restore.sh — вернуть автозапуск и панель после обновления прошивки</span>
+<span class="c"># (UniFi может очистить /etc/systemd/system и /root/.bashrc; /data при этом сохраняется).</span>
+D=/data/awg
+cp "$D/awg-failover.service" /etc/systemd/system/
+NOTIFY=0; MOTD=0
+[ -f "$D/awg-notify.service" ] &amp;&amp; [ -f "$D/telegram.env" ] &amp;&amp; { NOTIFY=1; cp "$D/awg-notify.service" /etc/systemd/system/; }
+[ -f "$D/awg-motd.service" ] &amp;&amp; [ -f "$D/motd.orig" ] &amp;&amp; { MOTD=1; cp "$D/awg-motd.service" /etc/systemd/system/; }
+systemctl daemon-reload
+systemctl enable --now awg-failover
+[ $NOTIFY = 1 ] &amp;&amp; systemctl enable --now awg-notify
+[ $MOTD = 1 ] &amp;&amp; systemctl enable --now awg-motd
+<span class="c"># панель и команды возвращаются, только если соответствующая часть ставилась</span>
+if [ -x "$D/status.sh" ] &amp;&amp; ! grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null; then
+  cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
+alias awgs='/data/awg/status.sh'
+case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
+RC
+fi
+if [ -x "$D/audit.sh" ] &amp;&amp; ! grep -q "alias awg-audit=" /root/.bashrc 2&gt;/dev/null; then
+  echo "alias awg-audit='/data/awg/audit.sh'" &gt;&gt; /root/.bashrc
+fi
+[ -f "$D/motd.orig" ] &amp;&amp; touch /root/.hushlogin
+if [ -x "$D/audit.sh" ]; then echo "Готово. Проверьте: $D/audit.sh"; else echo "Готово. Проверьте: systemctl is-active awg-failover"; fi
+EOF
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 27 строк">Показать целиком · 27 строк</button></figure>
+    <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
+  </div></div>
+
+  <div class="milestone"><span class="dot"></span>Основа готова. Сценарии A и B закончены; для сценария C осталась часть 6. Дальше только опции, в любом порядке.</div>
 </section>
 
 <section id="p6" class="part" data-n="6" data-title="Запасной канал" data-need="C">
@@ -1115,6 +1149,7 @@ sleep 6; ipset test UBIOS4local_network 192.168.3.0/24</code></pre></figure>
 <section id="p8" class="part" data-n="8" data-title="Панель при входе по SSH" data-need="R">
   <div class="ph"><div class="num">8</div><div><h2>Панель состояния при входе по SSH</h2><div class="meta"></div></div></div>
   <p class="why">При каждом входе по SSH вместо стандартного баннера UniFi вы видите сводку: состояние (HEALTHY / DEGRADED / CRITICAL), предупреждения, активный канал, handshake и скорость обоих туннелей, нагрузку, последние 20 событий, где лежат файлы и шпаргалку команд. Вызвать вручную можно командой <code>awgs</code>.</p>
+  <div class="note n-info"><b>Части 8–11 независимы</b><p>Панель, аудит, Telegram и обслуживание не требуют друг друга: ставьте любые и в любом порядке, лишь бы были готовы части 0–5. Скрипты сами смотрят, что установлено: панель показывает строки про аудит и восстановление, только если эти скрипты есть, аудит проверяет панель и Telegram, только если их ставили, а <code>awg-restore.sh</code> возвращает только то, что было.</p></div>
 
   <div class="step"><div class="sn">8.1</div><div class="sb">
     <h4>Скрипт панели</h4>
@@ -1267,14 +1302,16 @@ f "$DD/main.conf" "конфиг основного туннеля ($MAIN), кл�
 f "$DD/up.sh" "поднять туннели: up.sh [имя туннеля]"
 f "$DD/failover.sh" "сторож: проверка, переключение, возврат"
 f "$DD/failover.log" "журнал сторожа (~1000 строк)"
-f "$DD/status.sh · audit.sh" "эта панель (awgs) · аудит (awg-audit)"
-f "/etc/systemd/system/awg-*.service" "автозапуск (копии в $DD, восстановление: awg-restore.sh)"
+f "$DD/status.sh" "эта панель (awgs)"
+[ -x "$DD/audit.sh" ] &amp;&amp; f "$DD/audit.sh" "аудит (awg-audit)"
+f "/etc/systemd/system/awg-*.service" "автозапуск (копии юнитов в $DD)"
+[ -x "$DD/awg-restore.sh" ] &amp;&amp; f "$DD/awg-restore.sh" "вернуть автозапуск после обновления прошивки"
 [ -n "$VPS_IP" ] &amp;&amp; f "сервер $VPS_IP: /etc/amnezia/server.conf" "сервер запасного канала (служба awg-server)"
 
 echo
 hdr "CHEAT SHEET"
 f "awgs | awgs -s | awgs -i" "панель | кратко | с внешними IP"
-f "awg-audit" "проверка на лишние правила и файлы (только чтение)"
+[ -x "$DD/audit.sh" ] &amp;&amp; f "awg-audit" "проверка на лишние правила и файлы (только чтение)"
 f "tail -f $DD/failover.log" "события сторожа в реальном времени"
 f "ip route show table $TABLE" "активный канал PBR (metric 5)"
 f "$DD/awg show $MAIN" "детали туннеля"
@@ -1285,14 +1322,13 @@ f "systemctl restart awg-failover" "перезапуск сторожа (~5 с �
 echo
 EOF
 chmod 755 /data/awg/status.sh
-/data/awg/status.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 168 строк">Показать целиком · 168 строк</button></figure>
+/data/awg/status.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 170 строк">Показать целиком · 170 строк</button></figure>
   </div></div>
 
   <div class="step"><div class="sn">8.2</div><div class="sb">
-    <h4>Показ при входе и команды awgs, awg-audit</h4>
+    <h4>Показ при входе и команда awgs</h4>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt"></span><button class="copy" type="button">Копировать</button></figcaption><pre><code>grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null || cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
 alias awgs='/data/awg/status.sh'
-alias awg-audit='/data/awg/audit.sh'
 case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
 RC</code></pre></figure>
     <p>Панель выводится только в интерактивной сессии, поэтому <code>scp</code> и <code>rsync</code> не ломаются. Если терминал неправильно рисует линии, добавьте в <code>/root/.bashrc</code> строку <code>export AWGS_ASCII=1</code>. Живой режим: <code>watch -n2 -c '/data/awg/status.sh -s'</code>.</p>
@@ -1373,18 +1409,18 @@ age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'N
 sec "Параметры"
 if [ "$TABLE" = 0 ]; then F "нет $DD/awg.env" "$DD/awg-detect.sh"
 else P "awg.env: таблица $TABLE, метка $MARK, рельса $RAIL_IF, туннели: $TUNS"; fi
-for b in amneziawg-go awg; do [ -x "$DD/$b" ] &amp;&amp; P "бинарник $b на месте" || F "нет $DD/$b" "часть 1, шаг 2"; done
+for b in amneziawg-go awg; do [ -x "$DD/$b" ] &amp;&amp; P "бинарник $b на месте" || F "нет $DD/$b" "часть 1, шаг 1.1"; done
 
 sec "Службы и процессы"
 st=$(systemctl is-active awg-failover 2&gt;/dev/null); en=$(systemctl is-enabled awg-failover 2&gt;/dev/null)
 [ "$st" = active ] &amp;&amp; P "awg-failover: active" || F "awg-failover: ${st:-нет}" "systemctl start awg-failover"
-[ "$en" = enabled ] &amp;&amp; P "awg-failover: автозапуск включён" || W "awg-failover: автозапуск ${en:-нет}" "$DD/awg-restore.sh"
+[ "$en" = enabled ] &amp;&amp; P "awg-failover: автозапуск включён" || W "awg-failover: автозапуск ${en:-нет}" "systemctl enable awg-failover"
 for u in awg-failover awg-notify awg-motd; do
   [ -f "$DD/$u.service" ] || continue
   [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; continue   # Telegram не настраивался
   [ $u = awg-motd ] &amp;&amp; [ ! -f "$DD/motd.orig" ] &amp;&amp; continue        # баннер не отключался
   cmp -s "/etc/systemd/system/$u.service" "$DD/$u.service" &amp;&amp; P "$u.service совпадает с копией в $DD" \
-    || W "$u.service в /etc отличается от копии в $DD или отсутствует" "$DD/awg-restore.sh"
+    || W "$u.service в /etc отличается от копии в $DD или отсутствует" "cp $DD/$u.service /etc/systemd/system/ &amp;&amp; systemctl daemon-reload &amp;&amp; systemctl enable --now $u"
 done
 n=$(ps -eo pid,ppid,args | awk '/failover\.sh/ &amp;&amp; !/awk/ &amp;&amp; !/cleanup/ {p[$1]=$2; a[$1]=1} END{for(i in p) if(!(p[i] in a)) n++; print n+0}')
 if [ "$st" = active ]; then [ "$n" = 1 ] &amp;&amp; P "экземпляров failover.sh: 1" || W "экземпляров failover.sh: $n (нужен 1)" "systemctl stop awg-failover; pkill -f failover.sh; systemctl start awg-failover"
@@ -1438,14 +1474,18 @@ done
 ls /run/*.awg.conf /run/*.raw &gt;/dev/null 2&gt;&amp;1 &amp;&amp; W "в /run остались временные конфиги с ключами" "rm -f /run/*.awg.conf /run/*.raw"
 k=$(grep -E -c '[A-Za-z0-9+/]{43}=' /root/.bash_history 2&gt;/dev/null)
 [ "${k:-0}" = 0 ] &amp;&amp; P "в .bash_history нет строк, похожих на ключи" || W ".bash_history: строк, похожих на ключи: $k" "history -c; : &gt; /root/.bash_history"
-grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null &amp;&amp; P "панель при входе по SSH настроена" || W "в /root/.bashrc нет панели" "$DD/awg-restore.sh"
+if [ -x "$DD/status.sh" ]; then
+  grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null &amp;&amp; P "панель при входе по SSH настроена" || W "status.sh есть, но в /root/.bashrc нет показа панели" "часть 8, шаг 8.2"
+fi
 
 sec "Итог"
 echo "  ${G}OK: $ok${N}   ${Y}WARN: $warn${N}   ${R}FAIL: $bad${N}"
 echo "  Скрипт ничего не меняет. Команды fix выполняйте по одной, прочитав вывод."
 EOF
 chmod 755 /data/awg/audit.sh
-/data/awg/audit.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 93 строк">Показать целиком · 93 строк</button></figure>
+grep -q "alias awg-audit=" /root/.bashrc 2&gt;/dev/null || echo "alias awg-audit='/data/awg/audit.sh'" &gt;&gt; /root/.bashrc
+/data/awg/audit.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 96 строк">Показать целиком · 96 строк</button></figure>
+  <p>Команда <code>awg-audit</code> появится в новом окне SSH. Панель из части 8 для аудита не нужна: если её нет, пункт про <code>.bashrc</code> просто пропускается.</p>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">пример здоровой установки</span></figcaption><pre><code>== Службы и процессы ==
   OK    awg-failover: active
   OK    экземпляров failover.sh: 1
@@ -1832,30 +1872,7 @@ systemctl enable --now awg-notify</code></pre></figure>
   <div class="ph"><div class="num">11</div><div><h2>Обслуживание</h2><div class="meta"></div></div></div>
 
   <h3>После обновления прошивки UniFi</h3>
-  <p>Обновление может очистить <code>/etc/systemd/system</code> и <code>/root/.bashrc</code>. Раздел <code>/data</code> сохраняется, а вместе с ним все копии. Создайте скрипт восстановления заранее:</p>
-<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-restore.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-restore.sh &lt;&lt;'EOF'
-<span class="c">#!/bin/bash</span>
-<span class="c"># awg-restore.sh — вернуть автозапуск и панель после обновления прошивки</span>
-<span class="c"># (UniFi может очистить /etc/systemd/system и /root/.bashrc; /data при этом сохраняется).</span>
-D=/data/awg
-cp "$D/awg-failover.service" /etc/systemd/system/
-NOTIFY=0; MOTD=0
-[ -f "$D/awg-notify.service" ] &amp;&amp; [ -f "$D/telegram.env" ] &amp;&amp; { NOTIFY=1; cp "$D/awg-notify.service" /etc/systemd/system/; }
-[ -f "$D/awg-motd.service" ] &amp;&amp; [ -f "$D/motd.orig" ] &amp;&amp; { MOTD=1; cp "$D/awg-motd.service" /etc/systemd/system/; }
-systemctl daemon-reload
-systemctl enable --now awg-failover
-[ $NOTIFY = 1 ] &amp;&amp; systemctl enable --now awg-notify
-[ $MOTD = 1 ] &amp;&amp; systemctl enable --now awg-motd
-grep -q AWGS_SHOWN /root/.bashrc 2&gt;/dev/null || cat &gt;&gt; /root/.bashrc &lt;&lt;'RC'
-alias awgs='/data/awg/status.sh'
-alias awg-audit='/data/awg/audit.sh'
-case $- in *i*) [ -n "$SSH_CONNECTION" ] &amp;&amp; [ -z "$AWGS_SHOWN" ] &amp;&amp; { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
-RC
-touch /root/.hushlogin
-echo "Готово. Проверьте: /data/awg/audit.sh"
-EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre></figure>
-  <p>После обновления: <code>/data/awg/awg-restore.sh</code>, затем <code>/data/awg/audit.sh</code>. Если UniFi пересоздал профиль VPN Client, а метка или таблица поменялись, сначала <code>/data/awg/awg-detect.sh</code>, затем <code>systemctl restart awg-failover</code>. Если после крупного обновления UniFi перестанет создавать PBR-правило с меткой, схема работать не будет: проверьте <code>ip rule show | grep fwmark</code>.</p>
+  <p>Обновление может очистить <code>/etc/systemd/system</code> и <code>/root/.bashrc</code>. Скрипт восстановления вы создали в шаге 5.5. После обновления выполните <code>/data/awg/awg-restore.sh</code>, затем проверьте <code>/data/awg/audit.sh</code> (если ставили часть 9) или <code>systemctl is-active awg-failover</code>. Если UniFi пересоздал профиль VPN Client, а метка или таблица поменялись, сначала <code>/data/awg/awg-detect.sh</code>, затем <code>systemctl restart awg-failover</code>. Если после крупного обновления UniFi перестанет создавать PBR-правило с меткой, схема работать не будет: проверьте <code>ip rule show | grep fwmark</code>.</p>
 
   <h3>Частые операции</h3>
   <div class="tw"><table>
@@ -1900,7 +1917,7 @@ if [ "$1" = --purge ]; then rm -rf $D; echo "Удалено всё, включа
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
 chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 31 строк">Показать целиком · 31 строк</button></figure>
-  <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
+  <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 
 <section id="p12" class="part" data-n="12" data-title="Диагностика и грабли" data-need="*">
@@ -1915,23 +1932,25 @@ chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="butt
     <tr><td>Handshake есть, ping через туннель не идёт, сайты открываются</td><td>ICMP режется у оператора или в его цепочке</td><td>Не поломка. Сторож проверяет по HTTPS</td></tr>
     <tr><td>Handshake есть, трафика из интернета через свой VPS нет</td><td>Нет <code>ip_forward</code> или NAT на сервере</td><td><code>/root/audit-server.sh</code></td></tr>
     <tr><td><code>awg setconf</code>: <code>Line unrecognized</code></td><td>Бинарник не знает параметр конфига</td><td>Свежая сборка или конфиг без новых параметров</td></tr>
-    <tr><td>Устройства под PBR без интернета</td><td>Сторож не работает, или в <code>awg.env</code> не та таблица/метка (профиль пересоздан)</td><td><code>awgs</code>, <code>awg-detect.sh</code>, <code>systemctl restart awg-failover</code></td></tr>
-    <tr><td>В туннель ушли и устройства вне PBR</td><td>Правило по подсети вместо метки (так выглядела наша первая версия)</td><td><code>ip rule show</code>: лишних правил с приоритетом меньше 32504 быть не должно; <code>awg-audit</code></td></tr>
+    <tr><td>Устройства под PBR без интернета</td><td>Сторож не работает, или в <code>awg.env</code> не та таблица/метка (профиль пересоздан)</td><td><code>systemctl status awg-failover</code>, <code>tail /data/awg/failover.log</code>, <code>awgs</code> (часть 8); если профиль пересоздавали: <code>awg-detect.sh</code> и <code>systemctl restart awg-failover</code></td></tr>
+    <tr><td>В туннель ушли и устройства вне PBR</td><td>Правило по подсети вместо метки (так выглядела наша первая версия)</td><td><code>ip rule show</code>: лишних правил с приоритетом меньше 32504 быть не должно; <code>awg-audit</code> (часть 9)</td></tr>
     <tr><td>Оба канала нестабильны, endpoint «прыгает»</td><td>Один ключ на двух устройствах</td><td>Отдельный конфиг для роутера, старый клиент выключить</td></tr>
-    <tr><td>Дубли правил NAT/FORWARD, третий процесс <code>amneziawg-go</code></td><td>Два экземпляра сторожа или старая служба</td><td><code>awg-audit</code> и его подсказки</td></tr>
+    <tr><td>Дубли правил NAT/FORWARD, третий процесс <code>amneziawg-go</code></td><td>Два экземпляра сторожа или старая служба</td><td><code>awg-audit</code> (часть 9) и его подсказки</td></tr>
     <tr><td>Имитация сбоя правилом iptables «сама пропала»</td><td>UniFi пересобирает свои цепочки</td><td>Флаг <code>/tmp/awg-sim-down</code></td></tr>
     <tr><td>После <code>wg-quick down/up</code> пропали маршруты</td><td>Интерфейс пересоздан, ядро удаляет привязанные к нему маршруты</td><td>Сторож восстанавливает маршрут за 5 с</td></tr>
     <tr><td>Скрипт сервера выполнился на роутере</td><td>Перепутали окно SSH</td><td>Смотрите на приглашение; серверные скрипты гайда на роутере не запускаются</td></tr>
     <tr><td>Баннер UniFi не убирается настройкой sshd</td><td>Он печатается из <code>/etc/motd</code></td><td>Шаг 8.3</td></tr>
-    <tr><td>После обновления прошивки нет панели и автозапуска</td><td>Очищены <code>/etc</code> и <code>.bashrc</code></td><td><code>/data/awg/awg-restore.sh</code></td></tr>
+    <tr><td>После обновления прошивки нет панели и автозапуска</td><td>Очищены <code>/etc</code> и <code>.bashrc</code></td><td><code>/data/awg/awg-restore.sh</code> (шаг 5.5)</td></tr>
     <tr><td>Telegram: в логе 409 Conflict</td><td>Тот же бот читается другой программой (например, 3x-ui)</td><td>Отдельный бот для роутера</td></tr>
   </table></div>
 
   <h3 id="hs">Handshake не проходит: смотрим с двух сторон</h3>
   <p>Запустите одновременно и сравните: что ушло с роутера и что пришло на сервер.</p>
-<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">что уходит и приходит на WAN</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>. /data/awg/awg.env
-tcpdump -ni $WANIF udp and host <span class="v" data-v="VPS_IP">203.0.113.10</span></code></pre></figure>
-<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">что доходит до сервера</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>tcpdump -ni any udp port 51823</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">что уходит и приходит на WAN (сервер берётся из Endpoint конфига)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>. /data/awg/awg.env
+SRV=$(awk -F'[ =:]+' '/^Endpoint/{print $2; exit}' /data/awg/main.conf)   # для запасного: backup.conf
+tcpdump -ni $WANIF udp and host $SRV</code></pre></figure>
+<figure class="cb"><figcaption><span class="on on-vps">VPS</span><span class="cbt">что доходит до сервера (только свой VPS)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>tcpdump -ni any udp port 51823</code></pre></figure>
+  <p>Сервер провайдера изнутри вы не увидите, поэтому для него смотрите только сторону роутера: есть ли ответные пакеты.</p>
   <div class="tw"><table>
     <tr><th>Роутер</th><th>Сервер</th><th>Вывод</th></tr>
     <tr><td>Исходящие есть, входящих нет</td><td>пусто</td><td>Пакеты теряются по пути: файрвол хостера, порт, IP</td></tr>
@@ -1986,7 +2005,8 @@ EOF</code></pre></figure>
     <tr><td><code>awg-motd.service</code>, <code>motd.orig</code></td><td>Очистка баннера, оригинал баннера</td><td>8</td></tr>
     <tr><td><code>audit.sh</code></td><td>Аудит <code>awg-audit</code></td><td>9</td></tr>
     <tr><td><code>telegram.env</code> 🔒, <code>notify.sh</code>, <code>awg-notify.sh</code>, <code>awg-notify.service</code></td><td>Уведомления; <code>notify.log</code>, <code>notify.spool</code>, <code>notify.events</code>, <code>notify.state</code> — их служебные файлы</td><td>10</td></tr>
-    <tr><td><code>awg-restore.sh</code>, <code>awg-uninstall.sh</code></td><td>Восстановление после обновления, удаление</td><td>11</td></tr>
+    <tr><td><code>awg-restore.sh</code></td><td>Восстановление автозапуска после обновления прошивки</td><td>5</td></tr>
+    <tr><td><code>awg-uninstall.sh</code></td><td>Полное удаление</td><td>11</td></tr>
   </table></div>
 
   <h3>Файлы на VPS</h3>
@@ -2170,5 +2190,4 @@ chmod 755 /data/awg/amneziawg-go /data/awg/awg; /data/awg/awg --version</code></
   }
 })();
 </script>
-
 </body></html>
