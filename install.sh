@@ -3,7 +3,7 @@
 #  AmneziaWG для UniFi Dream Router 7 — установщик и мастер настройки
 #
 #  Первый запуск на роутере (SSH, root):
-#    bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/udr7-amneziawg/main/install.sh)
+#    bash <(curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/install.sh)
 #  или из клона репозитория:   bash install.sh
 #  Повторно (меню обслуживания): /data/awg/install.sh
 #
@@ -14,7 +14,7 @@
 #         --help
 # ============================================================================
 INSTALLER_VERSION=1.0.0
-AWG_REPO=${AWG_REPO:-OWNER/udr7-amneziawg}          # ← ваш GitHub: владелец/репозиторий
+AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia/}          # ← ваш GitHub: владелец/репозиторий
 AWG_BRANCH=${AWG_BRANCH:-main}
 BIN_URL_DEFAULT=https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz
 DD=${DD:-/data/awg}
