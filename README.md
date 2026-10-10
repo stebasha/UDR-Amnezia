@@ -61,7 +61,7 @@ server/             файлы VPS
   awg-server-build.sh   сборка amneziawg-go и awg
   awg-server-setup.sh   ключи, обфускация, служба awg-server
   audit-server.sh       аудит VPS
-docs/guide.html     подробный гайд с ручной установкой, диагностикой и справочником
+index.html     подробный гайд с ручной установкой, диагностикой и справочником
 ```
 
 ## Что проверено
