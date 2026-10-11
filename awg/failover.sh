@@ -39,7 +39,7 @@ check(){
   return 1
 }
 
-ensure(){ local t=$1; shift; iptables -t "$t" -C "$@" 2>/dev/null || iptables -t "$t" -I "$@"; }
+ensure(){ local t=$1; shift; iptables -w 5 -t "$t" -C "$@" 2>/dev/null || iptables -w 5 -t "$t" -I "$@"; }
 
 prepare(){
   local i s
