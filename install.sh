@@ -3,7 +3,7 @@
 #  AmneziaWG для UniFi Dream Router 7 — установщик и мастер настройки
 #
 #  Первый запуск на роутере (SSH, root):
-#    bash <(curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/install.sh)
+#    bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/udr7-amneziawg/main/install.sh)
 #  или из клона репозитория:   bash install.sh
 #  Повторно (меню обслуживания): /data/awg/install.sh
 #
@@ -13,8 +13,8 @@
 #         --uninstall удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.0.0
-AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia/}          # ← ваш GitHub: владелец/репозиторий
+INSTALLER_VERSION=1.1.0
+AWG_REPO=${AWG_REPO:-OWNER/udr7-amneziawg}          # ← ваш GitHub: владелец/репозиторий
 AWG_BRANCH=${AWG_BRANCH:-main}
 BIN_URL_DEFAULT=https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz
 DD=${DD:-/data/awg}
@@ -88,7 +88,7 @@ read_paste(){ # read_paste ФАЙЛ — многострочный ввод до
 }
 
 # ---------------------------------------------------------------- утилиты --
-is_ipv4(){ local IFS=.; local -a o; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; o=($1); for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
+is_ipv4(){ local IFS=.; local -a o; local x; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; o=($1); for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
 conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); split(line,a,"="); key=a[1]; gsub(/[ \t]/,"",key) } tolower(key)==k { sub(/^[^=]*=[ \t]*/,"",line); print line; exit }' "$1"; }
 resolve(){
   is_ipv4 "$1" && { echo "$1"; return; }
@@ -246,6 +246,7 @@ install_files(){
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh"
   [ -f "$KIT/install.sh" ] && { cp "$KIT/install.sh" "$DD/install.sh"; chmod 755 "$DD/install.sh"; }
   [ -f "$KIT/VERSION" ] && cp "$KIT/VERSION" "$DD/VERSION"
+  write_subnets_files
   touch "$DD/.installer"
   ok "скрипты установлены в $DD"
 }
@@ -641,9 +642,7 @@ step_watchdog(){
     ok "таблица PBR $t:"; ip route show table "$t" | sed 's/^/      /'
     ok "служба awg-failover запущена и включена в автозапуск"
     tail -n 2 "$DD/failover.log" 2>/dev/null | sed 's/^/      /'
-    for a in $(env_get EXTRA_SUBNETS); do
-      ipset test UBIOS4local_network "$a" >/dev/null 2>&1 && ok "подсеть $a в ipset UBIOS4local_network" || warn "подсети $a нет в ipset: проверьте, существует ли ipset UBIOS4local_network (ipset list -n)"
-    done
+    [ -n "$(env_get EXTRA_SUBNETS)" ] && { svc_active awg-subnets && ok "подсети VPN-сервера ($(env_get EXTRA_SUBNETS)) обслуживает awg-subnets" || warn "подсети заданы, но служба awg-subnets не запущена: $DD/install.sh → Компоненты → Клиенты VPN-сервера"; }
     return 0
   fi
   err "маршрут в таблице $t не появился"
@@ -675,28 +674,203 @@ test_switch(){
   fi
 }
 
+# ============================================================ подсети VPN-сервера ==
+# Что делает эта часть. Для каждой подсети из EXTRA_SUBNETS (awg.env) служба awg-subnets держит три вещи:
+#   1) ip rule  from <подсеть> lookup main suppress_prefixlength 0   (приоритет 6100)
+#        адреса, до которых есть обычный маршрут (роутер, LAN, другие VPN-подсети), остаются локальными;
+#   2) ip rule  from <подсеть> lookup <ТАБЛИЦА PBR>                  (приоритет 6101)
+#        всё остальное (интернет) уходит в таблицу PBR, где лежит маршрут сторожа на AWG-туннель;
+#   3) маршрут  <подсеть> dev <интерфейс VPN-сервера> в таблице PBR
+#        устройства LAN под PBR по-прежнему достают клиентов VPN-сервера.
+# NAT (MASQUERADE на туннеле) и FORWARD уже делает сторож для любых источников.
+# Правила привязаны к подсети, а не к метке UniFi: от настроек Policy-Based Routes они не зависят.
+# UniFi при перепровижнинге может стереть правила, поэтому служба сверяет их каждые 5 секунд.
+net_of(){  # 192.168.3.5/24 → 192.168.3.0/24
+  local ip=${1%/*} p=${1#*/} a b c d n m
+  IFS=. read -r a b c d <<< "$ip"
+  n=$(( (a<<24)|(b<<16)|(c<<8)|d )); m=$(( (0xFFFFFFFF << (32-p)) & 0xFFFFFFFF ))
+  n=$(( n & m ))
+  printf '%d.%d.%d.%d/%d' $((n>>24&255)) $((n>>16&255)) $((n>>8&255)) $((n&255)) "$p"
+}
+norm_subnet(){  # печатает подсеть в виде адрес_сети/маска или возвращает 1
+  local x=$1
+  [[ $x =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || return 1
+  is_ipv4 "${x%/*}" || return 1
+  [ "${x#*/}" -ge 8 ] && [ "${x#*/}" -le 30 ] || return 1
+  net_of "$x"
+}
+lan_conflict(){  # 0, если подсеть совпадает с подсетью LAN/WAN-интерфейса
+  local net=$1
+  ip -4 -br addr 2>/dev/null | awk '$1~/^(eth|br|switch)/ && $3 ~ /\// {print $3}' | while read -r x; do
+    [ "$(net_of "$x")" = "$net" ] && { echo hit; break; }
+  done | grep -q hit
+}
+subnet_candidates(){  # «интерфейс подсеть» для интерфейсов, похожих на VPN-серверы роутера
+  local ifc adr n p
+  ip -4 -br addr 2>/dev/null | awk '$1!~/^(lo|eth|br|awg|wgclt|ifb|switch|sit|ip6|gre|tun)/ && $3 ~ /\// {print $1, $3}' | while read -r ifc adr; do
+    p=${adr#*/}; [ "$p" -le 30 ] 2>/dev/null || continue
+    n=$(net_of "$adr") && printf '%s %s\n' "${ifc%@*}" "$n"
+  done
+}
+
+write_subnets_files(){
+  mkdir -p "$DD"
+  cat > "$DD/subnets.sh" <<'SUBS'
+#!/bin/bash
+# awg-subnets: подсети VPN-сервера роутера (WireGuard Server, Teleport и т.п.) целиком идут через AWG-туннель.
+#   subnets.sh run      служба: каждые 5 с сверяет правила
+#   subnets.sh apply    один проход
+#   subnets.sh remove   убрать все правила и маршруты этой службы
+#   subnets.sh check    проверка: OK / WARN / FAIL
+#   subnets.sh status   правила и таблица PBR
+DD=${DD:-/data/awg}
+P_LOCAL=${SUBNET_PRIO_LOCAL:-6100}
+P_PBR=${SUBNET_PRIO_PBR:-6101}
+load(){ EXTRA_SUBNETS=""; TABLE=""; [ -r "$DD/awg.env" ] && . "$DD/awg.env"; }
+sub_iface(){ ip -4 route show table all to "$1" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'; }
+probe_host(){ local a b c d; IFS=. read -r a b c d <<< "${1%/*}"; d=$((d+2)); [ "$d" -gt 254 ] && d=$((d-3)); echo "$a.$b.$c.$d"; }
+
+cleanup(){  # убрать правила для подсетей не из списка и правила, ведущие не в текущую таблицу
+  local p src tbl keep s
+  ip -4 rule show | awk -v a="$P_LOCAL:" -v b="$P_PBR:" '$1==a || $1==b {print $1, $3, $5}' | while read -r p src tbl; do
+    keep=0
+    for s in $EXTRA_SUBNETS; do [ "$s" = "$src" ] && keep=1; done
+    [ "$p" = "$P_PBR:" ] && [ "${tbl%%.*}" != "$TABLE" ] && keep=0
+    if [ $keep = 0 ]; then
+      ip -4 rule del from "$src" priority "${p%:}" 2>/dev/null
+      [ "$p" = "$P_PBR:" ] && ip -4 route del "$src" table "$TABLE" 2>/dev/null
+    fi
+  done
+}
+apply(){
+  load
+  [ -n "$TABLE" ] && [ "$TABLE" != 0 ] || return 0
+  cleanup
+  local s i
+  for s in $EXTRA_SUBNETS; do
+    ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2>/dev/null
+    ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2>/dev/null
+    i=$(sub_iface "$s")
+    [ -n "$i" ] && ip -4 route replace "$s" dev "$i" table "$TABLE" 2>/dev/null
+  done
+  return 0
+}
+check(){
+  load
+  local s i h out dev rc=0
+  [ -n "$EXTRA_SUBNETS" ] || { echo "INFO   подсети не заданы"; return 0; }
+  for s in $EXTRA_SUBNETS; do
+    if ip -4 rule show | grep -q "^$P_LOCAL:.*from $s lookup main suppress_prefixlength 0"; then echo "OK     $s: локальные адреса остаются локальными (правило $P_LOCAL)"
+    else echo "FAIL   $s: нет правила $P_LOCAL (служба awg-subnets запущена?)"; rc=1; fi
+    if ip -4 rule show | grep -q "^$P_PBR:.*from $s lookup $TABLE"; then echo "OK     $s: интернет-трафик отправляется в таблицу PBR $TABLE (правило $P_PBR)"
+    else echo "FAIL   $s: нет правила $P_PBR в таблицу $TABLE"; rc=1; fi
+    i=$(sub_iface "$s")
+    [ -n "$i" ] || echo "WARN   $s: сейчас нет интерфейса с этой подсетью (VPN-сервер выключен?)"
+    h=$(probe_host "$s")
+    out=$(ip -4 route get 1.1.1.1 from "$h" ${i:+iif $i} 2>&1 | head -n 1)
+    dev=$(echo "$out" | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+    case "$dev" in
+      awg*) echo "OK     $s: интернет через $dev"
+            iptables -t nat -S POSTROUTING 2>/dev/null | grep -q -- "-o $dev -j MASQUERADE" || { echo "FAIL   нет NAT MASQUERADE на $dev (сторож не запущен?)"; rc=1; } ;;
+      *)    echo "FAIL   $s: интернет идёт через «${dev:-?}», а не через awg-туннель (сторож awg-failover ещё не положил маршрут?)"; rc=1 ;;
+    esac
+  done
+  return $rc
+}
+case "${1:-run}" in
+  run)    trap 'exit 0' TERM INT; while :; do apply; sleep 5 & wait $!; done;;
+  apply)  apply;;
+  remove) load; EXTRA_SUBNETS=""; cleanup;;
+  check)  check;;
+  status) load; ip -4 rule show | grep -E "^($P_LOCAL|$P_PBR):"; echo "-- таблица $TABLE:"; ip -4 route show table "$TABLE";;
+  *)      echo "использование: $0 [run|apply|remove|check|status]"; exit 1;;
+esac
+SUBS
+  chmod 755 "$DD/subnets.sh"
+  cat > "$DD/awg-subnets.service" <<'UNIT'
+[Unit]
+Description=AWG: route VPN-server subnets (WireGuard Server, Teleport) through the tunnel
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/subnets.sh run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+legacy_subnet_check(){  # старые самодельные решения, которые делают то же самое
+  local f u s
+  for f in awg-keep.sh wgsrv-pbr.sh; do
+    [ -f "$DD/$f" ] && warn "найден $DD/$f: скрипт другой схемы, он тоже управляет маршрутами подсетей. Две схемы одновременно не используйте."
+  done
+  if [ -f /etc/systemd/system/wgsrv-routing.service ] && { systemctl is-enabled --quiet wgsrv-routing 2>/dev/null || svc_active wgsrv-routing; }; then
+    warn "включена ваша служба wgsrv-routing: она направляет подсеть в таблицу профиля UniFi (wgclt) и конфликтует с новой схемой."
+    if yn "Отключить её (файл службы останется)?" Y; then
+      systemctl disable --now wgsrv-routing >/dev/null 2>&1
+      ip -4 rule show | awk '$1=="100:" && /lookup [0-9]+\.wgclt/ {print $3}' | while read -r s; do ip -4 rule del from "$s" priority 100 2>/dev/null; done
+      ok "wgsrv-routing отключена"
+    fi
+  fi
+  [ -f /etc/systemd/system/wgsrv-pbr.service ] && info "служба wgsrv-pbr добавляет подсеть в ipset UBIOS4local_network. Новой схеме она не нужна и не мешает, оставляю как есть."
+}
+
 step_subnets(){
   title "Клиенты VPN-сервера роутера через туннель"
-  local cand cur a s
+  local cur t s x n cand good=() seen=" " l
+  t=$(env_get TABLE)
+  [ -n "$t" ] || { err "таблица PBR ещё не определена: сначала шаг «Профиль-рельса и правило PBR»."; return 1; }
   cur=$(env_get EXTRA_SUBNETS)
-  cand=$(ip -4 -br addr 2>/dev/null | awk '$1!~/^(lo|eth|br|awg|wgclt|ifb|switch|sit|ip6|gre|tun)/ && $3 ~ /\// {print $1, $3}')
-  if [ -n "$cand" ] && command -v python3 >/dev/null; then
-    info "интерфейсы, похожие на VPN-серверы роутера:"
-    printf '%s\n' "$cand" | while read -r i adr; do printf '      %s → %s\n' "$i" "$(python3 -c "import ipaddress,sys;print(ipaddress.ip_interface(sys.argv[1]).network)" "$adr" 2>/dev/null)"; done
+  say "  ${D}Все устройства из указанной подсети (клиенты WireGuard Server, Teleport…) будут выходить в интернет через AWG-туннель.${N}"
+  say "  ${D}Обращения к самому роутеру и к локальным адресам остаются локальными. Правила привязаны к подсети, а не к настройкам PBR в UniFi.${N}"
+  legacy_subnet_check
+  cand=$(subnet_candidates)
+  if [ -n "$cand" ]; then
+    info "интерфейсы с подсетями, похожие на VPN-серверы роутера:"
+    printf '%s\n' "$cand" | awk '{printf "      %-14s %s\n", $1, $2}'
   else
-    hint "Подсеть VPN-сервера видна в UniFi: Settings → VPN → VPN Server."
+    hint "Подсеть указана в настройках соответствующего VPN-сервера в UniFi (раздел VPN). Пример: 192.168.3.0/24"
   fi
   ask s "Подсети через пробел (например 192.168.3.0/24), пусто — отключить" "$cur"
-  for a in $s; do [[ "$a" =~ ^[0-9.]+/[0-9]+$ ]] || { warn "«$a» не похоже на подсеть, пропускаю"; s=${s//$a/}; }; done
-  s=$(echo $s)
+  for x in $s; do
+    n=$(norm_subnet "$x") || { warn "«$x» не подсеть вида 192.168.3.0/24 (маска от /8 до /30), пропускаю"; continue; }
+    [ "$n" != "$x" ] && info "$x → $n (беру адрес сети)"
+    case "$seen" in *" $n "*) continue;; esac
+    if lan_conflict "$n"; then
+      warn "$n совпадает с подсетью LAN/WAN: через туннель пойдут ВСЕ её устройства, а не только клиенты VPN-сервера."
+      yn "Всё равно добавить?" N || continue
+    fi
+    seen="$seen$n "; good+=("$n")
+  done
+  s="${good[*]}"
   env_set EXTRA_SUBNETS "\"$s\""
-  [ -n "$s" ] && ok "подсети: $s (сторож держит их в ipset UBIOS4local_network)" || ok "дополнительные подсети отключены"
-  if [ -n "$cur" ] && [ "$cur" != "$s" ]; then for a in $cur; do echo " $s " | grep -q " $a " || ipset del UBIOS4local_network "$a" 2>/dev/null; done; fi
-  if svc_active awg-failover; then
-    systemctl restart awg-failover; sleep 6
-    for a in $s; do ipset test UBIOS4local_network "$a" >/dev/null 2>&1 && ok "$a в ipset" || warn "$a пока не в ipset (проверьте через минуту: ipset test UBIOS4local_network $a)"; done
+  write_subnets_files
+  if [ -n "$s" ]; then
+    cp "$DD/awg-subnets.service" /etc/systemd/system/awg-subnets.service
+    systemctl daemon-reload
+    systemctl enable awg-subnets >/dev/null 2>&1
+    systemctl restart awg-subnets
+    sleep 3
+    svc_active awg-subnets && ok "служба awg-subnets запущена, подсети: $s" || { err "awg-subnets не запустилась: journalctl -u awg-subnets -n 20"; return 1; }
+    "$DD/subnets.sh" apply
+    "$DD/subnets.sh" check | while IFS= read -r l; do
+      case "$l" in
+        OK*)   ok "$(printf '%s' "${l#OK}" | sed 's/^ *//')";;
+        WARN*) warn "$(printf '%s' "${l#WARN}" | sed 's/^ *//')";;
+        FAIL*) err "$(printf '%s' "${l#FAIL}" | sed 's/^ *//')";;
+        *)     info "$(printf '%s' "${l#INFO}" | sed 's/^ *//')";;
+      esac
+    done
+    hint "Проверка с клиента: подключитесь к VPN-серверу роутера, откройте 2ip.io. Должен быть IP туннеля, а не провайдера."
+    hint "Повторная проверка на роутере: $DD/subnets.sh check"
   else
-    info "сторож добавит подсети в ipset при запуске"
+    [ -x "$DD/subnets.sh" ] && "$DD/subnets.sh" remove
+    systemctl disable --now awg-subnets >/dev/null 2>&1
+    rm -f /etc/systemd/system/awg-subnets.service; systemctl daemon-reload
+    ok "подсети отключены, правила убраны"
   fi
 }
 
@@ -817,9 +991,9 @@ wizard(){
 
   step_rail
 
-  yn "Пускать через туннель и клиентов VPN-сервера самого роутера (WireGuard Server, Teleport)?" N && step_subnets
   step_watchdog
   [ "$SCEN" = C ] && yn "Проверить переключение на запасной канал сейчас (~30 с)?" Y && test_switch
+  yn "Пускать через туннель и клиентов VPN-сервера самого роутера (WireGuard Server, Teleport)?" N && step_subnets
 
   title "Дополнительно"
   yn "Панель состояния при входе по SSH?" Y && step_panel
@@ -833,6 +1007,7 @@ summary(){
   title "Готово"
   local t; t=$(env_get TABLE)
   say "  Установлено в ${B}$DD${N}. Таблица PBR ${B}$t${N}, туннели: ${B}$MAIN${N}$( [ -n "$(env_get BACKUP)" ] && echo " + ${B}$(env_get BACKUP)${N}")."
+  [ -n "$(env_get EXTRA_SUBNETS)" ] && say "  Через туннель идут и клиенты VPN-сервера роутера: ${B}$(env_get EXTRA_SUBNETS)${N} (проверка: $DD/subnets.sh check)."
   [ -x "$DD/status.sh" ] && "$DD/status.sh" -s | sed 's/^/  /'
   say "  ${B}Проверьте сами:${N}"
   say "   • устройство под правилом PBR: на 2ip.io виден IP туннеля;"
@@ -854,6 +1029,7 @@ do_update(){
   systemctl daemon-reload
   if svc_active awg-failover; then cp "$DD/awg-failover.service" /etc/systemd/system/; systemctl daemon-reload; systemctl restart awg-failover; ok "сторож перезапущен"; fi
   if svc_active awg-notify; then cp "$DD/awg-notify.service" /etc/systemd/system/; systemctl daemon-reload; systemctl restart awg-notify; ok "awg-notify перезапущен"; fi
+  if svc_active awg-subnets; then cp "$DD/awg-subnets.service" /etc/systemd/system/; systemctl daemon-reload; systemctl restart awg-subnets; ok "awg-subnets перезапущен"; fi
   [ -x "$DD/audit.sh" ] && "$DD/audit.sh" | tail -n 3
 }
 do_restore(){
@@ -861,6 +1037,10 @@ do_restore(){
   [ -x "$DD/awg-restore.sh" ] || die "нет $DD/awg-restore.sh — установка не найдена"
   "$DD/awg-restore.sh" | sed 's/^/  /'
   local t; t=$(env_get TABLE)
+  if [ -n "$(env_get EXTRA_SUBNETS)" ] && [ -f "$DD/awg-subnets.service" ]; then
+    cp "$DD/awg-subnets.service" /etc/systemd/system/; systemctl daemon-reload; systemctl enable --now awg-subnets >/dev/null 2>&1
+    ok "служба awg-subnets восстановлена"
+  fi
   if ! ip rule show | grep -q "fwmark $(env_get MARK | cut -d/ -f1)"; then
     warn "правило PBR с меткой $(env_get MARK) не найдено: UniFi мог пересоздать профиль"
     yn "Определить таблицу и метку заново?" Y && { step_rail; systemctl restart awg-failover; }
@@ -873,6 +1053,10 @@ do_uninstall(){
   yn "Удалить службы, маршруты и правила AWG с роутера?" N || return
   local purge="" v; v=$(env_get VPS_IP 2>/dev/null)
   yn "Удалить и папку $DD с конфигами и ключами?" N && purge=--purge
+  if [ -x "$DD/subnets.sh" ]; then
+    "$DD/subnets.sh" remove; systemctl disable --now awg-subnets >/dev/null 2>&1
+    rm -f /etc/systemd/system/awg-subnets.service; systemctl daemon-reload; ok "правила подсетей VPN-сервера убраны"
+  fi
   if [ -x "$DD/awg-uninstall.sh" ]; then "$DD/awg-uninstall.sh" $purge | sed 's/^/  /'; else err "нет $DD/awg-uninstall.sh"; fi
   [ -n "$v" ] && info "На VPS $v сервер остался. Удалить там: systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh"
   exit 0
