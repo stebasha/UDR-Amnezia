@@ -14,7 +14,7 @@
 #         --help
 # ============================================================================
 INSTALLER_VERSION=1.1.0
-AWG_REPO=${AWG_REPO:-OWNER/udr7-amneziawg}          # ← ваш GitHub: владелец/репозиторий
+AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia/}          # ← ваш GitHub: владелец/репозиторий
 AWG_BRANCH=${AWG_BRANCH:-main}
 BIN_URL_DEFAULT=https://github.com/DjGreeZ/AmneziaWG-Unifi-DreamMachine/raw/main/AmneziaWG-UniFi-v0.2.1-source.tar.gz
 DD=${DD:-/data/awg}
