@@ -38,8 +38,9 @@ import sys
 import threading
 import time
 import urllib.parse
+import zlib
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -551,10 +552,10 @@ class Sessions:
         self.s = {}
         self.lock = threading.Lock()
 
-    def new(self, user, ip):
+    def new(self, user, ip, ua=""):
         tok = secrets.token_urlsafe(32)
         with self.lock:
-            self.s[tok] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now()}
+            self.s[tok] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160]}
         return tok
 
     def get(self, tok):
@@ -782,7 +783,12 @@ def overview():
     upd = st.get("UPDATED", "")
     if fo and upd.isdigit() and now() - int(upd) > 60:
         alerts.append(["warn", "Состояние сторожа не обновлялось %d с" % (now() - int(upd))])
-    level = "crit" if any(a[0] == "crit" for a in alerts) else ("warn" if alerts else "ok")
+    bkd = os.path.join(DD, "backups")
+    bk = [f for f in (os.listdir(bkd) if os.path.isdir(bkd) else []) if BK_RE.match(f)]
+    newest = max([os.stat(os.path.join(bkd, f)).st_mtime for f in bk] or [0])
+    if now() - newest > 30 * 86400:
+        alerts.append(["info", "Резервной копии нет или ей больше 30 дней (Настройки → Резервные копии)"])
+    level = "crit" if any(a[0] == "crit" for a in alerts) else ("warn" if any(a[0] == "warn" for a in alerts) else "ok")
     try:
         up = int(float(read_file("/proc/uptime", "0").split()[0]))
     except (ValueError, IndexError):
@@ -1041,7 +1047,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """Защита от DNS rebinding: в Host только IP-адрес, localhost или имена из WEB_HOSTS."""
         h = (self.headers.get("Host") or "").strip().lower()
         h = h[1:h.index("]")] if h.startswith("[") and "]" in h else h.rsplit(":", 1)[0] if h.count(":") == 1 else h
-        if h in ("localhost",) or h in self.server.hosts:
+        if h in ("localhost",) or h in self.server.hosts or h in getattr(self.server, "cert_names", ()):
+            return True
+        if any(n.startswith("*.") and h.endswith(n[1:]) and h.count(".") == n.count(".") for n in getattr(self.server, "cert_names", ())):
             return True
         try:
             ipaddress.ip_address(h)
@@ -1093,6 +1101,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not s:
                 return self.send(401, {"error": "нужен вход"})
             if method == "POST":
+                _OV["v"] = None          # после действия обзор собирается заново
                 if not self.same_origin() or not hmac.compare_digest(self.headers.get("X-CSRF", ""), s["csrf"]):
                     return self.send(403, {"error": "проверка CSRF не пройдена: обновите страницу"})
             self.user = s["user"]
@@ -1136,7 +1145,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             audit(u, ip, "login-fail")
             return self.send(401, {"error": "неверное имя, пароль или код" + (" — вход заблокирован на 15 минут" if locked else "")})
         THR.ok(ip)
-        tok = SESS.new(u, ip)
+        tok = SESS.new(u, ip, self.headers.get("User-Agent", ""))
         audit(u, ip, "login")
         ck = "awgsid=%s; HttpOnly; SameSite=Strict; Path=/%s" % (tok, "; Secure" if self.server.tls else "")
         return self.send(200, {"user": u, "csrf": SESS.get(tok)["csrf"]}, headers={"Set-Cookie": ck})
@@ -1236,36 +1245,6 @@ def api_tunnel_conf_get(h, q):
     return {"name": t, "text": mask_conf(read_file(conf_path(t))), "path": conf_path(t)}
 
 
-def save_conf(t, text, cp):
-    old = read_file(cp)
-    text = unmask_conf(text, old) if MASK in text else text.replace("\r", "")
-    errs = check_conf(text)
-    if errs:
-        raise ValueError("конфиг не принят: " + "; ".join(errs))
-    if old:
-        write_secure(cp + ".prev", old)
-    write_secure(cp, text)
-    return old
-
-
-def api_tunnel_conf_set(h, d):
-    t = get_tunnel(str(d.get("name", "")))
-    cp = conf_path(t)
-    with LOCK:
-        old = save_conf(t, str(d.get("text", "")), cp)
-        rc, out = run([os.path.join(DD, "up.sh"), t], timeout=60)
-        if rc != 0 and old:
-            write_secure(cp, old)
-            run([os.path.join(DD, "up.sh"), t], timeout=60)
-            h.act("conf-set-failed", t)
-            return {"ok": False, "msg": "туннель с новым конфигом не поднялся, возвращён прежний:\n" + out.strip()}
-    h.act("conf-set", t)
-    time.sleep(4)
-    hs = hs_age(t)
-    return {"ok": True, "msg": out.strip() + ("\nhandshake: %d с назад" % hs if hs >= 0 else "\nhandshake пока нет: проверьте через несколько секунд (Тест)"),
-            "prev": os.path.basename(cp) + ".prev"}
-
-
 def api_tunnel_add(h, d):
     name = str(d.get("name", "")).strip()
     if not NAME_RE.match(name):
@@ -1276,10 +1255,11 @@ def api_tunnel_add(h, d):
     cp = os.path.join(DD, name + ".conf")
     with LOCK:
         text = str(d.get("text", "")).replace("\r", "")
-        errs = check_conf(text)
+        errs = conf_validate(text)
         if errs:
             raise ValueError("конфиг не принят: " + "; ".join(errs))
         write_secure(cp, text)
+        rev_save(name, text, "добавлен")
         extra = (e.get("TUNNELS_EXTRA", "") + " " + name).split()
         env_set({"TUNNELS_EXTRA": " ".join(extra)})
         rc, out = run([os.path.join(DD, "up.sh"), name], timeout=60)
@@ -1385,6 +1365,9 @@ TOOLS = {
     "self-check": (["self.sh", "check"], 120, "Проверка awg-self"),
     "subnets-check": (["subnets.sh", "check"], 60, "Проверка подсетей"),
     "self-reconnect": (["self.sh", "reconnect"], 60, "Переподключение трафика роутера"),
+    "drift": (["drift.sh"], 120, "Сверка с эталоном"),
+    "drift-repair": (["drift.sh", "repair"], 180, "Восстановление правил"),
+    "drift-save": (["drift.sh", "save"], 60, "Новый эталон"),
 }
 
 
@@ -1399,6 +1382,18 @@ def api_tool(h, d):
             raise ValueError("укажите один домен")
         h.act("tool", {k: dom})
         return {"job": JOBS.start(k + dom, [os.path.join(DD, "domain-check.sh"), dom], 120)}
+    if k == "speedtest":
+        mb = int(d.get("mb", 10)) if str(d.get("mb", "10")).isdigit() else 10
+        if mb not in (5, 10, 25, 50, 100):
+            raise ValueError("объём: 5, 10, 25, 50 или 100 МБ")
+        e = env()
+        which = str(d.get("iface", "all"))
+        lst = tunnels(e) + [wan_if(e) or "eth3"] if which == "all" else ([wan_if(e)] if which == "wan" else [get_tunnel(which)])
+        lst = [i for i in lst if i and link_exists(i)]
+        if not lst:
+            raise ValueError("нет работающих интерфейсов для замера")
+        h.act("tool", {k: lst})
+        return {"job": JOBS.start(k, lambda: speed_steps(lst, mb), 600)}
     if k == "mtu-apply":
         t = get_tunnel(str(d.get("name", "")))
         h.act("tool", {k: t})
@@ -1420,7 +1415,7 @@ def api_job(h, q):
     return {"out": j["out"][off:], "len": len(j["out"]), "done": j["done"], "rc": j["rc"], "kind": j["kind"]}
 
 
-LOGS = {"failover": "failover.log", "notify": "notify.log", "bot": "bot.log", "install": "install.log", "restore": "restore.log"}
+LOGS = {"failover": "failover.log", "notify": "notify.log", "bot": "bot.log", "install": "install.log", "restore": "restore.log", "update": "update.log"}
 
 
 def api_logs(h, q):
@@ -1626,14 +1621,1008 @@ def api_system(h, q):
             "tls": h.server.tls, "data_free_mb": disk_free_mb()}
 
 
+
+# ======================================================================= конфиги: поля, проверка, ревизии
+KEY_RE = re.compile(r"^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$")
+HOST_RE = re.compile(r"^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$")
+
+
+def _ints(lo, hi):
+    def f(v):
+        if not re.match(r"^\d{1,10}$", v) or not lo <= int(v) <= hi:
+            raise ValueError("целое от %d до %d" % (lo, hi))
+    return f
+
+
+def _key(v):
+    if not KEY_RE.match(v):
+        raise ValueError("ключ WireGuard: 44 символа base64, оканчивается на «=»")
+
+
+def _addrs(v):
+    parts = [x.strip() for x in v.split(",") if x.strip()]
+    if not parts:
+        raise ValueError("пусто")
+    for x in parts:
+        try:
+            ipaddress.ip_interface(x)
+        except ValueError:
+            raise ValueError("«%s» — не адрес вида 10.8.1.2/32" % x)
+    if not any(":" not in x for x in parts):
+        raise ValueError("нужен хотя бы один IPv4-адрес")
+
+
+def _ips(v):
+    for x in [x.strip() for x in v.split(",") if x.strip()]:
+        try:
+            ipaddress.ip_address(x)
+        except ValueError:
+            if not HOST_RE.match(x):
+                raise ValueError("«%s» — не IP-адрес" % x)
+
+
+def _cidrs(v):
+    parts = [x.strip() for x in v.split(",") if x.strip()]
+    if not parts:
+        raise ValueError("пусто")
+    for x in parts:
+        try:
+            ipaddress.ip_network(x, strict=False)
+        except ValueError:
+            raise ValueError("«%s» — не сеть вида 0.0.0.0/0" % x)
+
+
+def _endpoint(v):
+    m = re.match(r"^\[([0-9A-Fa-f:.]+)\]:(\d{1,5})$", v) or re.match(r"^([^:\[\]]+):(\d{1,5})$", v)
+    if not m or not 1 <= int(m.group(2)) <= 65535:
+        raise ValueError("нужно АДРЕС:ПОРТ, например 203.0.113.10:51820")
+    host = m.group(1)
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not HOST_RE.match(host):
+            raise ValueError("«%s» — не адрес и не имя сервера" % host)
+
+
+def _hrange(v):
+    m = re.match(r"^(\d{1,10})(?:-(\d{1,10}))?$", v)
+    if not m or int(m.group(1)) > 4294967295 or (m.group(2) and (int(m.group(2)) > 4294967295 or int(m.group(2)) < int(m.group(1)))):
+        raise ValueError("число 0–4294967295 или диапазон «от-до»")
+
+
+def _itag(v):
+    if len(v) > 4096 or not re.match(r"^(\s*<[^<>\r\n]{1,1000}>)+\s*$", v):
+        raise ValueError("последовательность тегов вида <b 0x…><r 16>")
+
+
+def _mtu(v):
+    _ints(1000, 1500)(v)
+
+
+# раздел, ключ, проверка, обязателен, подсказка
+CONF_FIELDS = [
+    ("Interface", "PrivateKey", _key, True, "закрытый ключ роутера"),
+    ("Interface", "Address", _addrs, True, "адрес в туннеле, например 10.8.1.2/32"),
+    ("Interface", "DNS", _ips, False, "не применяется на роутере (DNS задаёт UniFi), только для справки"),
+    ("Interface", "MTU", _mtu, False, "пусто — по умолчанию 1376"),
+    ("Interface", "Jc", _ints(0, 128), False, "число мусорных пакетов перед handshake"),
+    ("Interface", "Jmin", _ints(0, 1280), False, "мин. размер мусорного пакета"),
+    ("Interface", "Jmax", _ints(0, 1280), False, "макс. размер мусорного пакета"),
+    ("Interface", "S1", _ints(0, 1500), False, "добавка к пакету инициации"),
+    ("Interface", "S2", _ints(0, 1500), False, "добавка к пакету ответа"),
+    ("Interface", "S3", _ints(0, 1500), False, "AWG 2.0: добавка к cookie"),
+    ("Interface", "S4", _ints(0, 1500), False, "AWG 2.0: добавка к данным"),
+    ("Interface", "H1", _hrange, False, "заголовок инициации"),
+    ("Interface", "H2", _hrange, False, "заголовок ответа"),
+    ("Interface", "H3", _hrange, False, "заголовок cookie"),
+    ("Interface", "H4", _hrange, False, "заголовок данных"),
+    ("Interface", "I1", _itag, False, "AWG 2.0: имитация протокола"),
+    ("Interface", "I2", _itag, False, ""),
+    ("Interface", "I3", _itag, False, ""),
+    ("Interface", "I4", _itag, False, ""),
+    ("Interface", "I5", _itag, False, ""),
+    ("Peer", "PublicKey", _key, True, "открытый ключ сервера"),
+    ("Peer", "PresharedKey", _key, False, "общий ключ (если есть)"),
+    ("Peer", "Endpoint", _endpoint, True, "адрес и порт сервера"),
+    ("Peer", "AllowedIPs", _cidrs, True, "обычно 0.0.0.0/0"),
+    ("Peer", "PersistentKeepalive", _ints(0, 65535), False, "секунд; 25 — держать NAT открытым"),
+]
+FIELD_BY_KEY = {(s, k.lower()): (s, k, f, req, hint) for s, k, f, req, hint in CONF_FIELDS}
+SECRET_FIELDS = {"privatekey", "presharedkey", "headerprotectionkey"}
+
+
+def conf_sections(text):
+    """[(имя раздела или '', [строки])] — порядок и комментарии сохраняются."""
+    out = [("", [])]
+    for line in text.replace("\r", "").split("\n"):
+        m = re.match(r"^\s*\[([A-Za-z]+)\]\s*$", line)
+        if m:
+            out.append((m.group(1), [line]))
+        else:
+            out[-1][1].append(line)
+    return out
+
+
+def conf_join(secs):
+    text = "\n".join("\n".join(lines) for _, lines in secs if lines)
+    return text.strip("\n") + "\n"
+
+
+def conf_fields(text, masked=True):
+    res = {"Interface": {}, "Peer": {}}
+    other = []
+    seen = set()
+    peers = 0
+    for name, lines in conf_sections(text):
+        if name == "Peer":
+            peers += 1
+            if peers > 1:
+                continue
+        for line in lines:
+            if "=" not in line or line.strip().startswith("#"):
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip()
+            fk = FIELD_BY_KEY.get((name, k.lower()))
+            if fk and (name, fk[1]) not in seen:
+                seen.add((name, fk[1]))
+                res[name][fk[1]] = (MASK if masked and v else v) if k.lower() in SECRET_FIELDS else v
+            elif name in ("Interface", "Peer"):
+                other.append("%s.%s" % (name, k))
+    return {"fields": res, "other": other, "peers": peers}
+
+
+def conf_apply_fields(text, fields):
+    """Записать поля в текст конфига: меняются только переданные ключи, остальные строки остаются."""
+    secs = conf_sections(text)
+    for sec in ("Interface", "Peer"):
+        upd = fields.get(sec) or {}
+        if not isinstance(upd, dict):
+            raise ValueError("неверный формат полей")
+        idx = next((i for i, (n, _) in enumerate(secs) if n == sec), None)
+        if idx is None:
+            secs.append((sec, ["[%s]" % sec]))
+            idx = len(secs) - 1
+        lines = secs[idx][1]
+        for key, val in upd.items():
+            fk = FIELD_BY_KEY.get((sec, str(key).lower()))
+            if not fk:
+                raise ValueError("неизвестное поле %s.%s" % (sec, key))
+            key = fk[1]
+            val = str(val if val is not None else "").strip()
+            if "\n" in val or "\r" in val:
+                raise ValueError("%s: перевод строки недопустим" % key)
+            if key.lower() in SECRET_FIELDS and val == MASK:
+                continue                       # секрет не меняется
+            pos = next((i for i, l in enumerate(lines) if "=" in l and l.split("=", 1)[0].strip().lower() == key.lower()), None)
+            if val == "":
+                if pos is not None:
+                    del lines[pos]
+                continue
+            if pos is not None:
+                lines[pos] = "%s = %s" % (key, val)
+            else:
+                last = max([i for i, l in enumerate(lines) if l.strip()] or [0])
+                lines.insert(last + 1, "%s = %s" % (key, val))
+    return conf_join(secs)
+
+
+def conf_validate(text):
+    """Базовая проверка + значения известных ключей. → список ошибок."""
+    errs = check_conf(text)
+    vals = {}
+    peers = 0
+    for name, lines in conf_sections(text):
+        if name == "Peer":
+            peers += 1
+        for line in lines:
+            if "=" not in line or line.strip().startswith("#"):
+                continue
+            k, v = line.split("=", 1)
+            fk = FIELD_BY_KEY.get((name, k.strip().lower()))
+            if not fk:
+                continue
+            v = v.strip()
+            if name == "Interface" or peers == 1:
+                vals[fk[1]] = v
+            if v == "" or (k.strip().lower() in SECRET_FIELDS and v == MASK):
+                continue
+            try:
+                fk[2](v)
+            except ValueError as ex:
+                errs.append("%s: %s" % (fk[1], ex))
+    if vals.get("Jmin", "").isdigit() and vals.get("Jmax", "").isdigit() and int(vals["Jmin"]) > int(vals["Jmax"]):
+        errs.append("Jmin больше Jmax")
+    if peers > 1:
+        errs.append("в конфиге несколько [Peer]: для туннеля на роутере нужен один сервер")
+    return errs
+
+
+HISTD = os.path.join(DD, "history")
+REV_RE = re.compile(r"^\d{8}-\d{6}(-\d+)?\.conf$")
+
+
+def rev_key(f):
+    m = re.match(r"^(\d{8}-\d{6})(?:-(\d+))?\.conf$", f)
+    return (m.group(1), int(m.group(2) or 0)) if m else (f, 0)
+
+
+def rev_dir(t):
+    return os.path.join(HISTD, t)
+
+
+def rev_save(t, text, why=""):
+    """Сохранить версию конфига в историю (до 15 штук на туннель, права 600)."""
+    if not text.strip():
+        return ""
+    d = rev_dir(t)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(HISTD, 0o700)
+    lst = sorted((f for f in os.listdir(d) if REV_RE.match(f)), key=rev_key)
+    if lst and read_file(os.path.join(d, lst[-1])) == text:
+        return lst[-1]
+    base = time.strftime("%Y%m%d-%H%M%S")
+    name = base + ".conf"
+    i = 1
+    while os.path.exists(os.path.join(d, name)):
+        name = "%s-%d.conf" % (base, i)
+        i += 1
+    write_secure(os.path.join(d, name), text)
+    if why:
+        write_secure(os.path.join(d, name + ".why"), why[:200])
+    for old in lst[:-14]:
+        for f in (old, old + ".why"):
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+    return name
+
+
+def rev_list(t):
+    d = rev_dir(t)
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for f in sorted((f for f in os.listdir(d) if REV_RE.match(f)), key=rev_key, reverse=True):
+        p = os.path.join(d, f)
+        out.append({"id": f, "time": int(os.stat(p).st_mtime), "why": read_file(p + ".why").strip(),
+                    "summary": summary_of(read_file(p))})
+    return out
+
+
+def summary_of(text):
+    f = conf_fields(text)["fields"]
+    return {"endpoint": f["Peer"].get("Endpoint", ""), "address": f["Interface"].get("Address", ""), "proto": proto_of(text),
+            "mtu": f["Interface"].get("MTU", "")}
+
+
+def apply_conf_text(h, t, text, why):
+    """Проверить, сохранить (с версией в истории), перезапустить туннель; при ошибке вернуть прежний. → ответ API."""
+    cp = conf_path(t)
+    with LOCK:
+        old = read_file(cp)
+        text = unmask_conf(text, old) if MASK in text else text.replace("\r", "")
+        errs = conf_validate(text)
+        if errs:
+            raise ValueError("конфиг не принят: " + "; ".join(errs))
+        if old.strip() == text.strip():
+            return {"ok": True, "msg": "изменений нет", "unchanged": True}
+        if old:
+            rev_save(t, old, "до: " + why)
+            write_secure(cp + ".prev", old)
+        write_secure(cp, text)
+        rc, out = run([os.path.join(DD, "up.sh"), t], timeout=60)
+        if rc != 0 and old:
+            write_secure(cp, old)
+            run([os.path.join(DD, "up.sh"), t], timeout=60)
+            h.act("conf-set-failed", {t: why})
+            return {"ok": False, "msg": "туннель с новым конфигом не поднялся, возвращён прежний:\n" + out.strip()}
+        rev_save(t, text, why)
+        if svc_active("awg-self"):
+            run(["systemctl", "restart", "awg-self"], timeout=30)   # адрес сервера туннеля — в исключениях awg-self
+    h.act("conf-set", {t: why})
+    hs = -1
+    for _ in range(8):
+        time.sleep(1)
+        hs = hs_age(t)
+        if 0 <= hs < 30:
+            break
+    return {"ok": True, "msg": out.strip() + ("\nhandshake: %d с назад" % hs if hs >= 0 else
+                                               "\nhandshake пока нет: проверьте через несколько секунд (Тест)"), "handshake": hs}
+
+
+# ======================================================================= импорт (.conf, vpn://, JSON Amnezia)
+IMPORTS = {}
+IMPORTS_LOCK = threading.Lock()
+
+
+def _find_conf(o, depth=0):
+    if depth > 6:
+        return None
+    if isinstance(o, str):
+        s = o.strip()
+        if s.startswith("{"):
+            try:
+                return _find_conf(json.loads(s), depth + 1)
+            except ValueError:
+                return None
+        if "[Interface]" in s and "[Peer]" in s:
+            return s
+        return None
+    if isinstance(o, dict):
+        for k in ("config", "last_config"):
+            if k in o:
+                r = _find_conf(o[k], depth + 1)
+                if r:
+                    return r
+        for v in o.values():
+            r = _find_conf(v, depth + 1)
+            if r:
+                return r
+    if isinstance(o, list):
+        for v in o:
+            r = _find_conf(v, depth + 1)
+            if r:
+                return r
+    return None
+
+
+def decode_import(data):
+    """Текст конфига из .conf, ссылки vpn:// (AmneziaVPN) или JSON. → (текст, источник, предупреждения)."""
+    s = str(data or "").strip().lstrip("﻿")
+    warns = []
+    if not s:
+        raise ValueError("пусто: вставьте конфиг, ссылку vpn:// или выберите файл")
+    if len(s) > 200000:
+        raise ValueError("слишком большой текст")
+    src = "conf"
+    obj = None
+    if s.lower().startswith("vpn://"):
+        src = "vpn://"
+        b = re.sub(r"\s", "", s[6:])
+        b += "=" * (-len(b) % 4)
+        try:
+            raw = base64.urlsafe_b64decode(b)
+        except (ValueError, TypeError):
+            raise ValueError("ссылка vpn:// повреждена (не base64)")
+        js = None
+        for cand in (raw[4:], raw):
+            try:
+                js = zlib.decompress(cand)
+                break
+            except zlib.error:
+                continue
+        if js is None:
+            js = raw
+        try:
+            obj = json.loads(js.decode("utf-8"))
+        except ValueError:
+            raise ValueError("ссылка vpn:// не распознана: внутри не JSON AmneziaVPN")
+    elif s.startswith("{"):
+        src = "json"
+        try:
+            obj = json.loads(s)
+        except ValueError:
+            raise ValueError("неверный JSON")
+    if obj is not None:
+        text = _find_conf(obj)
+        if not text:
+            raise ValueError("в ссылке нет конфига AmneziaWG/WireGuard (возможно, это ключ для другого протокола — OpenVPN, XRay)")
+        dns = [obj.get("dns1"), obj.get("dns2")] if isinstance(obj, dict) else [None, None]
+        text = text.replace("$PRIMARY_DNS", dns[0] or "1.1.1.1").replace("$SECONDARY_DNS", dns[1] or "1.0.0.1")
+        if isinstance(obj, dict) and obj.get("description"):
+            warns.append("название в AmneziaVPN: %s" % str(obj.get("description"))[:60])
+    else:
+        text = s
+    text = text.replace("\r", "").strip() + "\n"
+    if re.search(r"\$[A-Z_]{3,}", text):
+        warns.append("в конфиге остались подстановки вида $ИМЯ: проверьте строки")
+    return text, src, warns
+
+
+def import_put(user, text):
+    tok = secrets.token_urlsafe(18)
+    with IMPORTS_LOCK:
+        for k in [k for k, v in IMPORTS.items() if now() - v["t"] > 900]:
+            del IMPORTS[k]
+        IMPORTS[tok] = {"t": now(), "user": user, "text": text}
+    return tok
+
+
+def import_get(user, tok):
+    with IMPORTS_LOCK:
+        x = IMPORTS.get(str(tok or ""))
+        if not x or x["user"] != user or now() - x["t"] > 900:
+            raise ValueError("загруженный конфиг устарел: загрузите его снова")
+        return x["text"]
+
+
+def api_import_parse(h, d):
+    text, src, warns = decode_import(d.get("data", ""))
+    errs = conf_validate(text)
+    f = conf_fields(text)
+    if f["peers"] == 0:
+        errs.append("нет раздела [Peer]")
+    e = env()
+    ep = f["fields"]["Peer"].get("Endpoint", "")
+    for t in tunnels(e):
+        if ep and conf_get(read_file(conf_path(t, e)), "Endpoint") == ep:
+            warns.append("этот сервер (%s) уже используется туннелем %s" % (ep.rsplit(":", 1)[0], t))
+    tok = import_put(h.user, text) if not errs else ""
+    h.act("import-parse", src)
+    return {"ok": not errs, "token": tok, "source": src, "errors": errs, "warnings": warns, "text": mask_conf(text),
+            "fields": f["fields"], "proto": proto_of(text), "other": f["other"]}
+
+
+def api_import_apply(h, d):
+    text = import_get(h.user, d.get("token"))
+    target = str(d.get("target", ""))
+    if target == "new":
+        return api_tunnel_add(h, {"name": d.get("name"), "label": d.get("label"), "text": text})
+    t = get_tunnel(target)
+    r = apply_conf_text(h, t, text, "импорт")
+    if d.get("label"):
+        api_tunnel_label(h, {"name": t, "label": d.get("label")})
+    return r
+
+
+# ======================================================================= API: туннели (поля, история, экспорт, порядок)
+def api_tunnel_fields_get(h, q):
+    t = get_tunnel((q.get("name") or [""])[0])
+    text = read_file(conf_path(t))
+    f = conf_fields(text)
+    return {"name": t, "fields": f["fields"], "other": f["other"], "peers": f["peers"], "proto": proto_of(text),
+            "schema": [{"sec": s, "key": k, "req": r, "hint": hint, "secret": k.lower() in SECRET_FIELDS} for s, k, _, r, hint in CONF_FIELDS],
+            "text": mask_conf(text), "path": conf_path(t), "revisions": len(rev_list(t))}
+
+
+def preview_text(t, d):
+    old = read_file(conf_path(t))
+    if "fields" in d:
+        new = conf_apply_fields(old, d.get("fields") or {})
+    else:
+        new = str(d.get("text", "")).replace("\r", "")
+        new = unmask_conf(new, old) if MASK in new else new
+    return old, new
+
+
+def api_tunnel_preview(h, d):
+    t = get_tunnel(str(d.get("name", "")))
+    old, new = preview_text(t, d)
+    return {"errors": conf_validate(new), "old": mask_conf(old), "new": mask_conf(new), "changed": old.strip() != new.strip()}
+
+
+def api_tunnel_conf_set(h, d):
+    t = get_tunnel(str(d.get("name", "")))
+    old, new = preview_text(t, d)
+    return apply_conf_text(h, t, new, "форма" if "fields" in d else "редактор")
+
+
+def api_tunnel_revisions(h, q):
+    t = get_tunnel((q.get("name") or [""])[0])
+    cur = read_file(conf_path(t))
+    lst = rev_list(t)
+    for r in lst:
+        r["current"] = read_file(os.path.join(rev_dir(t), r["id"])).strip() == cur.strip()
+    return {"name": t, "revisions": lst}
+
+
+def api_tunnel_revision(h, q):
+    t = get_tunnel((q.get("name") or [""])[0])
+    rid = (q.get("id") or [""])[0]
+    if not REV_RE.match(rid) or not os.path.exists(os.path.join(rev_dir(t), rid)):
+        raise ApiError(404, "нет такой версии")
+    return {"name": t, "id": rid, "text": mask_conf(read_file(os.path.join(rev_dir(t), rid))), "current": mask_conf(read_file(conf_path(t)))}
+
+
+def api_tunnel_revision_restore(h, d):
+    t = get_tunnel(str(d.get("name", "")))
+    rid = str(d.get("id", ""))
+    if not REV_RE.match(rid) or not os.path.exists(os.path.join(rev_dir(t), rid)):
+        raise ApiError(404, "нет такой версии")
+    return apply_conf_text(h, t, read_file(os.path.join(rev_dir(t), rid)), "возврат версии " + rid[:15])
+
+
+def api_tunnel_export(h, d):
+    t = get_tunnel(str(d.get("name", "")))
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act("export-denied", t)
+        raise ApiError(403, "текущий пароль неверен")
+    h.act("conf-export", t)
+    return {"name": t, "filename": t + ".conf", "text": read_file(conf_path(t))}
+
+
+def api_tunnel_order(h, d):
+    e = env()
+    cur = e.get("TUNNELS_EXTRA", "").split()
+    new = [str(x) for x in (d.get("extra") or [])]
+    if sorted(new) != sorted(cur):
+        raise ValueError("порядок должен содержать те же дополнительные туннели")
+    with LOCK:
+        env_set({"TUNNELS_EXTRA": " ".join(new)})
+        if svc_active("awg-failover"):
+            run(["systemctl", "restart", "awg-failover"], timeout=60)
+    h.act("tunnel-order", new)
+    return {"ok": True, "msg": "порядок сохранён, сторож перезапущен"}
+
+
+# ======================================================================= скорость
+SPEED_F = os.path.join(WEBD, "speed.json")
+SPEED_URL = os.environ.get("AWG_SPEED_URL", "https://speed.cloudflare.com")
+
+
+def speed_hist():
+    try:
+        x = json.loads(read_file(SPEED_F, "[]"))
+        return x if isinstance(x, list) else []
+    except ValueError:
+        return []
+
+
+def speed_steps(ifaces, mb):
+    """Замер скорости: задержка (TCP-подключение), загрузка и отдача через указанный интерфейс."""
+    res = []
+    for i in ifaces:
+        yield "== %s\n" % i
+        r = {"t": now(), "iface": i, "mb": mb}
+        rc, out = curl(["-o", "/dev/null", "--interface", i, "-w", "%{time_connect}", SPEED_URL + "/__down?bytes=0"], 8)
+        try:
+            r["ping_ms"] = int(float(out.strip() or 0) * 1000)
+        except ValueError:
+            r["ping_ms"] = 0
+        yield "задержка (TCP-подключение): %s мс\n" % (r["ping_ms"] or "—")
+        rc, out = curl(["-o", "/dev/null", "--interface", i, "-w", "%{speed_download} %{size_download}",
+                        "%s/__down?bytes=%d" % (SPEED_URL, mb * 1000000)], 40)
+        p = out.split()
+        r["down_bps"] = int(float(p[0]) * 8) if rc == 0 and p else 0
+        yield "загрузка: %s\n" % (fmt_bps(r["down_bps"]) if r["down_bps"] else "не удалось (код %d)" % rc)
+        up_mb = max(1, mb // 4)
+        rc, out = run(["sh", "-c", 'head -c %d /dev/zero | curl -s -4 -m 40 --interface "$1" -o /dev/null -w "%%{speed_upload}" '
+                       '--data-binary @- "$2"' % (up_mb * 1000000), "sh", i, SPEED_URL + "/__up"], timeout=45)
+        try:
+            r["up_bps"] = int(float(out.strip().split()[-1]) * 8) if rc == 0 else 0
+        except (ValueError, IndexError):
+            r["up_bps"] = 0
+        yield "отдача: %s\n\n" % (fmt_bps(r["up_bps"]) if r["up_bps"] else "не удалось (код %d)" % rc)
+        res.append(r)
+    with LOCK:
+        hist = (speed_hist() + res)[-60:]
+        write_secure(SPEED_F, json.dumps(hist), 0o600)
+    yield "Сохранено в историю замеров.\n"
+
+
+def fmt_bps(b):
+    b = float(b)
+    for u, k in (("Гбит/с", 1e9), ("Мбит/с", 1e6), ("Кбит/с", 1e3)):
+        if b >= k:
+            return "%.1f %s" % (b / k, u)
+    return "%d бит/с" % b
+
+
+def api_speed(h, q):
+    return {"history": speed_hist()[::-1]}
+
+
+# ======================================================================= клиенты в туннеле (conntrack)
+LEASE_FILES = [os.environ.get("AWG_LEASES", "/run/dnsmasq.leases"), "/run/dnsmasq.leases", "/run/dnsmasq.dhcp.leases", "/var/run/dnsmasq.leases", "/tmp/dnsmasq.leases",
+               "/data/udapi-config/dnsmasq.lease", "/var/lib/misc/dnsmasq.leases"]
+
+
+def leases():
+    names = {}
+    files = list(LEASE_FILES)
+    try:
+        files += ["/run/" + f for f in os.listdir("/run") if f.startswith("dnsmasq") and f.endswith("leases")]
+    except OSError:
+        pass
+    for f in files:
+        for line in read_file(f).splitlines():
+            p = line.split()
+            if len(p) >= 4 and is_ipv4(p[2]):
+                names[p[2]] = {"mac": p[1], "name": "" if p[3] == "*" else p[3]}
+    out = run(["ip", "-4", "neigh", "show"], timeout=5)[1]
+    for line in out.splitlines():
+        p = line.split()
+        if p and is_ipv4(p[0]) and "lladdr" in p:
+            names.setdefault(p[0], {"mac": p[p.index("lladdr") + 1], "name": ""})
+    return names
+
+
+def conntrack_lines():
+    rc, out = run(["conntrack", "-L", "-f", "ipv4"], timeout=15)
+    if rc == 0 and "src=" in out:
+        return out.splitlines()
+    return read_file("/proc/net/nf_conntrack").splitlines()
+
+
+def parse_mark(m):
+    try:
+        if "/" in m:
+            v, k = m.split("/", 1)
+            return int(v, 0), int(k, 0)
+        return int(m, 0), 0xFFFFFFFF
+    except ValueError:
+        return None, None
+
+
+def clients():
+    e = env()
+    mv, mk = parse_mark(e.get("MARK", ""))
+    taddr = {}
+    for t in tunnels(e):
+        a = if_ipv4(t)
+        if a:
+            taddr[a] = t
+    own = set(taddr) | {lan_ip()}
+    names = leases()
+    cl = {}
+    total = 0
+    for line in conntrack_lines()[:60000]:
+        if "src=" not in line:
+            continue
+        kv = re.findall(r"(\w+)=(\S+)", line)
+        srcs = [v for k, v in kv if k == "src"]
+        dsts = [v for k, v in kv if k == "dst"]
+        bts = [int(v) for k, v in kv if k == "bytes" and v.isdigit()]
+        mark = next((v for k, v in kv if k == "mark"), "0")
+        if len(srcs) < 2 or len(dsts) < 2:
+            continue
+        src, dst, rdst = srcs[0], dsts[0], dsts[1]
+        try:
+            ip = ipaddress.ip_address(src)
+        except ValueError:
+            continue
+        if not ip.is_private or src in own:
+            continue
+        tun = taddr.get(rdst, "")
+        try:
+            mm = int(mark)
+        except ValueError:
+            mm = 0
+        marked = mv is not None and mk and (mm & mk) == (mv & mk) and mv != 0
+        if not tun and not marked:
+            continue
+        total += 1
+        c = cl.setdefault(src, {"ip": src, "conns": 0, "bytes": 0, "tunnels": collections.Counter(), "dst": collections.Counter()})
+        c["conns"] += 1
+        c["bytes"] += sum(bts)
+        c["tunnels"][tun or "PBR"] += 1
+        c["dst"][dst] += 1
+    out = []
+    for ip, c in cl.items():
+        n = names.get(ip, {})
+        out.append({"ip": ip, "name": n.get("name", ""), "mac": n.get("mac", ""), "conns": c["conns"], "bytes": c["bytes"],
+                    "tunnel": c["tunnels"].most_common(1)[0][0], "top": [d for d, _ in c["dst"].most_common(3)]})
+    out.sort(key=lambda x: (-x["conns"], x["ip"]))
+    return {"clients": out, "total": total, "mark": e.get("MARK", "")}
+
+
+_CL = {"t": 0.0, "v": None}
+_CL_LOCK = threading.Lock()
+
+
+def api_clients(h, q):
+    with _CL_LOCK:
+        if _CL["v"] is None or time.time() - _CL["t"] > 5:
+            _CL["v"] = clients()
+            _CL["t"] = time.time()
+        return _CL["v"]
+
+
+# ======================================================================= сеансы
+def sid(tok):
+    return hashlib.sha256(tok.encode()).hexdigest()[:12]
+
+
+def api_sessions(h, q):
+    cur = h.cookie("awgsid")
+    with SESS.lock:
+        lst = [{"id": sid(k), "user": v["user"], "ip": v["ip"], "born": v["born"], "seen": v["seen"], "ua": v.get("ua", ""), "me": k == cur}
+               for k, v in SESS.s.items()]
+    return {"sessions": sorted(lst, key=lambda x: -x["seen"])}
+
+
+def api_session_revoke(h, d):
+    x = str(d.get("id", ""))
+    with SESS.lock:
+        for k in list(SESS.s):
+            if sid(k) == x or (x == "others" and k != h.cookie("awgsid")):
+                del SESS.s[k]
+    h.act("session-revoke", x)
+    return {"ok": True}
+
+
+# ======================================================================= сертификат
+UNIFI_CORE = os.environ.get("AWG_UNIFI_CORE", "/data/unifi-core/config")
+
+
+def cert_info(path):
+    """Субъект, издатель, срок, имена из сертификата (без внешних модулей)."""
+    try:
+        d = ssl._ssl._test_decode_cert(path)
+    except Exception:
+        return None
+    sub = dict(x[0] for x in d.get("subject", ()) if x)
+    iss = dict(x[0] for x in d.get("issuer", ()) if x)
+    try:
+        exp = int(ssl.cert_time_to_seconds(d.get("notAfter", "")))
+    except (ValueError, TypeError):
+        exp = 0
+    sans = [v for k, v in d.get("subjectAltName", ()) if k in ("DNS", "IP Address")]
+    return {"subject": sub.get("commonName", ""), "issuer": iss.get("organizationName") or iss.get("commonName", ""),
+            "expires": exp, "names": sans, "self_signed": d.get("subject") == d.get("issuer"), "path": path}
+
+
+def unifi_cert_candidates():
+    """Сертификат веб-интерфейса UniFi OS: из конфигов nginx/unifi-core, затем стандартные имена, затем поиск."""
+    cands = []
+    for f in sorted(globr(os.path.join(UNIFI_CORE, "http"), ".conf")):
+        txt = read_file(f)
+        c = re.search(r"^\s*ssl_certificate\s+([^;\s]+)\s*;", txt, re.M)
+        k = re.search(r"^\s*ssl_certificate_key\s+([^;\s]+)\s*;", txt, re.M)
+        if c and k:
+            cands.append((c.group(1), k.group(1)))
+    y = read_file(os.path.join(UNIFI_CORE, "overrides", "local.yaml"))
+    c = re.search(r"(/\S+\.(?:crt|pem))", y)
+    k = re.search(r"(/\S+\.key)", y)
+    if c and k:
+        cands.append((c.group(1).strip("'\""), k.group(1).strip("'\"")))
+    cands.append((os.path.join(UNIFI_CORE, "unifi-core.crt"), os.path.join(UNIFI_CORE, "unifi-core.key")))
+    for crt in sorted(globr(UNIFI_CORE, ".crt", depth=3)):
+        key = crt[:-4] + ".key"
+        if os.path.exists(key):
+            cands.append((crt, key))
+    seen, out = set(), []
+    for c, k in cands:
+        if (c, k) in seen or not (os.path.isfile(c) and os.path.isfile(k)):
+            continue
+        seen.add((c, k))
+        out.append((c, k))
+    # предпочтение: не самоподписанный, с самым поздним сроком
+    def score(ck):
+        i = cert_info(ck[0]) or {}
+        return (0 if i.get("self_signed", True) else 1, i.get("expires", 0))
+    return sorted(out, key=score, reverse=True)
+
+
+def globr(d, ext, depth=1):
+    out = []
+    try:
+        for f in os.listdir(d):
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and f.endswith(ext):
+                out.append(p)
+            elif os.path.isdir(p) and depth > 1:
+                out += globr(p, ext, depth - 1)
+    except OSError:
+        pass
+    return out
+
+
+def pick_cert(c):
+    """→ (crt, key, режим, предупреждение)."""
+    mode = c.get("WEB_CERT", "auto")
+    if mode not in ("auto", "unifi", "self"):
+        k = c.get("WEB_KEY", "")
+        if os.path.isfile(mode) and os.path.isfile(k):
+            return mode, k, "file", ""
+        return CERT_F, KEY_F, "self", "файлы WEB_CERT/WEB_KEY не найдены, используется самоподписанный"
+    if mode in ("auto", "unifi"):
+        for crt, key in unifi_cert_candidates():
+            i = cert_info(crt) or {}
+            if mode == "unifi" or not i.get("self_signed", True):
+                return crt, key, "unifi", ""
+        if mode == "unifi":
+            return CERT_F, KEY_F, "self", "сертификат UniFi не найден, используется самоподписанный"
+    return CERT_F, KEY_F, "self", ""
+
+
+class CertWatch(threading.Thread):
+    """Следит за файлами сертификата и перечитывает их без перезапуска (продление в UniFi подхватывается само)."""
+
+    def __init__(self, ctx, crt, key):
+        super().__init__(daemon=True)
+        self.ctx, self.crt, self.key = ctx, crt, key
+        self.mt = self.mtimes()
+
+    def mtimes(self):
+        try:
+            return (os.stat(self.crt).st_mtime, os.stat(self.key).st_mtime)
+        except OSError:
+            return None
+
+    def run(self):
+        while True:
+            time.sleep(int(os.environ.get("AWG_CERT_POLL", "60")))
+            m = self.mtimes()
+            if m and m != self.mt:
+                time.sleep(3)           # дождаться записи обоих файлов
+                try:
+                    self.ctx.load_cert_chain(self.crt, self.key)
+                    self.mt = self.mtimes()
+                    sys.stderr.write("сертификат перечитан: %s\n" % self.crt)
+                except (ssl.SSLError, OSError) as ex:
+                    sys.stderr.write("сертификат не перечитан: %s\n" % ex)
+
+
+# ======================================================================= настройки панели
+def api_web_get(h, q):
+    c = conf()
+    info = h.server.cert_info or {}
+    return {"port": c["WEB_PORT"], "bind": c["WEB_BIND"], "tls": c["WEB_TLS"], "allow": c["WEB_ALLOW"], "hosts": c.get("WEB_HOSTS", ""),
+            "cert_mode": c.get("WEB_CERT", "auto"), "cert": info, "cert_used": h.server.cert_mode, "cert_warn": h.server.cert_warn,
+            "unifi_certs": [dict(cert_info(cr) or {}, key=k) for cr, k in unifi_cert_candidates()[:5]], "lan": lan_ip()}
+
+
+def port_busy(p):
+    out = run(["ss", "-ltnH"], timeout=5)[1]
+    return any(re.search(r"[:.]%d$" % p, line.split()[3]) for line in out.splitlines() if len(line.split()) > 3)
+
+
+UNIFI_PORTS = {22, 53, 80, 443, 8080, 8443, 8444, 8880, 8843, 6789, 3478, 10001, 5514, 11443, 1900, 5671, 5656, 9543, 9090}
+
+
+def api_web_set(h, d):
+    c = conf()
+    upd = {}
+    p = str(d.get("port", c["WEB_PORT"])).strip()
+    if not re.match(r"^\d{4,5}$", p) or not 1024 <= int(p) <= 65535 or int(p) in UNIFI_PORTS:
+        raise ValueError("порт 1024–65535, не занятый службами UniFi (8443, 8080, 8880 и др.)")
+    if p != c["WEB_PORT"] and port_busy(int(p)):
+        raise ValueError("порт %s уже занят другой программой" % p)
+    upd["WEB_PORT"] = p
+    cm = str(d.get("cert_mode", c.get("WEB_CERT", "auto")))
+    if cm not in ("auto", "unifi", "self"):
+        raise ValueError("сертификат: auto, unifi или self")
+    upd["WEB_CERT"] = cm
+    hosts = v_domains(d.get("hosts", c.get("WEB_HOSTS", ""))) if str(d.get("hosts", "")).strip() else ""
+    upd["WEB_HOSTS"] = hosts
+    allow = str(d.get("allow", c["WEB_ALLOW"])).split()
+    for n in allow:
+        net = ipaddress.ip_network(n, strict=False)
+        if not net.is_private and not net.is_loopback:
+            raise ValueError("«%s»: разрешать можно только частные сети (панель не для интернета)" % n)
+    if not allow:
+        raise ValueError("нужна хотя бы одна сеть")
+    upd["WEB_ALLOW"] = " ".join(allow)
+    with LOCK:
+        lines = read_file(CONF_F).splitlines()
+        done = set()
+        out = []
+        for line in lines:
+            m = re.match(r"^\s*([A-Z_]+)=", line)
+            if m and m.group(1) in upd:
+                out.append(fmt_env(m.group(1), upd[m.group(1)]))
+                done.add(m.group(1))
+            else:
+                out.append(line)
+        out += [fmt_env(k, v) for k, v in upd.items() if k not in done]
+        write_secure(CONF_F, "\n".join(out) + "\n")
+    h.act("web-settings", upd)
+    threading.Thread(target=lambda: (time.sleep(1.5), run(["systemctl", "--no-block", "restart", "awg-web"], timeout=10)), daemon=True).start()
+    scheme = "https" if c["WEB_TLS"] == "yes" else "http"
+    return {"ok": True, "msg": "сохранено, панель перезапускается", "url": "%s://%s:%s/" % (scheme, h.headers.get("Host", "").rsplit(":", 1)[0] or lan_ip(), p)}
+
+
+# ======================================================================= обновление из панели
+UPD_LOG = os.path.join(DD, "update.log")
+
+
+def channel():
+    c = parse_env_text(read_file(os.path.join(DD, ".channel")))
+    inst = read_file(os.path.join(DD, "install.sh"))
+    m = re.search(r"^AWG_REPO=\$\{AWG_REPO:-([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\}", inst, re.M)
+    return c.get("AWG_REPO") or (m.group(1) if m else "stebasha/UDR-Amnezia"), c.get("AWG_BRANCH") or "main"
+
+
 def api_update_check(h, d):
-    m = re.search(r"^AWG_REPO=\$\{AWG_REPO:-([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\}", read_file(os.path.join(DD, "install.sh")), re.M)
-    repo = m.group(1) if m else "stebasha/UDR-Amnezia"
-    rc, out = curl(["-f", "https://raw.githubusercontent.com/%s/main/VERSION" % repo], 15)
+    repo, br = channel()
+    rc, out = curl(["-f", "https://raw.githubusercontent.com/%s/%s/VERSION" % (repo, br)], 15)
     cur = read_file(os.path.join(DD, "VERSION")).strip()
     new = out.strip() if rc == 0 and re.match(r"^[0-9][0-9A-Za-z.\-]{0,20}$", out.strip()) else ""
-    return {"current": cur, "latest": new, "repo": repo, "update": bool(new) and new != cur,
-            "cmd": "bash <(curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh) --update" % repo}
+    rc2, chg = curl(["-f", "https://raw.githubusercontent.com/%s/%s/CHANGELOG.md" % (repo, br)], 15)
+    notes = ""
+    if rc2 == 0 and new:
+        m = re.search(r"^## %s\s*\n(.*?)(?=^## )" % re.escape(new), chg + "\n## ", re.M | re.S)
+        notes = (m.group(1).strip() if m else "")[:6000]
+    return {"current": cur, "latest": new, "repo": repo, "branch": br, "update": bool(new) and new != cur, "notes": notes,
+            "running": update_running(),
+            "cmd": "AWG_BRANCH=%s bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update" % (br, repo, br)}
+
+
+def update_running():
+    return run(["systemctl", "is-active", "--quiet", "awg-update"], timeout=5)[0] == 0
+
+
+def api_update_run(h, d):
+    if update_running():
+        raise ValueError("обновление уже идёт")
+    repo, br = channel()
+    write_secure(UPD_LOG, "%s обновление запущено из панели (%s, ветка %s)\n" % (time.strftime("%F %T"), repo, br), 0o600)
+    script = ('cd /; export AWG_YES=1 AWG_REPO="$1" AWG_BRANCH="$2"; '
+              'f=$(mktemp); if curl -fsSL -m 120 "https://raw.githubusercontent.com/$1/$2/install.sh" -o "$f" && bash -n "$f"; then '
+              'bash "$f" --update; rc=$?; else echo "не удалось скачать install.sh"; rc=1; fi; rm -f "$f"; echo "[код $rc]"; exit $rc')
+    rc, out = run(["systemd-run", "--unit=awg-update", "--collect", "--quiet", "-p", "StandardOutput=append:" + UPD_LOG,
+                   "-p", "StandardError=append:" + UPD_LOG, "/bin/bash", "-c", script, "awg-update", repo, br], timeout=20)
+    if rc != 0:
+        raise ValueError("не удалось запустить обновление: " + out.strip()[:300])
+    h.act("update-run", br)
+    return {"ok": True, "msg": "обновление запущено; панель перезапустится, страница переподключится сама"}
+
+
+def api_update_log(h, q):
+    t = read_file(UPD_LOG)
+    return {"text": t[-60000:], "running": update_running(), "version": read_file(os.path.join(DD, "VERSION")).strip()}
+
+
+# ======================================================================= резервные копии: проверка; экспорт настроек
+def api_backup_verify(h, d):
+    f = str(d.get("name", ""))
+    if not BK_RE.match(f) or not os.path.exists(os.path.join(DD, "backups", f)):
+        raise ApiError(404, "нет такой копии")
+    pw = str(d.get("password", ""))
+    if f.endswith(".enc") and not pw:
+        raise ValueError("нужен пароль копии")
+    h.act("backup-verify", f)
+    rc, out = run([os.path.join(DD, "backup.sh"), "verify", os.path.join(DD, "backups", f)], timeout=120, env={"AWG_BACKUP_PASS": pw})
+    return {"ok": rc == 0, "msg": out.strip()}
+
+
+EXPORT_KEYS = list(SETTINGS)
+
+
+def api_settings_export(h, q):
+    e = env()
+    h.act("settings-export")
+    return {"format": "udr-amnezia-settings", "version": read_file(os.path.join(DD, "VERSION")).strip(), "time": now(),
+            "settings": {k: e.get(k, DEFAULTS.get(k, "")) for k in EXPORT_KEYS}, "labels": labels(),
+            "note": "без ключей, токенов и паролей; туннели переносятся отдельно (конфиги)"}
+
+
+def api_settings_import(h, d):
+    x = d.get("data") or {}
+    if not isinstance(x, dict) or x.get("format") != "udr-amnezia-settings":
+        raise ValueError("это не файл настроек UDR-Amnezia")
+    vals = {k: v for k, v in (x.get("settings") or {}).items() if k in SETTINGS}
+    r = api_settings_set(h, {"values": vals}) if vals else {"ok": True, "msg": "настроек нет"}
+    labs = x.get("labels") or {}
+    if isinstance(labs, dict):
+        for t, lab in labs.items():
+            if t in tunnels():
+                try:
+                    api_tunnel_label(h, {"name": t, "label": lab})
+                except ValueError:
+                    pass
+    return r
+
+
+# ======================================================================= ping / traceroute
+def api_net_tool(h, d):
+    kind = str(d.get("kind", ""))
+    host = str(d.get("host", "")).strip()
+    iface = str(d.get("iface", ""))
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not DOMAIN_RE.match(host):
+            raise ValueError("укажите IP-адрес или имя хоста")
+    e = env()
+    if iface not in tunnels(e) + ["wan"]:
+        raise ValueError("интерфейс: туннель или wan")
+    dev = wan_if(e) if iface == "wan" else iface
+    if kind == "ping":
+        cmd = ["ping", "-c", "10", "-i", "0.5", "-W", "2", "-I", dev, host]
+    elif kind == "trace":
+        tr = shutil.which("traceroute") or shutil.which("tracepath")
+        if not tr:
+            raise ValueError("на роутере нет traceroute")
+        cmd = [tr, "-i", dev, "-n", "-w", "2", "-q", "1", "-m", "20", host] if tr.endswith("traceroute") else [tr, "-n", host]
+    else:
+        raise ValueError("ping или trace")
+    h.act("net-" + kind, {"host": host, "iface": dev})
+    return {"job": JOBS.start(kind + host + dev, cmd, 90)}
 
 
 ROUTES = {
@@ -1649,6 +2638,27 @@ ROUTES = {
     ("POST", "/api/tunnel/label"): api_tunnel_label,
     ("GET", "/api/tunnel/conf"): api_tunnel_conf_get,
     ("POST", "/api/tunnel/conf"): api_tunnel_conf_set,
+    ("GET", "/api/tunnel/fields"): api_tunnel_fields_get,
+    ("POST", "/api/tunnel/preview"): api_tunnel_preview,
+    ("GET", "/api/tunnel/revisions"): api_tunnel_revisions,
+    ("GET", "/api/tunnel/revision"): api_tunnel_revision,
+    ("POST", "/api/tunnel/revision/restore"): api_tunnel_revision_restore,
+    ("POST", "/api/tunnel/export"): api_tunnel_export,
+    ("POST", "/api/tunnel/order"): api_tunnel_order,
+    ("POST", "/api/import/parse"): api_import_parse,
+    ("POST", "/api/import/apply"): api_import_apply,
+    ("GET", "/api/speed"): api_speed,
+    ("GET", "/api/clients"): api_clients,
+    ("GET", "/api/sessions"): api_sessions,
+    ("POST", "/api/session/revoke"): api_session_revoke,
+    ("GET", "/api/web"): api_web_get,
+    ("POST", "/api/web"): api_web_set,
+    ("POST", "/api/update/run"): api_update_run,
+    ("GET", "/api/update/log"): api_update_log,
+    ("POST", "/api/backup/verify"): api_backup_verify,
+    ("GET", "/api/settings/export"): api_settings_export,
+    ("POST", "/api/settings/import"): api_settings_import,
+    ("POST", "/api/net"): api_net_tool,
     ("POST", "/api/tunnel/add"): api_tunnel_add,
     ("POST", "/api/tunnel/remove"): api_tunnel_remove,
     ("GET", "/api/settings"): api_settings_get,
@@ -1700,19 +2710,40 @@ def make_cert(ip=None):
 
 def serve():
     c = conf()
-    bind = lan_ip() if c["WEB_BIND"] == "auto" else c["WEB_BIND"]
+    bind = c["WEB_BIND"]
+    if bind == "auto":
+        # после перезагрузки br0 может получить адрес позже службы: ждём до 3 минут, а не слушаем localhost
+        for _ in range(90):
+            bind = lan_ip()
+            if bind != "127.0.0.1":
+                break
+            time.sleep(2)
     port = int(c["WEB_PORT"])
     httpd = Server((bind, port), Handler)
     httpd.allow = c["WEB_ALLOW"].split()
     httpd.hosts = [x.lower() for x in c.get("WEB_HOSTS", "").split()]
     httpd.tls = False
+    httpd.cert_info, httpd.cert_mode, httpd.cert_warn, httpd.cert_names = None, "", "", ()
     if c["WEB_TLS"] == "yes":
-        if not (os.path.exists(CERT_F) and os.path.exists(KEY_F)):
+        crt, key, mode, warn = pick_cert(c)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        if mode != "self":
+            try:
+                ctx.load_cert_chain(crt, key)
+            except (ssl.SSLError, OSError) as ex:
+                warn = "сертификат %s не подошёл (%s), используется самоподписанный" % (crt, ex)
+                crt, key, mode = CERT_F, KEY_F, "self"
+        if mode == "self" and not (os.path.exists(CERT_F) and os.path.exists(KEY_F)):
             make_cert(bind if bind != "0.0.0.0" else None)
-        if os.path.exists(CERT_F) and os.path.exists(KEY_F):
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-            ctx.load_cert_chain(CERT_F, KEY_F)
+        if os.path.exists(crt) and os.path.exists(key):
+            if mode == "self":
+                ctx.load_cert_chain(crt, key)
+            httpd.cert_info, httpd.cert_mode, httpd.cert_warn = cert_info(crt), mode, warn
+            httpd.cert_names = tuple(n.lower() for n in (httpd.cert_info or {}).get("names", []) if not n[0].isdigit())
+            if warn:
+                sys.stderr.write(warn + "\n")
+            CertWatch(ctx, crt, key).start()
             # рукопожатие TLS — в потоке запроса, а не в accept(): медленный клиент не блокирует панель
             httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True, do_handshake_on_connect=False)
             httpd.tls = True

@@ -7,7 +7,8 @@
 #  или из клона репозитория:   bash install.sh
 #  Повторно (меню обслуживания): /data/awg/install.sh
 #
-#  Ключи: --update          обновить скрипты из репозитория (конфиги сохраняются)
+#  Ключи: --update          обновить скрипты из репозитория (конфиги сохраняются; при сбое — автоматический откат)
+#         --web             включить или перенастроить веб-панель управления
 #         --restore         вернуть службы после обновления прошивки
 #         --status          панель состояния
 #         --selftest [--full]  самопроверка (--full: ещё и проверка переключения и kill switch)
@@ -21,8 +22,13 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.3.0
+INSTALLER_VERSION=1.4.0
 __AWG_NEW=1   # метка нового установщика (см. «площадки» ниже)
+# ветка и репозиторий, с которых ставились (install.sh --update и панель обновляются оттуда же)
+if [ -r "${DD:-/data/awg}/.channel" ]; then
+  [ -n "${AWG_REPO:-}" ] || AWG_REPO=$(sed -n 's/^AWG_REPO=//p' "${DD:-/data/awg}/.channel" | head -n1)
+  [ -n "${AWG_BRANCH:-}" ] || AWG_BRANCH=$(sed -n 's/^AWG_BRANCH=//p' "${DD:-/data/awg}/.channel" | head -n1)
+fi
 AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}          # GitHub: владелец/репозиторий со скриптами (awg/, server/)
 AWG_BRANCH=${AWG_BRANCH:-main}
 # Бинарники AmneziaWG собираются только из официальных исходников AmneziaVPN (теги можно поменять здесь):
@@ -64,7 +70,9 @@ die(){ err "$*"; exit 1; }
 # вставленные конфиги — «#paste» (при повторе берётся файл из AWG_CONF_FILE).
 TTY_IN=${AWG_TTY:-/dev/tty}
 open_tty(){
-  if [ -n "$ANS_FILE" ]; then
+  if [ "${AWG_YES:-}" = 1 ]; then     # без терминала (обновление из панели): любой вопрос прерывает работу
+    exec 3</dev/null
+  elif [ -n "$ANS_FILE" ]; then
     [ -r "$ANS_FILE" ] || { echo "Нет файла ответов: $ANS_FILE"; exit 1; }
     exec 3<"$ANS_FILE"
   else
@@ -261,7 +269,7 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/web/panel.py awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/web/panel.py awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -322,6 +330,7 @@ install_files(){
   elif [ -f "$0" ] && [ "$(basename "$0")" = install.sh ] && ! [ "$0" -ef "$DD/install.sh" ]; then put "$0" "$DD/install.sh"; fi
   [ -f "$DD/install.sh" ] && chmod 755 "$DD/install.sh"
   [ -f "$KIT/VERSION" ] && put "$KIT/VERSION" "$DD/VERSION"
+  case "$AWG_REPO$AWG_BRANCH" in *[!A-Za-z0-9_./-]*) ;; *) printf 'AWG_REPO=%s\nAWG_BRANCH=%s\n' "$AWG_REPO" "$AWG_BRANCH" > "$DD/.channel";; esac
   ensure_aliases
   write_manifest
   touch "$DD/.installer"
@@ -1680,6 +1689,7 @@ wizard(){
   [ -n "$VPS_IP" ] && yn "Запустить аудит VPS?" Y && vps_audit
   [ -n "$VPS_IP" ] && yn "Защитить VPS (автообновления, fail2ban, вход по ключам)?" N && vps_harden
   write_manifest
+  [ -x "$DD/drift.sh" ] && { sleep 5; "$DD/drift.sh" save >/dev/null 2>&1; }
   if yn "Запустить самопроверку?" Y; then "$DD/selftest.sh" | show_check; fi
   summary
 }
@@ -1707,8 +1717,11 @@ do_update(){
   get_kit
   title "Обновление скриптов"
   [ -f "$DD/VERSION" ] && info "сейчас: $(cat "$DD/VERSION"), будет: $(cat "$KIT/VERSION" 2>/dev/null || echo ?)"
-  local bk u; bk="$DD/backup-$(date +%Y%m%d-%H%M%S).tgz"
-  ( umask 077; tar czf "$bk" -C "$DD" --exclude='backup-*.tgz' --exclude=backups . 2>/dev/null ) && ok "резервная копия: $bk"
+  local bk u pre_route=0 pre_web=0 t; bk="$DD/backup-$(date +%Y%m%d-%H%M%S).tgz"
+  ( umask 077; tar czf "$bk" -C "$DD" --exclude='backup-*.tgz' --exclude=backups --exclude=history --exclude=awg --exclude=amneziawg-go . 2>/dev/null ) && ok "резервная копия: $bk"
+  ls -1t "$DD"/backup-*.tgz 2>/dev/null | tail -n +4 | while read -r t; do rm -f "$t"; done   # хранить 3 последние
+  t=$(env_get TABLE); [ -n "$t" ] && ip -4 route show table "$t" 2>/dev/null | grep -q '^default dev awg' && pre_route=1
+  svc_active awg-web && pre_web=1
   seed_units
   install_files
   local n; n=$("$DD/failover.sh" dedup 2>/dev/null | grep -o '[0-9]*$'); [ "${n:-0}" -gt 0 ] && ok "убрано дубликатов правил iptables: $n"
@@ -1718,6 +1731,17 @@ do_update(){
     [ "$u" = awg-motd ] && continue
     svc_active "$u" && { systemctl restart "$u"; ok "$u перезапущен"; }
   done
+  if [ "${AWG_NO_ROLLBACK:-}" != 1 ] && ! update_healthy "$pre_route" "$pre_web"; then
+    update_rollback "$bk"
+    return 1
+  fi
+  ok "после обновления всё работает: набор $(cat "$DD/VERSION" 2>/dev/null)"
+  [ -x "$DD/drift.sh" ] && "$DD/drift.sh" save >/dev/null 2>&1 && ok "эталон правил обновлён (awgctl drift)"
+  if [ "${AWG_YES:-}" != 1 ] && ! [ -f "$SYSD/awg-web.service" ] && command -v python3 >/dev/null; then
+    yn "Включить веб-панель управления (браузер, только LAN, вход по паролю)?" Y && step_web
+  elif [ -f "$SYSD/awg-web.service" ]; then
+    svc_active awg-web && ok "веб-панель: $(web_url)"
+  fi
   [ -x "$DD/audit.sh" ] && "$DD/audit.sh" | tail -n 3
   hint "Новые возможности (защита от утечек, awg-self, домены, бот, метрики, MTU…) включаются в меню: Компоненты."
 }
@@ -1736,6 +1760,41 @@ do_restore(){
   fi
   sleep 6; ip route show table "$t" | grep -q 'metric 5' && ok "PBR-трафик снова идёт через туннель" || warn "маршрута в таблице $t нет: запустите диагностику ($DD/install.sh → Диагностика)"
 }
+update_healthy(){  # update_healthy БЫЛ_МАРШРУТ БЫЛА_ПАНЕЛЬ — ждать до 60 с, что сторож, маршрут и панель снова работают
+  local i t f bad
+  for f in "$DD"/*.sh; do bash -n "$f" 2>/dev/null || { err "после обновления синтаксическая ошибка в $f"; return 1; }; done
+  t=$(env_get TABLE)
+  for i in $(seq 1 30); do
+    bad=""
+    svc_active awg-failover || bad="сторож awg-failover не работает"
+    [ "$1" = 1 ] && [ -n "$t" ] && ! ip -4 route show table "$t" 2>/dev/null | grep -q '^default dev awg' && bad="${bad:+$bad; }в таблице PBR нет маршрута в туннель"
+    [ "$2" = 1 ] && ! svc_active awg-web && bad="${bad:+$bad; }веб-панель не запустилась"
+    [ -z "$bad" ] && return 0
+    sleep 2
+  done
+  err "после обновления: $bad"
+  return 1
+}
+update_rollback(){  # вернуть код и службы из копии, сделанной перед обновлением (настройки и конфиги не трогаются)
+  local bk=$1 tmp f u
+  warn "Откат обновления: возвращаю прежние скрипты и службы из $bk"
+  tmp=$(mktemp -d) || return 1
+  tar xzf "$bk" -C "$tmp" 2>/dev/null || { err "копия $bk не читается: откат невозможен, смотрите журнал"; rm -rf "$tmp"; return 1; }
+  for f in "$tmp"/*.sh "$tmp"/*.service "$tmp"/VERSION; do [ -f "$f" ] && put "$f" "$DD/$(basename "$f")"; done
+  if [ -d "$tmp/web" ]; then
+    [ -f "$tmp/web/panel.py" ] && put "$tmp/web/panel.py" "$DD/web/panel.py"
+    for f in "$tmp"/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
+  fi
+  chmod 755 "$DD"/*.sh 2>/dev/null
+  rm -rf "$tmp"
+  for u in $(cat "$DD/.units" 2>/dev/null); do [ -f "$DD/$u.service" ] && cp "$DD/$u.service" "$SYSD/$u.service"; done
+  systemctl daemon-reload
+  for u in $(cat "$DD/.units" 2>/dev/null); do [ "$u" = awg-motd ] && continue; systemctl restart "$u" 2>/dev/null; done
+  write_manifest
+  ilog "обновление откатилось"
+  err "обновление откатилось к $(cat "$DD/VERSION" 2>/dev/null). Пришлите вывод выше и $DD/update.log (если обновляли из панели) в issue."
+}
+
 do_uninstall(){
   title "Удаление"
   warn "Сначала удалите в UniFi правила Policy-Based Routes, ссылающиеся на рельсу: иначе их устройства останутся без интернета."
@@ -1904,6 +1963,7 @@ main(){
   case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest) ;; *) open_tty;; esac
   case "${1:-}" in
     --update)       need_root; do_update;;
+    --web)          need_root; [ -f "$DD/awg.env" ] || die "сначала установите набор: запустите install.sh без ключей"; get_kit; install_files; step_web;;
     --restore)      need_root; do_restore;;
     --status)       [ -x "$DD/status.sh" ] && exec "$DD/status.sh" || die "панель не установлена";;
     --selftest)     [ -x "$DD/selftest.sh" ] || die "самопроверка не установлена"; shift; "$DD/selftest.sh" "$@" | show_check;;

@@ -89,6 +89,8 @@
     tg: 'M22 2 11 13|M22 2l-7 20-4-9-9-4z',
     lock: 'M5 11h14v10H5z|M8 11V7a4 4 0 0 1 8 0v4',
     menu: 'M3 12h18|M3 6h18|M3 18h18',
+    up: 'M12 19V5|M5 12l7-7 7 7',
+    users2: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z|M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1',
     link: 'M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7|M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7',
   };
   function icon(name, cls) {
@@ -148,10 +150,11 @@
   }
 
   // ===================================================================== состояние и API
-  const S = { csrf: '', user: '', version: '', page: '', ov: null, live: {}, timers: [], reveal: {}, histMode: 'live', chartTun: '' };
+  const S = { csrf: '', user: '', version: '', page: '', ov: null, live: {}, hist: null, timers: [], reveal: {}, histMode: 'live', chartTun: '' };
   const NAV = [
     ['overview', 'Обзор', 'home'],
     ['tunnels', 'Туннели', 'tunnel'],
+    ['clients', 'Клиенты', 'users'],
     ['routing', 'Маршрутизация', 'route'],
     ['tools', 'Инструменты', 'tools'],
     ['logs', 'Журналы', 'logs'],
@@ -398,8 +401,10 @@
       el('div', { class: 'txt' }, el('b', null, m[2]), ' · ', e.text));
   }
   function alertsBox(ov) {
-    if (!ov.alerts.length) return el('div', { class: 'alert ok' }, icon('okc'), el('div', null, 'Всё работает: трафик PBR идёт через ', el('b', null, ov.active), ', kill switch на месте.'));
-    return el('div', { class: 'stack' }, ov.alerts.map(([lv, t]) => el('div', { class: 'alert ' + lv }, icon('alert'), el('div', null, t))));
+    const real = ov.alerts.filter((a) => a[0] !== 'info');
+    return el('div', { class: 'stack' },
+      real.length ? null : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, 'Всё работает: трафик PBR идёт через ', el('b', null, ov.active || '—'), ', kill switch на месте.')),
+      ov.alerts.map(([lv, t]) => el('div', { class: 'alert ' + lv }, icon(lv === 'info' ? 'info' : 'alert'), el('div', null, t))));
   }
   function secret(id, text, mask) {
     const shown = !!S.reveal[id];
@@ -438,14 +443,15 @@
     }
     // «красивый» максимум оси Y
     const nice = (v) => { if (v <= 0) return 1000; const e = Math.pow(10, Math.floor(Math.log10(v))); const f = v / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e; };
-    ymax = nice(ymax * 1.08);
+    ymax = opts.max ? Math.max(opts.max, ymax) : nice(ymax * 1.08);
+    const F = opts.fmt || fmtBits;
     const X = (t) => L + (t - t0) / (t1 - t0) * (W - L - R);
     const Y = (v) => T + (1 - v / ymax) * (H - T - B);
     c.strokeStyle = line; c.lineWidth = 1; c.fillStyle = muted; c.textAlign = 'right'; c.textBaseline = 'middle';
     for (let i = 0; i <= 4; i++) {
       const v = ymax * i / 4, y = Math.round(Y(v)) + 0.5;
       c.beginPath(); c.moveTo(L, y); c.lineTo(W - R, y); c.stroke();
-      c.fillText(fmtBits(v).replace(' бит/с', ' б/с').replace('бит/с', 'б/с'), L - 8, y);
+      c.fillText(opts.fmt ? F(v) : fmtBits(v).replace(' бит/с', ' б/с').replace('бит/с', 'б/с'), L - 8, y);
     }
     c.textAlign = 'center'; c.textBaseline = 'top';
     const nx = Math.max(2, Math.min(6, Math.floor((W - L) / 90)));
@@ -480,7 +486,7 @@
       if (!rows.length) return;
       if (!tip) { tip = el('div', { class: 'chart-tip' }); wrap.appendChild(tip); }
       replace(tip, el('div', { class: 'muted' }, fmtTime(rows[0][1][0], true)),
-        rows.map(([s, p]) => el('div', null, s.name + ': ', el('b', null, fmtBits(p[1])))));
+        rows.map(([s, p]) => el('div', null, s.name + ': ', el('b', null, F(p[1])))));
       tip.style.left = Math.min(x + 12, W - tip.offsetWidth - 4) + 'px';
       tip.style.top = '8px';
     };
@@ -567,6 +573,9 @@
     const evs = el('div');
     const svcs = el('div');
     const chartWrap = el('div', { class: 'chart-wrap' });
+    const clBox = el('div', { class: 'empty' }, 'загрузка…');
+    const upBox = el('div', { class: 'stack' });
+    const drawUp = () => replace(upBox, (S.ov ? S.ov.tunnels : []).map((t) => el('div', null, el('div', { class: 'row small' }, el('span', { class: 'dot ' + dotFor(t.status) }), el('b', null, t.label || t.name), el('span', { class: 'muted' }, ROLE[t.role])), uptimeBar(hist, t.name))));
     const legend = el('div', { class: 'legend' });
     const tunSel = el('select', { class: 'input', 'aria-label': 'Туннель' });
     tunSel.style.width = 'auto'; tunSel.style.height = '30px';
@@ -585,6 +594,10 @@
       el('div', { class: 'grid g-2' },
         card('Трафик', el('div', { class: 'stack' }, chartWrap, legend), { icon: 'activity', right: el('div', { class: 'row' }, tunSel, seg) }),
         card('Службы', svcs, { icon: 'cpu', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/settings/services' }, 'Управление') })),
+      el('div', { class: 'spacer' }),
+      el('div', { class: 'grid g-2' },
+        card('Клиенты в туннеле', clBox, { icon: 'users', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/clients' }, 'Все') }),
+        card('Доступность каналов', upBox, { icon: 'okc' })),
     ]);
     function kpi(lbl, ic, val, sub, extra) {
       return el('div', { class: 'card kpi' }, el('div', { class: 'lbl' }, icon(ic, 'sm'), lbl), el('div', { class: 'val' }, val), sub ? el('div', { class: 'sub' }, sub) : null, extra || null);
@@ -622,13 +635,14 @@
       const onMain = ov.stats.on_main_pct;
       const bar = (pct) => { const i = el('i'); i.style.width = Math.max(0, Math.min(100, pct)) + '%'; return el('div', { class: 'bar' }, i); };
       replace(kpis,
-        kpi('Состояние', 'shield', [el('span', { class: 'dot ' + lv[0] + ' pulse' }), el('span', { class: 't' }, lv[1])], ov.alerts.length ? ov.alerts.length + ' предупр.' : 'без замечаний'),
+        kpi('Состояние', 'shield', [el('span', { class: 'dot ' + lv[0] + ' pulse' }), el('span', { class: 't' }, lv[1])], ov.alerts.filter((a) => a[0] !== 'info').length ? ov.alerts.filter((a) => a[0] !== 'info').length + ' предупр.' : 'без замечаний'),
         kpi('Активный канал', 'tunnel', el('span', { class: 't' }, act ? (act.label || act.name) : 'нет'), act ? (act.name + (ov.forced ? ' · выбран вручную' : ' · авто')) : 'трафик PBR заблокирован'),
         kpi('Handshake', 'clock', el('span', { class: 't' }, act && act.handshake >= 0 ? fmtAge(act.handshake) : '—'), act ? ('потери ' + (act.loss !== '' ? act.loss + '%' : '—') + ' · RTT ' + (act.rtt !== '' ? act.rtt + ' мс' : '—')) : ''),
         kpi('Скорость', 'activity', el('span', { class: 't' }, r ? fmtBits(r[1]) : '—'), r ? '↑ ' + fmtBits(r[2]) : 'нет данных'),
         kpi('На основном (7 дн)', 'okc', el('span', { class: 't' }, onMain + '%'), 'переключений: ' + ov.stats.switch + ', качество: ' + ov.stats.degrade, bar(onMain)),
         kpi('Роутер', 'cpu', el('span', { class: 't' }, 'load ' + (ov.load[0] || '?')), 'память ' + memPct + '% · /data ' + (ov.data_free_mb >= 0 ? ov.data_free_mb + ' МБ' : '?'), bar(memPct)));
       replace(topo, topology(ov));
+      drawUp();
       replace(evs, ov.events.length ? ov.events.slice(0, 9).map(evRow) : el('div', { class: 'empty' }, 'Событий пока нет'));
       replace(svcs, Object.entries(ov.services).filter(([, s]) => s.installed).map(([u, s]) =>
         el('div', { class: 'svc' }, el('span', { class: 'dot ' + (s.active ? 'ok' : 'crit') }), el('span', { class: 'nm' }, u.replace('awg-', '')), el('span', { class: 'ds' }, s.info),
@@ -642,17 +656,88 @@
     }
     every(5000, async () => { try { render(await api('/api/overview')); } catch (e) { if (!(e instanceof ApiErr && e.message === 'нужен вход')) replace(alerts, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, e.message))); } });
     every(2000, async () => { S.live = (await api('/api/live')).live; if (S.histMode === 'live') drawMain(); });
-    every(60000, async () => { hist = (await api('/api/history')).points; if (S.histMode === 'day') drawMain(); });
+    every(60000, async () => { hist = S.hist = (await api('/api/history')).points; if (S.histMode === 'day') drawMain(); drawUp(); });
+    every(10000, async () => { const c = await api('/api/clients'); replace(clBox, clientsTable(c.clients.slice(0, 6), true)); clBox.className = ''; });
     const ro = new ResizeObserver(() => drawMain());
     ro.observe(chartWrap);
   };
 
   // ===================================================================== ТУННЕЛИ
+  function upOk(p, t) {
+    const x = p.tun && p.tun[t];
+    if (!x) return null;
+    return x.hs >= 0 && x.hs < 180 && String(x.loss) !== '100';
+  }
+  function uptimeBar(points, t, buckets) {
+    buckets = buckets || 48;
+    const nowT = Math.floor(Date.now() / 1000), span = 86400, step = span / buckets;
+    const bins = Array.from({ length: buckets }, () => [0, 0]);
+    for (const p of points || []) {
+      const i = Math.floor((p.t - (nowT - span)) / step);
+      if (i < 0 || i >= buckets) continue;
+      const o = upOk(p, t);
+      if (o === null) continue;
+      bins[i][1]++;
+      if (o) bins[i][0]++;
+    }
+    let good = 0, all = 0;
+    const bar = el('div', { class: 'ubar', role: 'img' });
+    bins.forEach(([g, n], i) => {
+      good += g; all += n;
+      const r = n ? g / n : -1;
+      const from = new Date((nowT - span + i * step) * 1000);
+      bar.appendChild(el('i', { class: r < 0 ? '' : r >= 0.99 ? 'ok' : r >= 0.9 ? 'warn' : 'crit',
+        title: pad2(from.getHours()) + ':' + pad2(from.getMinutes()) + ' — ' + (r < 0 ? 'нет данных' : Math.round(r * 1000) / 10 + '% времени работал') }));
+    });
+    const pct = all ? Math.round(good * 1000 / all) / 10 : null;
+    bar.setAttribute('aria-label', 'Доступность за сутки: ' + (pct == null ? 'нет данных' : pct + '%'));
+    return el('div', { class: 'uptime' }, el('div', { class: 'row between small muted' }, el('span', null, 'Доступность, 24 ч'), el('b', null, pct == null ? '—' : pct + '%')), bar);
+  }
+  function lineDiff(a, b) {
+    const A = a.replace(/\n$/, '').split('\n'), B = b.replace(/\n$/, '').split('\n');
+    const n = A.length, m = B.length, L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n || j < m) {
+      if (i < n && j < m && A[i] === B[j]) { out.push([' ', A[i]]); i++; j++; }
+      else if (j < m && (i >= n || L[i][j + 1] >= L[i + 1][j])) { out.push(['+', B[j]]); j++; }
+      else { out.push(['-', A[i]]); i++; }
+    }
+    return out;
+  }
+  function diffView(a, b) {
+    const d = lineDiff(a, b);
+    if (!d.some((x) => x[0] !== ' ')) return el('div', { class: 'alert info' }, icon('info'), el('div', null, 'Изменений нет.'));
+    return el('pre', { class: 'diff' }, d.map(([k, l]) => el('span', { class: k === '+' ? 'add' : k === '-' ? 'del' : '' }, (k === ' ' ? '  ' : k + ' ') + l + '\n')));
+  }
+  function dropZone(onText, hint) {
+    const f = el('input', { type: 'file', accept: '.conf,.txt,.json,.vpn,text/plain,application/json', class: 'hidden' });
+    const read = (file) => {
+      if (!file) return;
+      if (file.size > 200000) { err('файл слишком большой'); return; }
+      const rd = new FileReader();
+      rd.onload = () => onText(String(rd.result), file.name);
+      rd.readAsText(file);
+    };
+    f.addEventListener('change', () => read(f.files[0]));
+    const z = el('div', { class: 'drop', tabindex: 0, role: 'button', onclick: () => f.click() },
+      icon('upload', 'lg'), el('b', null, 'Перетащите файл сюда или нажмите'), el('span', { class: 'small muted' }, hint || '.conf из AmneziaVPN, панели сервера или провайдера'), f);
+    z.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); f.click(); } });
+    z.addEventListener('dragover', (e) => { e.preventDefault(); z.classList.add('over'); });
+    z.addEventListener('dragleave', () => z.classList.remove('over'));
+    z.addEventListener('drop', (e) => { e.preventDefault(); z.classList.remove('over'); read(e.dataTransfer.files[0]); });
+    return z;
+  }
+  function closeTop() { const m = document.querySelectorAll('.modal-bg'); if (m.length) m[m.length - 1].remove(); }
+
   PAGES.tunnels = function (main) {
     const autoBtn = el('button', { class: 'btn hidden', onclick: async () => { try { ok((await api('/api/tunnel/auto', {})).msg); load(); } catch (e) { err(e); } } }, icon('refresh'), 'Автовыбор канала');
     const grid = el('div', { class: 'grid g-tun' });
     const alerts = el('div');
-    add(main, [head('Туннели', autoBtn, el('button', { class: 'btn primary', onclick: () => tunnelAdd(load) }, icon('plus'), 'Добавить')), alerts, el('div', { class: 'spacer' }), grid]);
+    add(main, [head('Туннели', autoBtn,
+      el('button', { class: 'btn', onclick: () => importDialog(load) }, icon('upload'), 'Импорт'),
+      el('button', { class: 'btn primary', onclick: () => importDialog(load, 'new') }, icon('plus'), 'Добавить')), alerts, el('div', { class: 'spacer' }), grid]);
     const cards = {};
     async function load() {
       const ov = await api('/api/overview');
@@ -662,16 +747,19 @@
       replace(alerts, ov.forced ? el('div', { class: 'alert warn' }, icon('info'), el('div', null, 'Канал выбран вручную: ', el('b', null, ov.forced), '. Сторож не переключит его, пока он работает. Чтобы вернуть автоматику — «Автовыбор канала».')) : null);
       const names = ov.tunnels.map((t) => t.name);
       for (const k of Object.keys(cards)) if (!names.includes(k)) { cards[k].remove(); delete cards[k]; }
+      const extras = ov.tunnels.filter((t) => t.role === 'extra').map((t) => t.name);
       for (const t of ov.tunnels) {
-        const c = tunnelCard(t, ov, load);
+        const c = tunnelCard(t, ov, load, extras);
         if (cards[t.name]) cards[t.name].replaceWith(c); else grid.appendChild(c);
         cards[t.name] = c;
       }
+      for (const t of ov.tunnels) grid.appendChild(cards[t.name]);
       let addc = grid.querySelector('.tun.add');
-      if (!addc) addc = el('button', { class: 'card tun add', onclick: () => tunnelAdd(load) }, el('div', { class: 'stack' }, icon('plus', 'lg'), 'Добавить туннель', el('span', { class: 'small' }, 'Ещё один VPS: сторож будет переключаться и на него')));
+      if (!addc) addc = el('button', { class: 'card tun add', onclick: () => importDialog(load, 'new') }, el('div', { class: 'stack' }, icon('plus', 'lg'), 'Добавить туннель', el('span', { class: 'small' }, 'Файл .conf, ссылка vpn:// или текст: сторож будет переключаться и на него')));
       grid.appendChild(addc);
     }
     every(5000, load);
+    every(60000, async () => { S.hist = (await api('/api/history')).points; for (const [t, c] of Object.entries(cards)) { const u = c.querySelector('.uptime'); if (u) u.replaceWith(uptimeBar(S.hist, t)); } });
     every(2000, async () => {
       S.live = (await api('/api/live')).live;
       for (const [t, c] of Object.entries(cards)) {
@@ -682,7 +770,7 @@
       }
     });
   };
-  function tunnelCard(t, ov, reload) {
+  function tunnelCard(t, ov, reload, extras) {
     const [host, port] = splitEndpoint(t.endpoint);
     const st = STATUS[t.status];
     const kv = el('dl', { class: 'kv' },
@@ -701,28 +789,25 @@
     act.addEventListener('click', () => busy(act, async () => {
       try { const x = await api('/api/tunnel/switch', { name: t.name }); (x.ok ? ok : err)(x.msg); reload(); } catch (e) { err(e); }
     }));
-    const test = el('button', { class: 'btn sm', onclick: () => tunnelTest(t) }, icon('stetho', 'sm'), 'Тест');
+    const xi = extras.indexOf(t.name);
     const more = [
-      el('button', { class: 'btn sm icon', title: 'Изменить конфиг', 'aria-label': 'Изменить', onclick: () => tunnelEdit(t, reload) }, icon('edit', 'sm')),
-      el('button', { class: 'btn sm icon', title: 'Перезапустить туннель', 'aria-label': 'Перезапустить', onclick: async (e) => {
+      el('button', { class: 'btn sm icon', title: 'Тест канала', 'aria-label': 'Тест', onclick: () => tunnelTest(t) }, icon('stetho', 'sm')),
+      el('button', { class: 'btn sm icon', title: 'Перезапустить туннель', 'aria-label': 'Перезапустить', onclick: async () => {
         if (!await confirmBox('Перезапустить ' + t.name + '?', t.active ? 'Это активный канал: на несколько секунд трафик PBR остановится (kill switch не даст ему уйти мимо).' : 'Интерфейс будет пересоздан с текущим конфигом.', 'Перезапустить')) return;
         try { const x = await api('/api/tunnel/restart', { name: t.name }); (x.ok ? ok : err)(x.msg || 'готово'); reload(); } catch (ex) { err(ex); }
       } }, icon('refresh', 'sm')),
-      t.role === 'extra' ? el('button', { class: 'btn sm icon danger', title: 'Удалить туннель', 'aria-label': 'Удалить', onclick: async () => {
-        if (!await confirmBox('Удалить ' + t.name + '?', 'Туннель будет остановлен и убран из сторожа вместе с его правилами. Файл конфига останется на роутере.', 'Удалить', true)) return;
-        try { ok((await api('/api/tunnel/remove', { name: t.name })).msg); reload(); } catch (ex) { err(ex); }
-      } }, icon('trash', 'sm')) : null,
     ];
     const lbl = el('button', { class: 'btn ghost icon sm', title: 'Название', 'aria-label': 'Переименовать', onclick: () => tunnelLabel(t, reload) }, icon('edit', 'sm'));
     return el('section', { class: 'card tun' + (t.active ? ' active' : '') },
       el('div', { class: 'hd' },
         el('div', { class: 'title' }, el('div', { class: 'nm' }, el('span', { class: 'dot ' + dotFor(t.status) }), t.label || t.name, lbl),
-          el('div', { class: 'lb' }, t.label ? t.name + ' · ' : '', ROLE[t.role])),
+          el('div', { class: 'lb' }, t.label ? t.name + ' · ' : '', ROLE[t.role], t.role === 'extra' ? ' №' + (xi + 1) : '')),
         el('div', { class: 'badges' }, el('span', { class: 'badge accent' }, t.proto), el('span', { class: 'badge ' + st[0] }, st[1]), t.forced ? el('span', { class: 'badge warn' }, 'вручную') : null)),
       el('div', { class: 'bd' }, kv),
       el('div', { class: 'rates' }, el('span', null, '↓ ', el('b', null, r ? fmtBits(r[1]) : '—')), el('span', null, '↑ ', el('b', null, r ? fmtBits(r[2]) : '—'))),
       el('div', { class: 'spark' }, sparkline(S.live[t.name])),
-      el('div', { class: 'ft' }, act, test, el('span', { class: 'push' }), more));
+      el('div', { class: 'upw' }, uptimeBar(S.hist, t.name)),
+      el('div', { class: 'ft' }, act, el('button', { class: 'btn sm', onclick: () => tunnelEditor(t, reload) }, icon('settings', 'sm'), 'Настроить'), el('span', { class: 'push' }), more));
   }
   function tunnelLabel(t, reload) {
     const inp = el('input', { class: 'input', value: t.label, maxlength: 40, placeholder: 'например: Германия, Hetzner' });
@@ -747,65 +832,310 @@
           r.mtu ? it('MTU ' + (t.mtu || ''), r.mtu === 'ok', r.mtu === 'ok' ? 'проходит' : 'пакеты не проходят — подберите MTU') : null));
     }).catch((e) => replace(body, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, e.message))));
   }
-  function confFileBtn(ta) {
-    const f = el('input', { type: 'file', accept: '.conf,.txt,text/plain', class: 'hidden' });
-    f.addEventListener('change', () => {
-      const file = f.files[0];
-      if (!file) return;
-      if (file.size > 16384) { err('файл слишком большой'); return; }
-      const rd = new FileReader();
-      rd.onload = () => { ta.value = String(rd.result); };
-      rd.readAsText(file);
-    });
-    return [f, el('button', { class: 'btn', type: 'button', onclick: () => f.click() }, icon('upload', 'sm'), 'Из файла')];
-  }
-  async function tunnelEdit(t, reload) {
-    let r;
-    try { r = await api('/api/tunnel/conf?name=' + encodeURIComponent(t.name)); } catch (e) { err(e); return; }
-    const ta = el('textarea', { class: 'input tall', spellcheck: 'false', autocomplete: 'off' });
-    ta.value = r.text;
+
+  // ---------- редактор туннеля: параметры, текст, история, качество, экспорт
+  const FGROUPS = [
+    ['Сервер', [['Peer', 'Endpoint'], ['Peer', 'AllowedIPs'], ['Peer', 'PersistentKeepalive']]],
+    ['Интерфейс', [['Interface', 'Address'], ['Interface', 'MTU'], ['Interface', 'DNS']]],
+    ['Ключи', [['Interface', 'PrivateKey'], ['Peer', 'PublicKey'], ['Peer', 'PresharedKey']]],
+    ['Обфускация AmneziaWG', [['Interface', 'Jc'], ['Interface', 'Jmin'], ['Interface', 'Jmax'], ['Interface', 'S1'], ['Interface', 'S2'], ['Interface', 'H1'], ['Interface', 'H2'], ['Interface', 'H3'], ['Interface', 'H4']]],
+    ['AmneziaWG 2.0', [['Interface', 'S3'], ['Interface', 'S4'], ['Interface', 'I1'], ['Interface', 'I2'], ['Interface', 'I3'], ['Interface', 'I4'], ['Interface', 'I5']]],
+  ];
+  const MASKV = '<скрыто>';
+  async function tunnelEditor(t, reload, start) {
+    let d;
+    try { d = await api('/api/tunnel/fields?name=' + encodeURIComponent(t.name)); } catch (e) { err(e); return; }
+    const body = el('div');
+    const foot = el('div', { class: 'row wrap grow' });
+    let cur = start || 'form';
+    const tb = el('div', { class: 'tabs' });
+    const TABS = [['form', 'Параметры'], ['text', 'Текст конфига'], ['hist', 'История (' + d.revisions + ')'], ['quality', 'Качество'], ['export', 'Ещё']];
+    const m = modal((t.label || t.name) + ' · настройка', el('div', null, tb, body), [foot], { wide: true, sticky: true });
+    const show = (k) => {
+      cur = k;
+      replace(tb, TABS.map(([id, name]) => el('button', { class: 'tab' + (id === cur ? ' on' : ''), onclick: () => show(id) }, name)));
+      clear(body); clear(foot);
+      ({ form: edForm, text: edText, hist: edHist, quality: edQuality, export: edExport })[k]();
+    };
     const res = el('div', { class: 'res hidden' });
-    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Сохранить и применить');
-    save.addEventListener('click', () => busy(save, async () => {
+    async function applyFlow(payload, btn) {
+      await busy(btn, async () => {
+        let p;
+        try { p = await api('/api/tunnel/preview', Object.assign({ name: t.name }, payload)); } catch (e) { err(e); return; }
+        if (p.errors.length) {
+          replace(res, 'Не принято:\n• ' + p.errors.join('\n• ')); res.classList.remove('hidden'); res.classList.add('bad');
+          return;
+        }
+        if (!p.changed) { toast('Изменений нет'); return; }
+        const go = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Применить');
+        const cm = modal('Проверьте изменения · ' + t.name, el('div', null,
+          el('p', { class: 'muted small' }, 'Туннель будет пересоздан с новым конфигом (несколько секунд без трафика через него). Если он не поднимется — вернётся прежний конфиг. Прежняя версия сохранится в истории.'),
+          diffView(p.old, p.new)), [el('button', { class: 'btn', onclick: () => cm.close() }, 'Отмена'), go], { wide: true });
+        go.addEventListener('click', () => busy(go, async () => {
+          try {
+            const x = await api('/api/tunnel/conf', Object.assign({ name: t.name }, payload));
+            cm.close();
+            replace(res, x.msg); res.classList.remove('hidden', 'bad');
+            (x.ok ? ok : err)(x.ok ? 'Конфиг применён' : 'Конфиг не применён: возвращён прежний');
+            reload();
+            d = await api('/api/tunnel/fields?name=' + encodeURIComponent(t.name));
+            TABS[2][1] = 'История (' + d.revisions + ')';
+            replace(tb, TABS.map(([id, name]) => el('button', { class: 'tab' + (id === cur ? ' on' : ''), onclick: () => show(id) }, name)));
+          } catch (e) { err(e); }
+        }));
+      });
+    }
+    function edForm() {
+      const sch = {};
+      d.schema.forEach((x) => { sch[x.sec + '.' + x.key] = x; });
+      const ctl = {};
+      const groups = FGROUPS.map(([title, keys]) => {
+        const has2 = keys.some(([s, k]) => (d.fields[s] || {})[k]);
+        const rows = keys.map(([s, k]) => {
+          const x = sch[s + '.' + k] || { hint: '' };
+          const v = (d.fields[s] || {})[k] || '';
+          let inp;
+          if (x.secret) {
+            inp = el('input', { class: 'input mono', type: 'password', autocomplete: 'off', spellcheck: 'false', placeholder: v ? 'задан — не показывается' : 'не задан' });
+            ctl[s + '.' + k] = () => (inp.value.trim() ? inp.value.trim() : (v ? MASKV : ''));
+          } else if (/^I[1-5]$/.test(k)) {
+            inp = el('textarea', { class: 'input mono', rows: 2, spellcheck: 'false' }); inp.value = v;
+            ctl[s + '.' + k] = () => inp.value.trim();
+          } else {
+            inp = el('input', { class: 'input mono', value: v, spellcheck: 'false', autocomplete: 'off', inputmode: /^(Jc|Jmin|Jmax|S\d|MTU|PersistentKeepalive)$/.test(k) ? 'numeric' : 'text' });
+            ctl[s + '.' + k] = () => inp.value.trim();
+          }
+          ctl[s + '.' + k].orig = x.secret ? (v ? MASKV : '') : v;
+          return el('div', { class: 'field' }, el('label', null, k, x.req ? el('span', { class: 'req' }, ' *') : null), inp, x.hint ? el('span', { class: 'hint' }, x.hint) : null);
+        });
+        const g = el('div', { class: 'form-grid' }, rows);
+        if (title === 'AmneziaWG 2.0' || title === 'Ключи') {
+          return el('details', { class: 'fgroup', open: title === 'AmneziaWG 2.0' ? has2 : false }, el('summary', null, title, title === 'Ключи' ? el('span', { class: 'muted small' }, ' — менять только при смене сервера или ключей') : null), g);
+        }
+        return el('div', { class: 'fgroup' }, el('h3', null, title), g);
+      });
+      add(body, [
+        d.peers > 1 ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, 'В конфиге несколько [Peer]: форма меняет только первый. Остальные — во вкладке «Текст конфига».')) : null,
+        d.other.length ? el('div', { class: 'small muted' }, 'Другие строки конфига сохраняются как есть: ' + d.other.join(', ')) : null,
+        groups, res]);
+      const chk = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Проверить и применить');
+      chk.addEventListener('click', () => {
+        const f = { Interface: {}, Peer: {} };
+        for (const [key, g] of Object.entries(ctl)) {
+          const val = g();
+          if (val !== g.orig) { const [s, k] = key.split('.'); f[s][k] = val; }
+        }
+        if (!Object.keys(f.Interface).length && !Object.keys(f.Peer).length) { toast('Изменений нет'); return; }
+        applyFlow({ fields: f }, chk);
+      });
+      add(foot, [el('span', { class: 'small muted grow' }, 'Файл: ' + d.path), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть'), chk]);
+    }
+    function edText() {
+      const ta = el('textarea', { class: 'input tall', spellcheck: 'false', autocomplete: 'off' });
+      ta.value = d.text;
+      add(body, [
+        el('div', { class: 'alert info' }, icon('lock'), el('div', null, 'Ключи заменены на «', el('code', null, MASKV), '» — такие строки сохранят прежнее значение. Новый конфиг можно вставить целиком или перетащить файл. Строки PostUp/PreDown не допускаются.')),
+        el('div', { class: 'spacer' }), dropZone((txt) => { ta.value = txt; toast('Файл загружен: проверьте и примените'); }, 'Заменить конфиг этого туннеля файлом .conf'),
+        el('div', { class: 'spacer' }), ta, res]);
+      const chk = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Проверить и применить');
+      chk.addEventListener('click', () => {
+        if (/^\s*vpn:\/\//.test(ta.value)) { m.close(); importDialog(reload, t.name, ta.value); return; }
+        applyFlow({ text: ta.value }, chk);
+      });
+      add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть'), chk]);
+    }
+    async function edHist() {
+      const box = el('div', null, el('div', { class: 'row' }, el('span', { class: 'spinner sm' }), 'загрузка…'));
+      add(body, [el('p', { class: 'muted small' }, 'Каждое изменение конфига сохраняется (до 15 версий, права 600). Можно сравнить с текущим и вернуть.'), box]);
+      add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть')]);
       try {
-        const x = await api('/api/tunnel/conf', { name: t.name, text: ta.value });
-        res.textContent = x.msg; res.classList.remove('hidden');
-        (x.ok ? ok : err)(x.ok ? 'Конфиг применён' : 'Конфиг не применён');
-        reload();
-      } catch (e) { res.textContent = e.message; res.classList.remove('hidden'); err(e); }
-    }));
-    const [fi, fb] = confFileBtn(ta);
-    modal('Конфиг ' + t.name, el('div', null,
-      el('div', { class: 'alert info' }, icon('lock'), el('div', null, 'Ключи скрыты: строки «', el('code', null, '<скрыто>'), '» сохранят прежнее значение. Чтобы сменить ключ — впишите новый целиком. Строки PostUp/PreDown не допускаются.')),
-      el('div', { class: 'spacer' }), ta, fi, res,
-      el('div', { class: 'small muted' }, 'Файл: ', r.path, '. Прежняя версия сохранится в ', el('code', null, r.path.split('/').pop() + '.prev'), '. Если туннель с новым конфигом не поднимется — вернётся прежний.')),
-    [fb, el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => document.querySelector('.modal-bg').remove() }, 'Закрыть'), save], { wide: true, sticky: true });
+        const r = await api('/api/tunnel/revisions?name=' + encodeURIComponent(t.name));
+        replace(box, r.revisions.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+          el('thead', null, el('tr', null, el('th', null, 'Версия'), el('th', null, 'Что'), el('th', null, 'Сервер'), el('th', null, ''), el('th', null, ''))),
+          el('tbody', null, r.revisions.map((v) => el('tr', null,
+            el('td', { class: 'nowrap' }, fmtTime(v.time, true), v.current ? el('span', { class: 'badge ok' }, 'текущая') : null),
+            el('td', { class: 'muted' }, v.why || '—'),
+            el('td', null, el('span', { class: 'mono small' }, v.summary.endpoint || '—'), ' ', el('span', { class: 'badge outline' }, v.summary.proto)),
+            el('td', { class: 'r nowrap' }, el('button', { class: 'btn sm', onclick: async () => {
+              try { const x = await api('/api/tunnel/revision?name=' + encodeURIComponent(t.name) + '&id=' + encodeURIComponent(v.id)); modal('Версия ' + fmtTime(v.time, true) + ' → текущая', diffView(x.text, x.current), [], { wide: true }); } catch (e) { err(e); }
+            } }, 'Сравнить')),
+            el('td', { class: 'r nowrap' }, v.current ? null : el('button', { class: 'btn sm primary', onclick: async (e) => {
+              if (!await confirmBox('Вернуть версию?', 'Конфиг ' + t.name + ' станет таким, как ' + fmtTime(v.time, true) + '. Текущий сохранится в истории.', 'Вернуть')) return;
+              try { const x = await api('/api/tunnel/revision/restore', { name: t.name, id: v.id }); (x.ok ? ok : err)(x.msg.split('\n')[0]); reload(); show('hist'); } catch (ex) { err(ex); }
+            } }, 'Вернуть'))))))) : el('div', { class: 'empty' }, 'Версий пока нет: они появятся после первого изменения.'));
+      } catch (e) { replace(box, e.message); }
+    }
+    async function edQuality() {
+      const rtt = el('div', { class: 'chart-wrap sm' }), loss = el('div', { class: 'chart-wrap sm' });
+      const sp = el('div');
+      const spOut = el('pre', { class: 'console hidden' });
+      const size = el('select', { class: 'input' }, [5, 10, 25, 50].map((x) => el('option', { value: x, selected: x === 10 }, x + ' МБ')));
+      size.style.width = 'auto';
+      const run = el('button', { class: 'btn' }, icon('activity', 'sm'), 'Замерить скорость');
+      add(body, [uptimeBar(S.hist, t.name), el('div', { class: 'spacer' }),
+        el('div', { class: 'grid g-2e' }, el('div', null, el('h3', null, 'Задержка (RTT), мс'), rtt), el('div', null, el('h3', null, 'Потери, %'), loss)),
+        el('div', { class: 'spacer' }), el('h3', null, 'Замеры скорости'), el('p', { class: 'small muted' }, 'Скачивание и отдача через этот туннель (speed.cloudflare.com). Трафик замера считается у провайдера VPN.'),
+        el('div', { class: 'row' }, size, run), spOut, sp]);
+      add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть')]);
+      const loadSp = async () => {
+        const r = await api('/api/speed');
+        const xs = r.history.filter((x) => x.iface === t.name).slice(0, 10);
+        replace(sp, xs.length ? el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, 'Когда'), el('th', null, 'Загрузка'), el('th', null, 'Отдача'), el('th', null, 'Задержка'))),
+          el('tbody', null, xs.map((x) => el('tr', null, el('td', null, fmtTime(x.t, true)), el('td', null, x.down_bps ? fmtBits(x.down_bps) : '—'), el('td', null, x.up_bps ? fmtBits(x.up_bps) : '—'), el('td', null, x.ping_ms ? x.ping_ms + ' мс' : '—'))))) : el('div', { class: 'empty' }, 'Замеров ещё не было'));
+      };
+      run.addEventListener('click', () => busy(run, async () => {
+        spOut.classList.remove('hidden'); spOut.textContent = '';
+        try { await runJob({ tool: 'speedtest', iface: t.name, mb: +size.value }, spOut); await loadSp(); } catch (e) { err(e); }
+      }));
+      try {
+        if (!S.hist) S.hist = (await api('/api/history')).points;
+        const pts = S.hist.filter((p) => p.tun && p.tun[t.name]);
+        drawChart(rtt, [{ name: 'RTT', color: '--chart-rx', fill: true, points: pts.filter((p) => p.tun[t.name].rtt !== '').map((p) => [p.t, +p.tun[t.name].rtt]) }],
+          { fmt: (v) => Math.round(v) + ' мс', empty: 'Нет данных: RTT меряется, когда включено переключение по качеству' });
+        drawChart(loss, [{ name: 'Потери', color: '--crit', fill: true, points: pts.filter((p) => p.tun[t.name].loss !== '').map((p) => [p.t, +p.tun[t.name].loss]) }],
+          { fmt: (v) => Math.round(v) + '%', max: 100, empty: 'Нет данных' });
+        await loadSp();
+      } catch (e) { err(e); }
+    }
+    function edExport() {
+      const pw = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
+      const go = el('button', { class: 'btn primary' }, icon('download', 'sm'), 'Скачать ' + t.name + '.conf');
+      go.addEventListener('click', () => busy(go, async () => {
+        try {
+          const x = await api('/api/tunnel/export', { name: t.name, current: pw.value });
+          const a = el('a', { href: URL.createObjectURL(new Blob([x.text], { type: 'text/plain' })), download: x.filename });
+          document.body.appendChild(a); a.click(); a.remove(); pw.value = '';
+          ok('Файл скачан: храните его как пароль');
+        } catch (e) { err(e); }
+      }));
+      const extras = (S.ov ? S.ov.tunnels : []).filter((x) => x.role === 'extra').map((x) => x.name);
+      const xi = extras.indexOf(t.name);
+      const move = (dir) => async () => {
+        const n = extras.slice(); n.splice(xi + dir, 0, n.splice(xi, 1)[0]);
+        try { ok((await api('/api/tunnel/order', { extra: n })).msg); m.close(); reload(); } catch (ex) { err(ex); }
+      };
+      add(body, [
+        el('h3', null, 'Скачать конфиг'),
+        el('div', { class: 'alert warn' }, icon('key'), el('div', null, 'Файл содержит закрытый ключ роутера. Не отправляйте его в чаты. Одновременно использовать этот же конфиг на другом устройстве нельзя: сервер будет «перекидывать» сеанс между ними.')),
+        el('div', { class: 'spacer' }), el('div', { class: 'input-group' }, el('div', { class: 'field grow' }, el('label', null, 'Ваш пароль от панели'), pw)), go,
+        xi >= 0 ? [el('div', { class: 'spacer' }), el('h3', null, 'Приоритет'), el('p', { class: 'muted small' }, 'Порядок: основной → запасной → дополнительные. Сейчас этот туннель №' + (xi + 1) + ' из ' + extras.length + ' дополнительных.'),
+          el('div', { class: 'row' }, el('button', { class: 'btn', disabled: xi === 0, onclick: move(-1) }, icon('up', 'sm'), 'Выше'),
+            el('button', { class: 'btn', disabled: xi === extras.length - 1, onclick: move(1) }, 'Ниже'))] : null,
+        t.role === 'extra' ? [el('div', { class: 'spacer' }), el('h3', null, 'Удалить туннель'),
+          el('p', { class: 'muted small' }, 'Туннель будет остановлен и убран из сторожа вместе с его правилами. Файл конфига и история версий останутся на роутере.'),
+          el('button', { class: 'btn danger', onclick: async () => {
+            if (!await confirmBox('Удалить ' + t.name + '?', 'Туннель будет остановлен и убран из сторожа.', 'Удалить', true)) return;
+            try { ok((await api('/api/tunnel/remove', { name: t.name })).msg); m.close(); reload(); } catch (ex) { err(ex); }
+          } }, icon('trash', 'sm'), 'Удалить ' + t.name)]
+          : el('p', { class: 'small muted' }, 'Основной и запасной туннели удаляются установщиком: install.sh → Компоненты → Туннели.')]);
+      add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть')]);
+    }
+    show(cur);
   }
-  function tunnelAdd(reload) {
-    const used = (S.ov ? S.ov.tunnels.map((t) => t.name) : []);
-    let sug = 'awgalt1';
-    for (let i = 1; used.includes(sug); i++) sug = 'awgalt' + (i + 1);
-    const nm = el('input', { class: 'input mono', value: sug, maxlength: 13, autocapitalize: 'off', spellcheck: 'false' });
-    const lb = el('input', { class: 'input', maxlength: 40, placeholder: 'например: Нидерланды' });
-    const ta = el('textarea', { class: 'input tall', spellcheck: 'false', placeholder: '[Interface]\nPrivateKey = …\nAddress = 10.8.1.2/32\nJc = …\n\n[Peer]\nPublicKey = …\nEndpoint = 203.0.113.10:51820\nAllowedIPs = 0.0.0.0/0' });
-    const res = el('div', { class: 'res hidden' });
-    const go = el('button', { class: 'btn primary' }, icon('plus', 'sm'), 'Добавить');
-    go.addEventListener('click', () => busy(go, async () => {
-      try {
-        const x = await api('/api/tunnel/add', { name: nm.value.trim(), label: lb.value.trim(), text: ta.value });
-        res.textContent = x.msg; res.classList.remove('hidden');
-        if (x.ok) { ok('Туннель ' + nm.value + ' добавлен'); reload(); } else err('Туннель добавлен, но не поднялся — смотрите вывод');
-      } catch (e) { res.textContent = e.message; res.classList.remove('hidden'); }
-    }));
-    const [fi, fb] = confFileBtn(ta);
-    modal('Новый туннель', el('div', null,
-      el('div', { class: 'form-grid' },
+
+  // ---------- импорт: файл, текст, ссылка vpn://
+  function importDialog(reload, target, preset) {
+    const ta = el('textarea', { class: 'input', rows: 7, spellcheck: 'false', placeholder: '[Interface]\nPrivateKey = …\n…\n\nили ссылка vpn://… из AmneziaVPN («Поделиться» → «Ключ»)' });
+    if (preset) ta.value = preset;
+    let fname = '';
+    const res = el('div');
+    const parse = el('button', { class: 'btn primary' }, icon('search', 'sm'), 'Разобрать');
+    const foot = [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, 'Закрыть'), parse];
+    const m = modal(target === 'new' ? 'Новый туннель' : 'Импорт конфига', el('div', null,
+      dropZone((txt, n) => { ta.value = txt; fname = n; parse.click(); }),
+      el('div', { class: 'spacer' }), el('div', { class: 'field' }, el('label', null, 'Или вставьте текст конфига или ссылку vpn://'), ta), res), foot, { wide: true, sticky: true });
+    parse.addEventListener('click', () => busy(parse, async () => {
+      let r;
+      try { r = await api('/api/import/parse', { data: ta.value }); } catch (e) { replace(res, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, e.message))); return; }
+      const f = r.fields;
+      const info = el('dl', { class: 'kv' },
+        el('dt', null, 'Источник'), el('dd', null, r.source === 'vpn://' ? 'ссылка AmneziaVPN' : r.source === 'json' ? 'JSON AmneziaVPN' : (fname || 'текст конфига')),
+        el('dt', null, 'Протокол'), el('dd', null, el('span', { class: 'badge accent' }, r.proto)),
+        el('dt', null, 'Сервер'), el('dd', null, el('span', { class: 'mono' }, f.Peer.Endpoint || '—')),
+        el('dt', null, 'Адрес'), el('dd', null, el('span', { class: 'mono' }, f.Interface.Address || '—')),
+        el('dt', null, 'MTU'), el('dd', null, f.Interface.MTU || 'по умолчанию'));
+      const used = S.ov ? S.ov.tunnels : [];
+      let sug = 'awgalt1';
+      for (let i = 1; used.some((t) => t.name === sug); i++) sug = 'awgalt' + (i + 1);
+      const nm = el('input', { class: 'input mono', value: sug, maxlength: 13, autocapitalize: 'off', spellcheck: 'false' });
+      const lb = el('input', { class: 'input', maxlength: 40, placeholder: 'например: Нидерланды' });
+      const tsel = el('select', { class: 'input' }, el('option', { value: 'new' }, 'Новый дополнительный туннель'),
+        used.map((t) => el('option', { value: t.name, selected: target === t.name }, 'Заменить конфиг: ' + (t.label ? t.label + ' (' + t.name + ')' : t.name) + ' — ' + ROLE[t.role].toLowerCase())));
+      const newBox = el('div', { class: 'form-grid' },
         el('div', { class: 'field' }, el('label', null, 'Имя интерфейса'), nm, el('span', { class: 'hint' }, 'awg + до 10 латинских букв/цифр')),
-        el('div', { class: 'field' }, el('label', null, 'Название'), lb)),
-      el('div', { class: 'field' }, el('label', null, 'Конфиг AmneziaWG (клиентский, из панели сервера или Amnezia VPN)'), ta), fi, res,
-      el('div', { class: 'small muted' }, 'Туннель станет последним по приоритету: сторож перейдёт на него, если не отвечают основной и запасной.')),
-    [fb, el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => document.querySelector('.modal-bg').remove() }, 'Закрыть'), go], { wide: true, sticky: true });
+        el('div', { class: 'field' }, el('label', null, 'Название'), lb));
+      const sync = () => newBox.classList.toggle('hidden', tsel.value !== 'new');
+      tsel.addEventListener('change', sync); sync();
+      const out = el('div', { class: 'res hidden' });
+      const apply = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Применить');
+      apply.addEventListener('click', () => busy(apply, async () => {
+        if (tsel.value !== 'new' && !await confirmBox('Заменить конфиг ' + tsel.value + '?', 'Туннель будет пересоздан с новым конфигом. Прежний сохранится в истории версий; если новый не поднимется — вернётся прежний.', 'Заменить')) return;
+        try {
+          const x = await api('/api/import/apply', { token: r.token, target: tsel.value, name: nm.value.trim(), label: lb.value.trim() });
+          out.textContent = x.msg; out.classList.remove('hidden');
+          (x.ok ? ok : err)(x.ok ? 'Готово' : 'Применено с ошибкой — смотрите вывод');
+          reload();
+        } catch (e) { out.textContent = e.message; out.classList.remove('hidden'); err(e); }
+      }));
+      replace(res, el('div', { class: 'spacer' }),
+        r.errors.length ? el('div', { class: 'alert crit' }, icon('alert'), el('div', null, 'Конфиг не подходит:', el('ul', null, r.errors.map((x) => el('li', null, x))))) : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, 'Конфиг распознан. Ключи остаются на роутере и в браузер не возвращаются.')),
+        r.warnings.length ? el('div', { class: 'alert warn' }, icon('info'), el('div', null, r.warnings.join('; '))) : null,
+        el('div', { class: 'spacer' }), info,
+        r.ok ? [el('div', { class: 'spacer' }), el('div', { class: 'field' }, el('label', null, 'Куда'), tsel), newBox, out] : null);
+      const ft = m.root.querySelector('.ft');
+      if (r.ok) { parse.classList.remove('primary'); if (!ft.contains(apply)) ft.appendChild(apply); } else { apply.remove(); parse.classList.add('primary'); }
+    }));
+    if (preset) parse.click();
   }
+  async function runJob(payload, pre) {
+    const j = await api('/api/tool', payload);
+    let off = 0, text = '';
+    for (;;) {
+      const r = await api('/api/job?id=' + j.job + '&from=' + off);
+      off = r.len;
+      if (r.out) { text += r.out; if (pre) { paint(pre, text); pre.scrollTop = pre.scrollHeight; } }
+      if (r.done) return { rc: r.rc, text };
+      await new Promise((ok2) => setTimeout(ok2, 1000));
+    }
+  }
+
+  // ===================================================================== КЛИЕНТЫ
+  function clientsTable(list, compact) {
+    if (!list.length) return el('div', { class: 'empty' }, 'Сейчас через туннель никто не ходит (или conntrack недоступен)');
+    return el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+      el('thead', null, el('tr', null, el('th', null, 'Устройство'), el('th', null, 'IP'), compact ? null : el('th', null, 'MAC'), el('th', null, 'Туннель'),
+        el('th', { class: 'r' }, 'Соединений'), compact ? null : el('th', { class: 'r' }, 'Трафик'), compact ? null : el('th', null, 'Куда чаще всего'))),
+      el('tbody', null, list.map((c) => el('tr', null,
+        el('td', null, el('span', { class: 'row' }, el('span', { class: 'cav' }, icon('laptop', 'sm')), el('b', null, c.name || 'без имени'))),
+        el('td', null, el('span', { class: 'mono' }, c.ip)),
+        compact ? null : el('td', null, el('span', { class: 'mono small muted' }, c.mac || '—')),
+        el('td', null, el('span', { class: 'badge accent' }, c.tunnel)),
+        el('td', { class: 'r' }, c.conns),
+        compact ? null : el('td', { class: 'r nowrap' }, c.bytes ? fmtBytes(c.bytes) : '—'),
+        compact ? null : el('td', { class: 'mono small muted' }, c.top.join(', ')))))));
+  }
+  PAGES.clients = function (main) {
+    const box = el('div');
+    const q = el('input', { class: 'input', placeholder: 'поиск по имени, IP, MAC', spellcheck: 'false' });
+    q.style.maxWidth = '260px'; q.style.height = '30px';
+    const sum = el('span', { class: 'muted small' });
+    let data = { clients: [] };
+    const show = () => {
+      const f = q.value.trim().toLowerCase();
+      replace(box, clientsTable(data.clients.filter((c) => !f || (c.name + ' ' + c.ip + ' ' + c.mac).toLowerCase().includes(f)), false));
+      replace(sum, data.clients.length + ' устр. · ' + data.total + ' соединений');
+    };
+    q.addEventListener('input', show);
+    add(main, [head('Клиенты в туннеле'),
+      el('div', { class: 'alert info' }, icon('info'), el('div', null, 'Устройства LAN, чьи соединения сейчас идут через туннели (по таблице conntrack: метка PBR ', el('code', null, '—'), ' или адрес туннеля). Кто попадает в туннель, задаётся правилами PBR в UniFi и доменами в «Маршрутизации».')),
+      el('div', { class: 'spacer' }),
+      el('section', { class: 'card' }, el('div', { class: 'hd' }, icon('users'), el('h2', null, 'Сейчас'), sum, q), box)]);
+    every(5000, async () => {
+      data = await api('/api/clients');
+      const c = main.querySelector('.alert.info code'); if (c) c.textContent = data.mark || '—';
+      show();
+    });
+  };
 
   // ===================================================================== формы настроек
   const SPEC = {
@@ -930,7 +1260,7 @@
       replace(status, el('span', { class: 'row' }, el('span', { class: 'spinner sm' }), title + '…'));
       outCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
       let j;
-      try { j = await api('/api/tool', payload); } catch (e) { replace(status, ''); out.textContent = e.message; return; }
+      try { j = await api(payload.ep || '/api/tool', payload); } catch (e) { replace(status, ''); out.textContent = e.message; return; }
       let off = 0, text = '';
       const poll = async () => {
         try {
@@ -959,7 +1289,25 @@
     const domGo = () => { if (dom.value.trim()) runTool({ tool: 'domain-check', domain: dom.value.trim() }, 'Проверка ' + dom.value.trim()); };
     dom.addEventListener('keydown', (e) => { if (e.key === 'Enter') domGo(); });
     const mtuSel = el('select', { class: 'input' });
-    api('/api/overview').then((ov) => { updateChrome(ov); replace(mtuSel, ov.tunnels.map((t) => el('option', { value: t.name }, t.label ? t.label + ' (' + t.name + ')' : t.name))); }).catch(() => {});
+    const spSel = el('select', { class: 'input' }), spSize = el('select', { class: 'input' }, [5, 10, 25, 50].map((x) => el('option', { value: x, selected: x === 10 }, x + ' МБ')));
+    const pgSel = el('select', { class: 'input' }), pgHost = el('input', { class: 'input', value: '1.1.1.1', spellcheck: 'false', autocapitalize: 'off' });
+    spSize.style.width = 'auto';
+    const spHist = el('div');
+    const loadSp = async () => {
+      const r = await api('/api/speed');
+      replace(spHist, r.history.length ? el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, 'Когда'), el('th', null, 'Канал'), el('th', null, '↓'), el('th', null, '↑'), el('th', null, 'Задержка'))),
+        el('tbody', null, r.history.slice(0, 8).map((x) => el('tr', null, el('td', { class: 'nowrap' }, fmtTime(x.t)), el('td', null, el('span', { class: 'mono' }, x.iface)),
+          el('td', { class: 'nowrap' }, x.down_bps ? fmtBits(x.down_bps) : '—'), el('td', { class: 'nowrap' }, x.up_bps ? fmtBits(x.up_bps) : '—'), el('td', null, x.ping_ms ? x.ping_ms + ' мс' : '—'))))) : el('div', { class: 'small muted' }, 'Замеров ещё не было'));
+    };
+    loadSp().catch(() => {});
+    api('/api/overview').then((ov) => {
+      updateChrome(ov);
+      const opts = () => ov.tunnels.map((t) => el('option', { value: t.name }, t.label ? t.label + ' (' + t.name + ')' : t.name));
+      replace(mtuSel, opts());
+      replace(spSel, el('option', { value: 'all' }, 'все туннели и WAN'), opts(), el('option', { value: 'wan' }, 'WAN напрямую (' + (ov.wan.if || '?') + ')'));
+      replace(pgSel, opts(), el('option', { value: 'wan' }, 'WAN напрямую'));
+    }).catch(() => {});
+    const watchDone = async () => { await new Promise((r) => setTimeout(r, 2000)); for (let i = 0; i < 300 && polling; i++) await new Promise((r) => setTimeout(r, 1000)); loadSp().catch(() => {}); };
     add(main, [
       head('Инструменты'),
       el('div', { class: 'grid g-2e' },
@@ -970,6 +1318,23 @@
             if (!await confirmBox('MTU для ' + mtuSel.value, 'Туннель будет перезапущен с новым MTU.', 'Подобрать и применить')) return;
             runTool({ tool: 'mtu-apply', name: mtuSel.value }, 'MTU ' + mtuSel.value);
           } }, icon('ruler', 'sm'), 'Применить'))), { icon: 'ruler' })),
+      el('div', { class: 'spacer' }),
+      el('div', { class: 'grid g-2e' },
+        card('Скорость каналов', el('div', null, el('p', { class: 'muted small' }, 'Загрузка и отдача через туннель и напрямую (speed.cloudflare.com). Сравните каналы между собой и с WAN.'),
+          el('div', { class: 'input-group' }, spSel, spSize, el('button', { class: 'btn primary', onclick: () => { runTool({ tool: 'speedtest', iface: spSel.value, mb: +spSize.value }, 'Замер скорости'); watchDone(); } }, icon('activity', 'sm'), 'Замерить')),
+          el('div', { class: 'spacer' }), spHist), { icon: 'activity' }),
+        card('Ping и трассировка', el('div', null, el('p', { class: 'muted small' }, 'Проверить доступность адреса через выбранный туннель или напрямую.'),
+          el('div', { class: 'input-group' }, pgHost, pgSel),
+          el('div', { class: 'spacer' }),
+          el('div', { class: 'row' }, el('button', { class: 'btn', onclick: () => runTool({ ep: '/api/net', kind: 'ping', host: pgHost.value.trim(), iface: pgSel.value }, 'ping ' + pgHost.value) }, icon('activity', 'sm'), 'Ping'),
+            el('button', { class: 'btn', onclick: () => runTool({ ep: '/api/net', kind: 'trace', host: pgHost.value.trim(), iface: pgSel.value }, 'трассировка ' + pgHost.value) }, icon('route', 'sm'), 'Трассировка'))), { icon: 'globe' })),
+      el('div', { class: 'spacer' }),
+      card('Сверка правил с эталоном (drift)', el('div', null,
+        el('p', { class: 'muted small' }, 'Эталон снимается после установки и обновления. Сверка покажет, какие правила iptables, ip rule, маршруты PBR и службы пропали или появились — и чьи они: набора или UniFi. «Вернуть правила набора» перезапускает только службы UDR-Amnezia; правила UniFi не трогаются никогда.'),
+        el('div', { class: 'row wrap' },
+          el('button', { class: 'btn primary', onclick: () => runTool({ tool: 'drift' }, 'Сверка') }, icon('search', 'sm'), 'Сверить'),
+          el('button', { class: 'btn', onclick: async () => { if (await confirmBox('Вернуть правила набора?', 'Службы awg-failover, guard, self, subnets будут перезапущены (на секунды прерывается трафик PBR).', 'Вернуть')) runTool({ tool: 'drift-repair' }, 'Восстановление'); } }, icon('wrench', 'sm'), 'Вернуть правила набора'),
+          el('button', { class: 'btn', onclick: async () => { if (await confirmBox('Принять текущее состояние?', 'Текущие правила станут эталоном. Делайте это, когда всё работает (например, после изменения PBR в UniFi).', 'Принять')) runTool({ tool: 'drift-save' }, 'Новый эталон'); } }, icon('check', 'sm'), 'Принять текущее как эталон'))), { icon: 'layers' }),
       el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-tools' }, tiles),
       el('div', { class: 'spacer' }), outCard]);
@@ -988,7 +1353,7 @@
   }
 
   // ===================================================================== ЖУРНАЛЫ
-  const LOGS = [['events', 'События'], ['failover', 'Сторож'], ['journal', 'systemd'], ['notify', 'Уведомления'], ['bot', 'Бот'], ['install', 'Установка'], ['restore', 'Восстановление'], ['audit', 'Действия в панели']];
+  const LOGS = [['events', 'События'], ['failover', 'Сторож'], ['journal', 'systemd'], ['notify', 'Уведомления'], ['bot', 'Бот'], ['install', 'Установка'], ['update', 'Обновление'], ['restore', 'Восстановление'], ['audit', 'Действия в панели']];
   PAGES.logs = function (main, sub) {
     const cur = LOGS.some((l) => l[0] === sub) ? sub : 'events';
     add(main, [head('Журналы'), tabs(LOGS, cur, (id) => { location.hash = '#/logs/' + id; })]);
@@ -1048,13 +1413,13 @@
   }
 
   // ===================================================================== НАСТРОЙКИ
-  const SET_TABS = [['failover', 'Переключение'], ['services', 'Службы'], ['telegram', 'Telegram'], ['users', 'Пользователи и 2FA'], ['backups', 'Резервные копии'], ['system', 'Система']];
+  const SET_TABS = [['failover', 'Переключение'], ['services', 'Службы'], ['telegram', 'Telegram'], ['users', 'Пользователи и 2FA'], ['web', 'Панель и сертификат'], ['backups', 'Резервные копии'], ['system', 'Система и обновление']];
   PAGES.settings = function (main, sub) {
     const cur = SET_TABS.some((t) => t[0] === sub) ? sub : 'failover';
     add(main, [head('Настройки'), tabs(SET_TABS, cur, (id) => { location.hash = '#/settings/' + id; })]);
     const body = el('div', { class: 'stack' });
     main.appendChild(body);
-    ({ failover: setFailover, services: setServices, telegram: setTelegram, users: setUsers, backups: setBackups, system: setSystem })[cur](body);
+    ({ failover: setFailover, services: setServices, telegram: setTelegram, users: setUsers, web: setWeb, backups: setBackups, system: setSystem })[cur](body);
   };
   async function setFailover(body) {
     try {
@@ -1183,7 +1548,8 @@
         el('div', { class: 'field' }, el('label', null, 'Имя пользователя'), un, el('span', { class: 'hint' }, 'Новое имя — новый пользователь')),
         el('div', { class: 'field' }, el('label', null, 'Новый пароль'), p1, el('span', { class: 'hint' }, 'Не короче 10 символов')),
         el('div', { class: 'field' }, el('label', null, 'Повторите'), p2),
-        el('div', { class: 'field' }, el('label', null, 'Ваш текущий пароль'), cur)), { icon: 'lock', foot: save })]);
+        el('div', { class: 'field' }, el('label', null, 'Ваш текущий пароль'), cur)), { icon: 'lock', foot: save }),
+      await sessionsCard()]);
   }
   async function setBackups(body) {
     const tb = el('tbody');
@@ -1194,7 +1560,15 @@
         el('td', null, fmtTime(b.time, true)),
         el('td', null, fmtBytes(b.size)),
         el('td', null, b.enc ? el('span', { class: 'badge ok' }, 'зашифрована') : el('span', { class: 'badge warn' }, 'без пароля')),
-        el('td', { class: 'r nowrap' }, el('a', { class: 'btn sm', href: '/api/backup/file?name=' + encodeURIComponent(b.name), download: b.name }, icon('download', 'sm'), 'Скачать'), ' ',
+        el('td', { class: 'r nowrap' }, el('button', { class: 'btn sm', onclick: () => {
+          const pw = el('input', { class: 'input', type: 'password', autocomplete: 'off' });
+          const out = el('div', { class: 'res hidden' });
+          const go = el('button', { class: 'btn primary' }, 'Проверить');
+          go.addEventListener('click', () => busy(go, async () => { try { const x = await api('/api/backup/verify', { name: b.name, password: pw.value }); out.textContent = x.msg; out.classList.remove('hidden'); (x.ok ? ok : err)(x.ok ? 'Копия читается' : 'Копия не прошла проверку'); } catch (e) { err(e); } }));
+          const vm = modal('Проверить ' + b.name, el('div', null, el('p', { class: 'muted small' }, 'Копия расшифровывается во временный файл и проверяется целостность архива; на роутере ничего не меняется.'),
+            b.enc ? el('div', { class: 'field' }, el('label', null, 'Пароль копии'), pw) : null, out), [el('button', { class: 'btn', onclick: () => vm.close() }, 'Закрыть'), go]);
+        } }, icon('okc', 'sm'), 'Проверить'), ' ',
+          el('a', { class: 'btn sm', href: '/api/backup/file?name=' + encodeURIComponent(b.name), download: b.name }, icon('download', 'sm'), 'Скачать'), ' ',
           el('button', { class: 'btn sm danger icon', 'aria-label': 'Удалить', onclick: async () => {
             if (!await confirmBox('Удалить копию?', b.name, 'Удалить', true)) return;
             try { await api('/api/backup/delete', { name: b.name }); load(); } catch (e) { err(e); }
@@ -1218,24 +1592,122 @@
     let r;
     try { r = await api('/api/system'); } catch (e) { err(e); return; }
     const upd = el('div');
+    const log = el('pre', { class: 'console hidden' });
     const chk = el('button', { class: 'btn' }, icon('refresh', 'sm'), 'Проверить обновления');
+    async function followUpdate() {
+      log.classList.remove('hidden');
+      let lost = 0;
+      for (let i = 0; i < 600; i++) {
+        await new Promise((ok2) => setTimeout(ok2, 2000));
+        try {
+          const x = await api('/api/update/log');
+          paint(log, x.text); log.scrollTop = log.scrollHeight;
+          if (lost) { lost = 0; toast('Панель снова на связи'); }
+          if (!x.running && i > 2) {
+            const good = /\[код 0\]/.test(x.text);
+            replace(upd, el('div', { class: 'alert ' + (good ? 'ok' : 'crit') }, icon(good ? 'okc' : 'alert'), el('div', null,
+              good ? 'Обновление завершено: версия ' + x.version + '. Страница перезагрузится.' : 'Обновление завершилось с ошибкой (при сбое выполнен откат). Журнал — ниже и в «Журналах → Обновление».')));
+            if (good) setTimeout(() => location.reload(), 4000);
+            return;
+          }
+        } catch (e) {
+          lost++;
+          if (lost === 1) replace(upd, el('div', { class: 'alert info' }, el('span', { class: 'spinner sm' }), el('div', null, 'Панель перезапускается после обновления — жду, когда она вернётся…')));
+        }
+      }
+    }
     chk.addEventListener('click', () => busy(chk, async () => {
       try {
         const u = await api('/api/update/check', {});
-        const cmd = el('pre', { class: 'res' }, u.cmd);
-        replace(upd, u.latest ? (u.update ? el('div', { class: 'alert info' }, icon('download'), el('div', null, 'Доступна версия ', el('b', null, u.latest), ' (у вас ' + u.current + '). Обновление — по SSH на роутере:', cmd))
-          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, 'Установлена последняя версия ' + u.current + '.')))
+        if (u.running) { replace(upd, el('div', { class: 'alert info' }, icon('info'), el('div', null, 'Обновление уже идёт.'))); followUpdate(); return; }
+        const go = el('button', { class: 'btn primary' }, icon('download', 'sm'), 'Обновить до ' + u.latest);
+        go.addEventListener('click', async () => {
+          if (!await confirmBox('Обновить до ' + u.latest + '?', 'Перед обновлением делается копия скриптов. Службы перезапустятся (несколько секунд без трафика PBR). Если после обновления сторож, маршрут или панель не заработают — автоматически вернётся прежняя версия.', 'Обновить')) return;
+          try { ok((await api('/api/update/run', {})).msg); go.disabled = true; followUpdate(); } catch (e) { err(e); }
+        });
+        replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, 'Доступна версия ', el('b', null, u.latest), ' (у вас ' + u.current + ', ветка ' + u.branch + ').')),
+          u.notes ? el('details', { class: 'fgroup' }, el('summary', null, 'Что нового'), el('pre', { class: 'res' }, u.notes)) : null,
+          el('div', { class: 'spacer' }), go, el('div', { class: 'small muted' }, 'Или по SSH: ', el('code', null, u.cmd)))
+          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, 'Установлена последняя версия ' + u.current + ' (ветка ' + u.branch + ').')))
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, 'Не удалось узнать последнюю версию в ' + u.repo + ' (GitHub недоступен с роутера?)')));
       } catch (e) { err(e); }
     }));
     const kv = (rows) => el('dl', { class: 'kv' }, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)]));
+    const exp = el('button', { class: 'btn' }, icon('download', 'sm'), 'Экспорт настроек');
+    exp.addEventListener('click', async () => {
+      try {
+        const x = await api('/api/settings/export');
+        const a = el('a', { href: URL.createObjectURL(new Blob([JSON.stringify(x, null, 1)], { type: 'application/json' })), download: 'udr-amnezia-settings.json' });
+        document.body.appendChild(a); a.click(); a.remove();
+      } catch (e) { err(e); }
+    });
+    const imp = el('button', { class: 'btn' }, icon('upload', 'sm'), 'Импорт настроек');
+    imp.addEventListener('click', () => {
+      const m = modal('Импорт настроек', el('div', null, el('p', { class: 'muted small' }, 'Файл udr-amnezia-settings.json с другого роутера или сохранённый ранее: домены, исключения, защита, параметры переключения, названия туннелей. Ключей и паролей в нём нет.'),
+        dropZone(async (txt) => {
+          let data;
+          try { data = JSON.parse(txt); } catch (e) { err('это не JSON'); return; }
+          try { const x = await api('/api/settings/import', { data }); ok(x.msg.split('\n')[0]); m.close(); } catch (e) { err(e); }
+        }, 'udr-amnezia-settings.json')), []);
+    });
     add(body, [
       el('div', { class: 'grid g-2e' },
-        card('Версии', el('div', null, kv([['Набор', r.version || '?'], ['Установщик', r.installer], ['Панель', r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], ['Свободно в /data', r.data_free_mb + ' МБ']]),
-          el('div', { class: 'spacer' }), upd), { icon: 'info', foot: chk }),
-        card('Веб-панель', el('div', null, kv([['Адрес', (r.web.WEB_BIND === 'auto' ? 'LAN (br0)' : r.web.WEB_BIND) + ':' + r.web.WEB_PORT], ['HTTPS', r.tls ? 'да (самоподписанный сертификат)' : 'нет'], ['Разрешённые сети', r.web.WEB_ALLOW]]),
-          el('div', { class: 'spacer' }),
-          el('div', { class: 'small muted' }, 'Изменить порт и адрес: /data/awg/web/web.conf, затем ', el('code', null, 'systemctl restart awg-web'), '. Новый сертификат: ', el('code', null, 'python3 /data/awg/web/panel.py cert'), '.')), { icon: 'lock' }))]);
+        card('Версии и обновление', el('div', null, kv([['Набор', r.version || '?'], ['Установщик', r.installer], ['Панель', r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], ['Свободно в /data', r.data_free_mb + ' МБ']]),
+          el('div', { class: 'spacer' }), upd, log), { icon: 'info', foot: chk }),
+        card('Перенос настроек', el('div', null, el('p', { class: 'muted small' }, 'Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.')),
+          { icon: 'archive', foot: [exp, imp] }))]);
+  }
+  async function setWeb(body) {
+    let r;
+    try { r = await api('/api/web'); } catch (e) { err(e); return; }
+    const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
+    const allow = el('input', { class: 'input mono', value: r.allow });
+    const hosts = el('input', { class: 'input mono', value: r.hosts, placeholder: 'udr.example.com' });
+    const cm = el('select', { class: 'input' }, [['auto', 'Автоматически: сертификат UniFi, если он настоящий, иначе свой'], ['unifi', 'Сертификат UniFi (как у веб-интерфейса роутера)'], ['self', 'Свой самоподписанный']]
+      .map(([v, t]) => el('option', { value: v, selected: r.cert_mode === v }, t)));
+    const ci = r.cert || {};
+    const certKv = el('dl', { class: 'kv' },
+      el('dt', null, 'Используется'), el('dd', null, el('span', { class: 'badge ' + (r.cert_used === 'unifi' || r.cert_used === 'file' ? 'ok' : 'warn') }, { self: 'самоподписанный', unifi: 'сертификат UniFi', file: 'файл из web.conf' }[r.cert_used] || 'нет (HTTP)')),
+      el('dt', null, 'Имя'), el('dd', null, ci.subject || '—'),
+      el('dt', null, 'Издатель'), el('dd', null, ci.issuer || '—'),
+      el('dt', null, 'Действует до'), el('dd', null, ci.expires ? fmtTime(ci.expires, true) + (ci.expires - Date.now() / 1000 < 14 * 86400 ? ' ⚠' : '') : '—'),
+      el('dt', null, 'Имена в сертификате'), el('dd', null, (ci.names || []).join(', ') || '—'));
+    const found = r.unifi_certs.length ? el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, 'Найден сертификат UniFi'), el('th', null, 'Издатель'), el('th', null, 'До'))),
+      el('tbody', null, r.unifi_certs.map((c) => el('tr', null, el('td', null, el('b', null, c.subject || '?'), el('div', { class: 'small muted mono' }, c.path)), el('td', null, c.issuer || '—', c.self_signed ? el('span', { class: 'badge warn' }, 'самоподписанный') : null), el('td', { class: 'nowrap' }, c.expires ? fmtTime(c.expires, true) : '—')))))
+      : el('div', { class: 'small muted' }, 'Сертификатов UniFi не найдено в /data/unifi-core/config.');
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), 'Сохранить и перезапустить панель');
+    save.addEventListener('click', () => busy(save, async () => {
+      try {
+        const x = await api('/api/web', { port: port.value.trim(), allow: allow.value.trim(), hosts: hosts.value.trim(), cert_mode: cm.value });
+        ok(x.msg);
+        setTimeout(() => { location.href = x.url; }, 5000);
+      } catch (e) { err(e); }
+    }));
+    add(body, [
+      el('div', { class: 'grid g-2e' },
+        card('Доступ', el('div', null,
+          el('div', { class: 'field' }, el('label', null, 'Порт'), port, el('span', { class: 'hint' }, 'Сейчас панель на ' + r.lan + ':' + r.port + '. Порты UniFi (443, 8443, 8080…) заняты.')),
+          el('div', { class: 'field' }, el('label', null, 'Разрешённые сети'), allow, el('span', { class: 'hint' }, 'Только частные сети через пробел. Для доступа извне используйте VPN-сервер роутера.')),
+          el('div', { class: 'field' }, el('label', null, 'Имена для входа (кроме IP)'), hosts, el('span', { class: 'hint' }, 'Имена из сертификата добавляются сами.'))), { icon: 'lock' }),
+        card('Сертификат HTTPS', el('div', null,
+          el('div', { class: 'field' }, el('label', null, 'Источник'), cm, el('span', { class: 'hint' }, 'Сертификат UniFi обновляется роутером; панель перечитывает его сама в течение минуты, перезапуск не нужен.')),
+          r.cert_warn ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, r.cert_warn)) : null,
+          certKv, el('div', { class: 'spacer' }), found), { icon: 'shield' })),
+      el('div', { class: 'row end' }, save)]);
+  }
+  async function sessionsCard() {
+    const tb = el('tbody');
+    const load = async () => {
+      const r = await api('/api/sessions');
+      replace(tb, r.sessions.map((x) => el('tr', null,
+        el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, 'этот') : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
+        el('td', null, el('span', { class: 'mono' }, x.ip)),
+        el('td', { class: 'nowrap' }, 'вход ' + fmtTime(x.born), el('div', { class: 'small muted' }, 'активность ' + fmtAge(Math.floor(Date.now() / 1000) - x.seen))),
+        el('td', { class: 'r' }, x.me ? null : el('button', { class: 'btn sm danger', onclick: async () => { try { await api('/api/session/revoke', { id: x.id }); load(); } catch (e) { err(e); } } }, 'Завершить')))));
+    };
+    load().catch(err);
+    const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok('Остальные сеансы завершены'); load(); } catch (e) { err(e); } } }, 'Завершить остальные');
+    return card('Активные сеансы', el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb)), { icon: 'key', flush: true, right: all });
   }
 
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)
