@@ -3,8 +3,9 @@
 H=$(cd "$(dirname "$0")" && pwd)
 INST=${1:-$H/../install.sh}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-export DD=$T/dd SYSD=$T/sys BOOT_D=$T/boot WORK=$T/work NO_COLOR=1 AWG_LIB=1 BASHRC=$T/bashrc
-mkdir -p "$DD" "$SYSD"
+export DD=$T/dd SYSD=$T/sys BOOT_D=$T/boot WORK=$T/work NO_COLOR=1 AWG_LIB=1 BASHRC=$T/bashrc AWG_BINDIR=$T/bin
+mkdir -p "$DD" "$SYSD" "$AWG_BINDIR"
+echo "чужой файл" > "$AWG_BINDIR/awgs"
 export PATH="$H/stubs3:$PATH"
 pass=0; fail=0
 t(){ if eval "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
@@ -20,6 +21,8 @@ t "скрипты скопированы" '[ $(ls "$DD"/*.sh | wc -l) -ge 18 ] &
 t "синтаксис всех скриптов" 'for f in "$DD"/*.sh; do bash -n "$f" || exit 1; done'
 t "юниты скопированы, пути под DD" 'grep -q "^ExecStart=$DD/guard.sh run" "$DD/awg-guard.service" && grep -q "^ExecStart=$DD/failover.sh$" "$DD/awg-failover.service"'
 t "алиасы в BASHRC" 'grep -q "alias awgctl=" "$BASHRC" && grep -q "alias awg-selftest=" "$BASHRC"'
+t "awgctl и awg-selftest доступны без алиасов (ссылки)" '[ "$(readlink "$AWG_BINDIR/awgctl")" = "$DD/awgctl.sh" ] && [ "$(readlink "$AWG_BINDIR/awg-selftest")" = "$DD/selftest.sh" ]'
+t "чужой файл с тем же именем не тронут" '[ ! -L "$AWG_BINDIR/awgs" ] && grep -q "чужой" "$AWG_BINDIR/awgs"'
 t "install.sh скопирован в DD" '[ -x "$DD/install.sh" ]'
 
 # --- манифест и проверка

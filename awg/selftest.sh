@@ -22,7 +22,9 @@ I(){ echo "  ${B}INFO${N}  $1"; }
 sec(){ echo; echo "${B}== $1 ==${N}"; }
 age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 extip(){ local ip u; for u in https://api.ipify.org https://ifconfig.me; do ip=$(curl -4 -s -m 7 ${1:+--interface $1} "$u" 2>/dev/null); [[ $ip =~ ^[0-9.]+$ ]] && { echo "$ip"; return; }; done; }
-unit_present(){ [ -f "${SYSD:-/etc/systemd/system}/$1.service" ] || [ -f "$DD/$1.service" ]; }
+# служба включена: юнит стоит в systemd или она в списке включённых ($DD/.units — после обновления прошивки
+# юниты в /etc/systemd/system пропадают). Копии всех юнитов лежат в $DD всегда, по ним судить нельзя.
+unit_present(){ [ -f "${SYSD:-/etc/systemd/system}/$1.service" ] || grep -qx "$1" "$DD/.units" 2>/dev/null; }
 wan_if(){ [ -n "$WANIF" ] && { echo "$WANIF"; return; }; ip -4 route show table all 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | grep -v -E '^(awg|wg|lo|wgclt)' | head -n1; }
 WAN=$(wan_if)
 
@@ -99,15 +101,19 @@ for t in $TUNS; do
 done
 
 sec "Утечки"
-if [ "${LEAK_GUARD:-yes}" = yes ]; then
-  if [ -x "$DD/guard.sh" ]; then
+guard_on=0
+if [ "${LEAK_GUARD:-no}" = yes ]; then
+  if ! unit_present awg-guard; then W "LEAK_GUARD=yes, но служба awg-guard не включена — вторая линия защиты не работает" "$DD/install.sh → Компоненты → Маршрутизация и защита (или LEAK_GUARD=no, если защита не нужна)"
+  elif [ -x "$DD/guard.sh" ]; then
+    guard_on=1
     out=$("$DD/guard.sh" check 2>&1); echo "$out" | grep -q '^FAIL' && F "защита от утечек (awg-guard) не применена" "systemctl restart awg-guard; $DD/guard.sh check" || P "защита от утечек (awg-guard) применена"
     while IFS= read -r l; do W "${l#WARN   }"; done < <(echo "$out" | grep '^WARN')
   else W "защита от утечек не установлена" "$DD/install.sh → Компоненты → Маршрутизация и защита"; fi
-else I "защита от утечек выключена (LEAK_GUARD=no)"; fi
-if ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
-  [ "${LEAK_V6:-block}" = block ] && P "у роутера есть глобальный IPv6; помеченный PBR-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются" || W "у роутера есть глобальный IPv6, а защита IPv6 выключена (LEAK_V6=${LEAK_V6})" "LEAK_V6=block в awg.env, systemctl restart awg-guard"
-else I "глобального IPv6 у роутера нет — утечки по IPv6 исключены"; fi
+else I "защита от утечек (awg-guard) выключена: от утечек защищает blackhole в таблице PBR"; fi
+if ip -6 route show default 2>/dev/null | grep -q . && ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
+  if [ $guard_on = 1 ] && [ "${LEAK_V6:-block}" = block ]; then P "у роутера есть IPv6 в интернет; помеченный PBR-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются"
+  else W "у роутера есть IPv6 в интернет, а блокировки IPv6 для трафика под PBR нет: сайты с IPv6 могут открываться мимо туннеля" "включите awg-guard с LEAK_V6=block или отключите IPv6 в сетях с такими устройствами"; fi
+else I "IPv6 в интернет у роутера нет — утечки по IPv6 исключены"; fi
 # DNS: чей адрес видит внешний резолвер
 r=""
 if command -v dig >/dev/null; then r=$(dig +short +time=4 +tries=1 TXT o-o.myaddr.l.google.com 2>/dev/null | tr -d '"' | head -n1)

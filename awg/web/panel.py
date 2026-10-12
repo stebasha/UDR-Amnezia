@@ -22,6 +22,7 @@ import collections
 import getpass
 import hashlib
 import hmac
+import html
 import http.server
 import ipaddress
 import json
@@ -40,7 +41,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -1606,6 +1607,8 @@ def api_service(h, d):
             rc, out = unit_on(u)
         else:
             unit_off(u)
+            if u == "awg-guard":    # как в установщике: иначе следующее сохранение настроек включит защиту обратно
+                env_set({"LEAK_GUARD": "no"})
             rc, out = 0, ""
     h.act("service-" + a, u)
     return {"ok": rc == 0, "msg": "%s: %s %s" % (u, {"restart": "перезапущена", "enable": "включена", "disable": "выключена"}[a], out.strip()[:300])}
@@ -2848,6 +2851,34 @@ def api_update_run(h, d):
     return {"ok": True, "msg": "обновление запущено; панель перезапустится, страница переподключится сама"}
 
 
+REBOOT_DELAY = 5
+
+
+def api_system_reboot(h, d):
+    """Перезагрузка роутера целиком (UniFi тоже). Только с паролем текущего пользователя; не во время обновления."""
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act("reboot-denied")
+        raise ApiError(403, "текущий пароль неверен")
+    if update_running():
+        raise ValueError("идёт обновление набора: дождитесь его окончания, потом перезагружайте")
+    rb = shutil.which("reboot") or "/sbin/reboot"
+    rc, out = run(["systemd-run", "--unit=awg-reboot", "--collect", "--quiet", "--on-active=%d" % REBOOT_DELAY, rb], timeout=15)
+    if rc != 0:
+        raise ValueError("не удалось запланировать перезагрузку: " + out.strip()[:300])
+    h.act("reboot", "через %d с" % REBOOT_DELAY)
+    try:
+        with open(os.path.join(DD, "events.log"), "a", encoding="utf-8") as f:
+            f.write("%d|reboot|перезагрузка роутера из панели (%s)\n" % (now(), h.user))
+    except OSError:
+        pass
+    if os.path.exists(os.path.join(DD, "telegram.env")) and os.access(os.path.join(DD, "notify.sh"), os.X_OK):
+        run([os.path.join(DD, "notify.sh"), "--html", "🔁 <b>Перезагрузка роутера</b> · %s\nиз веб-панели, пользователь %s"
+             % (html.escape(socket.gethostname()), html.escape(h.user))], timeout=8)
+    return {"ok": True, "delay": REBOOT_DELAY,
+            "msg": "роутер перезагрузится через %d с; интернет и UniFi вернутся через 2–4 минуты" % REBOOT_DELAY}
+
+
 def api_update_log(h, q):
     t = read_file(UPD_LOG)
     return {"text": t[-60000:], "running": update_running(), "version": read_file(os.path.join(DD, "VERSION")).strip()}
@@ -2979,6 +3010,7 @@ ROUTES = {
     ("POST", "/api/totp/disable"): api_totp_disable,
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
+    ("POST", "/api/system/reboot"): api_system_reboot,
 }
 def get_log_file(h, rest, q):
     k = (q.get("kind") or [""])[0]

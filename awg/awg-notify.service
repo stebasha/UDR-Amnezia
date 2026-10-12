@@ -6,6 +6,8 @@ After=awg-failover.service network-online.target
 ExecStart=/data/awg/awg-notify.sh
 Restart=always
 RestartSec=5
+# остановка systemd (SIGTERM) — штатное завершение, а не сбой
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target

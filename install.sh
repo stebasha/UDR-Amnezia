@@ -22,14 +22,14 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.4.1
+INSTALLER_VERSION=1.4.2
 __AWG_NEW=1   # метка нового установщика (см. «площадки» ниже)
 # ветка и репозиторий, с которых ставились (install.sh --update и панель обновляются оттуда же)
 if [ -r "${DD:-/data/awg}/.channel" ]; then
   [ -n "${AWG_REPO:-}" ] || AWG_REPO=$(sed -n 's/^AWG_REPO=//p' "${DD:-/data/awg}/.channel" | head -n1)
   [ -n "${AWG_BRANCH:-}" ] || AWG_BRANCH=$(sed -n 's/^AWG_BRANCH=//p' "${DD:-/data/awg}/.channel" | head -n1)
 fi
-AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}          # GitHub: владелец/репозиторий со скриптами (awg/, server/)
+AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}      # GitHub: владелец/репозиторий со скриптами (awg/, server/)
 AWG_BRANCH=${AWG_BRANCH:-main}
 # Бинарники AmneziaWG собираются только из официальных исходников AmneziaVPN (теги можно поменять здесь):
 #   https://github.com/amnezia-vpn/amneziawg-go  и  https://github.com/amnezia-vpn/amneziawg-tools
@@ -341,7 +341,7 @@ ensure_aliases(){
   for a in "awgctl=$DD/awgctl.sh" "awg-selftest=$DD/selftest.sh"; do
     grep -q "alias ${a%%=*}=" $BASHRC 2>/dev/null || echo "alias ${a%%=*}='${a#*=}'" >> $BASHRC
   done
-  return 0
+  ensure_links
 }
 
 # ============================================================ бинарники ===
@@ -1105,6 +1105,18 @@ tg_api(){  # tg_api МЕТОД [аргументы curl] — запрос к Tel
 # Эти позиции попадают в строки «: : :» выше (команда «:» ничего не делает), а строка ниже завершает старый процесс.
 # В новом установщике переменная __AWG_NEW задана в начале, и эта строка ни на что не влияет.
 [ -n "${__AWG_NEW:-}" ] || { echo; echo "  Скрипты обновлены. Запустите установщик заново: /data/awg/install.sh"; exit 0; }
+
+# Команды и без интерактивной оболочки (ssh роутер awgctl status, plink, cron): алиасы из .bashrc там не читаются.
+# Ссылки в /usr/local/bin; чужой файл с тем же именем не трогаем. После обновления прошивки их вернёт awg-restore.sh.
+ensure_links(){
+  local a l bd=${AWG_BINDIR:-/usr/local/bin}
+  [ -d "$bd" ] && [ -w "$bd" ] || return 0
+  for a in "awgctl=$DD/awgctl.sh" "awg-selftest=$DD/selftest.sh" "awgs=$DD/status.sh"; do
+    l=$bd/${a%%=*}
+    { [ -L "$l" ] || ! [ -e "$l" ]; } && ln -sfn "${a#*=}" "$l" 2>/dev/null
+  done
+  return 0
+}
 
 step_telegram(){
   title "Уведомления в Telegram"

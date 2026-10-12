@@ -1143,7 +1143,8 @@ ensure_tunnels(){
 
 set_active(){
   local a=${TUNS[$1]} j
-  ip route replace default dev "$a" metric $METRIC table "$TABLE"
+<span class="c">  # интерфейса ещё нет (старт до up.sh): маршрут не ставим, остаётся blackhole; цикл поставит его, когда туннель поднимется</span>
+  ip link show "$a" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip route replace default dev "$a" metric $METRIC table "$TABLE"
   for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
   ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
 }
@@ -1182,6 +1183,8 @@ n=$(dedup); [ "${n:-0}" -gt 0 ] &amp;&amp; log "убрано дубликато�
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
 declare -A OKS QOK
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
+<span class="c"># сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)</span>
+ensure_tunnels
 <span class="c"># сторож начинает с основного канала: записи conntrack, заNATенные на другие туннели (например, на запасной до перезапуска), сбросить</span>
 set_active 0
 if command -v conntrack &gt;/dev/null; then
@@ -1305,7 +1308,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 363 строк">Показать целиком · 363 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 366 строк">Показать целиком · 366 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1390,10 +1393,17 @@ for a in awgctl awg-selftest awg-setup; do grep -q "alias $a=" $BASHRC 2&gt;/dev
   awg-selftest) echo "alias awg-selftest='/data/awg/selftest.sh'" &gt;&gt; $BASHRC;;
   awg-setup) echo "alias awg-setup='/data/awg/install.sh'" &gt;&gt; $BASHRC;;
 esac; done
+<span class="c"># команды без интерактивной оболочки (ssh роутер awgctl …): ссылки в /usr/local/bin, чужие файлы не трогаем</span>
+BD=${AWG_BINDIR:-/usr/local/bin}
+if [ -d "$BD" ] &amp;&amp; [ -w "$BD" ]; then
+  for a in awgctl=awgctl.sh awg-selftest=selftest.sh awgs=status.sh; do
+    l=$BD/${a%%=*}; { [ -L "$l" ] || ! [ -e "$l" ]; } &amp;&amp; ln -sfn "$D/${a#*=}" "$l" 2&gt;/dev/null
+  done
+fi
 [ -f "$D/motd.orig" ] &amp;&amp; [ -f "$D/awg-motd.service" ] &amp;&amp; : &gt; /etc/motd 2&gt;/dev/null
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 38 строк">Показать целиком · 38 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 45 строк">Показать целиком · 45 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 
@@ -2353,6 +2363,8 @@ After=awg-failover.service network-online.target
 ExecStart=/data/awg/awg-notify.sh
 Restart=always
 RestartSec=5
+<span class="c"># остановка systemd (SIGTERM) — штатное завершение, а не сбой</span>
+SuccessExitStatus=143
 
 [Install]
 WantedBy=multi-user.target
@@ -2384,12 +2396,13 @@ awgctl domain youtube.com<span class="c">     # куда пойдёт сайт, 
 awgctl report<span class="c">                 # обезличенный отчёт для issue (ключи и IP скрыты)</span>
 awgctl web<span class="c">                    # адрес веб-панели</span>
 awgctl drift<span class="c">                  # сверка правил и служб с эталоном (repair — вернуть правила набора)</span></code></pre></figure>
+  <p>С версии 1.4.2 <code>awgctl</code>, <code>awg-selftest</code> и <code>awgs</code> работают и без интерактивной оболочки — например, <code>ssh root@192.168.1.1 awgctl status</code> или из PuTTY/plink: установщик кладёт ссылки в <code>/usr/local/bin</code> (чужие файлы с теми же именами не трогает), после обновления прошивки их возвращает <code>awg-restore.sh</code>.</p>
 
   <h3>Веб-панель управления</h3>
   <p>Всё то же, что в меню установщика и в <code>awgctl</code>, но в браузере, в стиле UniFi Network. Включается одной командой <code>/data/awg/install.sh --web</code>; мастер установки и <code>--update</code> предлагают включить панель сами. Мастер спросит порт (по умолчанию <code>4443</code>; порты UniFi вроде 8443 не предлагаются), имя и пароль администратора, создаст сертификат и запустит службу <code>awg-web</code>. Открывайте <code>https://IP_РОУТЕРА:4443/</code> с компьютера или телефона в LAN; браузер один раз предупредит о самоподписанном сертификате.</p>
   <img src="docs/img/panel-overview.png" alt="Веб-панель: обзор" loading="lazy" width="1440" height="1608">
   <ul>
-    <li><b>Обзор</b>: состояние, активный канал, handshake, скорость, доля времени на основном канале, схема подключения, график трафика за 10 минут и за сутки, события, службы.</li>
+    <li><b>Обзор</b>: состояние, активный канал, handshake, скорость, доля времени на основном канале, схема подключения, график трафика за 10 минут и за сутки, события, службы. Кнопка «Перезагрузить» (она же на странице «Роутер») перезагружает роутер целиком: нужен пароль, перезагрузка начинается через 5 секунд, во время обновления недоступна; событие попадает в журнал и в Telegram, а страница сама откроется, когда роутер вернётся.</li>
     <li><b>Туннели</b>: карточки с полосой доступности за сутки (адрес сервера скрыт до нажатия на «глаз»), «Активировать», «Автовыбор», тест (HTTPS к трём адресам, DNS через туннель, внешний IP, MTU), перезапуск. «Настроить» открывает редактор: форма по разделам с проверкой значений, предпросмотр изменений построчно, правка текстом и замена файлом, история версий с возвратом, качество (RTT, потери, замер скорости), экспорт, порядок и удаление. Ключи в браузер не передаются; если туннель с новым конфигом не поднимется, вернётся прежний.</li>
     <li><b>Импорт</b>: перетащите <code>.conf</code>, вставьте текст или ссылку <code>vpn://</code> из AmneziaVPN («Поделиться» → ключ) — панель разберёт конфиг на роутере и предложит создать новый туннель или заменить конфиг существующего.</li>
     <li><b>Клиенты</b>: какие устройства LAN сейчас идут через туннели, с именами из DHCP и числом соединений.</li>
@@ -2550,6 +2563,10 @@ ip -4 rule show 2&gt;/dev/null | awk '/ proto 99/ {sub(":","",$1); print $1}' | 
 for p in 6100 6101; do for _ in 1 2 3 4 5 6 7 8; do ip rule del priority $p 2&gt;/dev/null || break; done; done
 
 <span class="c"># 6. панель, команды, баннер, автовосстановление</span>
+BD=${AWG_BINDIR:-/usr/local/bin}
+for a in awgctl awg-selftest awgs; do
+  [ -L "$BD/$a" ] &amp;&amp; case "$(readlink "$BD/$a")" in /data/awg/*|"$D"/*) rm -f "$BD/$a";; esac
+done
 if [ -f $BASHRC ]; then
   sed -i -e '/AWGS_SHOWN/d' -e '/alias awgs=/d' -e '/alias awg-audit=/d' -e '/alias awgctl=/d' -e '/alias awg-selftest=/d' -e '/alias awg-setup=/d' $BASHRC
 fi
@@ -2560,7 +2577,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 60 строк">Показать целиком · 60 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 64 строк">Показать целиком · 64 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 

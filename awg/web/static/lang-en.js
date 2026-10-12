@@ -630,7 +630,20 @@ window.AWG_EN = {
  "неверное имя, пароль или код": "wrong name, password or code",
  "текущий пароль неверен": "current password is wrong",
  "слишком много неудачных попыток: подождите 15 минут": "too many failed attempts: wait 15 minutes",
- "автоматический выбор канала включён": "automatic channel selection on"
+ "автоматический выбор канала включён": "automatic channel selection on",
+ "Перезагрузить": "Reboot",
+ "Введите текущий пароль": "Enter your current password",
+ "Перезагрузить роутер?": "Reboot the router?",
+ "Перезагрузится весь роутер: интернет, Wi-Fi, UniFi и туннели пропадут на 2–4 минуты. Звонки и загрузки оборвутся.": "The whole router will reboot: internet, Wi-Fi, UniFi and tunnels will be down for 2–4 minutes. Calls and downloads will drop.",
+ "Для подтверждения введите пароль. После загрузки сторож сам поднимет туннели и маршруты PBR.": "Enter your password to confirm. After boot the watchdog brings tunnels and PBR routes back by itself.",
+ "Роутер перезагружается. Страница откроется сама, когда панель вернётся.": "The router is rebooting. This page will reopen when the panel is back.",
+ "Перезагрузка": "Reboot",
+ "прошло ": "elapsed ",
+ "Панель не вернулась за 15 минут. Проверьте роутер в UniFi и откройте страницу заново.": "The panel did not come back within 15 minutes. Check the router in UniFi and reopen this page.",
+ "Роутер снова на связи — открываю панель…": "Router is back — opening the panel…",
+ "Роутер так и не ушёл в перезагрузку. Посмотрите «Журналы → Действия в панели» и журнал systemd.": "The router did not reboot. See Logs → Panel actions and the systemd journal.",
+ "Перезагрузить роутер целиком": "Reboot the whole router",
+ "идёт обновление набора: дождитесь его окончания, потом перезагружайте": "an update is running: wait for it to finish, then reboot"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -652,6 +665,8 @@ window.AWG_EN = {
     [/^Память занята на ([\d.]+)%.*$/, "Memory $1% used"],
     [/^Процессор загружен на (\d+)% последние минуты$/, "CPU at $1% for the last minutes"],
     [/^Таблица соединений заполнена на (\d+)%$/, "Connection table $1% full"],
+    [/^роутер перезагрузится через (\d+) с; интернет и UniFi вернутся через 2–4 минуты$/, "the router will reboot in $1 s; internet and UniFi will be back in 2–4 minutes"],
+    [/^не удалось запланировать перезагрузку: /, "could not schedule the reboot: "],
     [/^Роутер: /, "Router: "],
     [/^пароль копии .*$/, "backup password must be at least 8 characters"],
     [/^сохранено: (.*)/, "saved: $1"]

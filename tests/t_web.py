@@ -352,6 +352,30 @@ def main():
         s, j = a.get("/api/telegram")
         check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
 
+        # ---------- 1.4.2: перезагрузка роутера, выключение защиты из панели
+        s, j = a.post("/api/system/reboot", {"current": "nope"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("перезагрузка: без пароля нельзя", s == 403 and "awg-reboot" not in srl, j)
+        s, j = a.post("/api/system/reboot", {"current": "Test-pass-123"}, headers={"X-CSRF": "bad"})
+        check("перезагрузка: только с CSRF", s == 403, j)
+        open(os.path.join(LAB, "stub", "svc", "awg-update"), "w").close()
+        s, j = a.post("/api/system/reboot", {"current": "Test-pass-123"})
+        check("перезагрузка: не во время обновления", s == 400 and "обновлени" in j.get("error", ""), j)
+        os.remove(os.path.join(LAB, "stub", "svc", "awg-update"))
+        s, j = a.post("/api/system/reboot", {"current": "Test-pass-123"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("перезагрузка: с паролем — отложенный reboot через systemd-run", s == 200 and j.get("delay") == 5
+              and "--unit=awg-reboot" in srl and "--on-active=5" in srl and "reboot" in srl.split("awg-reboot")[-1], (j, srl[-300:]))
+        s, j = a.get("/api/events")
+        check("перезагрузка: событие в журнале", any(e.get("type") == "reboot" for e in (j.get("events") or [])), j)
+        audit_txt = open(os.path.join(dd, "web", "audit.log")).read() if os.path.exists(os.path.join(dd, "web", "audit.log")) else ""
+        check("перезагрузка: в журнале действий", "reboot-denied" in audit_txt and "reboot" in audit_txt.replace("reboot-denied", ""), audit_txt[-300:])
+        gs = os.path.join(dd, "guard.sh")
+        open(gs, "w").write("#!/bin/bash\necho \"guard.sh $*: ок\"\n")   # настоящий remove на стенде не нужен
+        s, j = a.post("/api/service", {"name": "awg-guard", "action": "disable"})
+        envt = open(os.path.join(dd, "awg.env")).read()
+        check("выключение awg-guard из панели ставит LEAK_GUARD=no", s == 200 and "LEAK_GUARD=no" in envt and "LEAK_GUARD=yes" not in envt, (j, envt))
+
         s, j = a.post("/api/logout", {})
         s, j = a.get("/api/overview")
         check("выход закрывает сессию", s == 401, s)

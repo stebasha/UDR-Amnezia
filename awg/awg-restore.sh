@@ -31,5 +31,12 @@ for a in awgctl awg-selftest awg-setup; do grep -q "alias $a=" $BASHRC 2>/dev/nu
   awg-selftest) echo "alias awg-selftest='/data/awg/selftest.sh'" >> $BASHRC;;
   awg-setup) echo "alias awg-setup='/data/awg/install.sh'" >> $BASHRC;;
 esac; done
+# команды без интерактивной оболочки (ssh роутер awgctl …): ссылки в /usr/local/bin, чужие файлы не трогаем
+BD=${AWG_BINDIR:-/usr/local/bin}
+if [ -d "$BD" ] && [ -w "$BD" ]; then
+  for a in awgctl=awgctl.sh awg-selftest=selftest.sh awgs=status.sh; do
+    l=$BD/${a%%=*}; { [ -L "$l" ] || ! [ -e "$l" ]; } && ln -sfn "$D/${a#*=}" "$l" 2>/dev/null
+  done
+fi
 [ -f "$D/motd.orig" ] && [ -f "$D/awg-motd.service" ] && : > /etc/motd 2>/dev/null
 echo "готово; проверьте: awgctl selftest"
