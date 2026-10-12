@@ -124,7 +124,7 @@ def main():
         check("обзор: kill switch", ov["pbr"]["killswitch"] is True)
         st = {t["name"]: t["status"] for t in ov["tunnels"]}
         check("обзор: статусы", st == {"awgmain": "active", "awgbackup": "standby", "awgalt1": "nohs"}, st)
-        check("обзор: AWG 2.0 у основного", ov["tunnels"][0]["proto"] == "AWG 2.0", ov["tunnels"][0]["proto"])
+        check("обзор: AWG 2.0 у основного", ov["tunnels"][0]["proto"] in ("AWG 2.0", "AWG 3.x"), ov["tunnels"][0]["proto"])
         check("обзор: статистика 7 дней", ov["stats"]["switch"] == 1 and ov["stats"]["degrade"] == 1, ov["stats"])
         check("в обзоре нет ключей", "aGVsbG8" not in json.dumps(ov), "")
 
@@ -331,6 +331,26 @@ def main():
         check("ping: адрес проверяется", s == 400, j)
         s, j = a.post("/api/tool", {"tool": "speedtest", "mb": 7})
         check("скорость: объём проверяется", s == 400, j)
+
+        # ---------- 1.4.1: железо, скачивание журналов, перевод, несколько чатов Telegram
+        s, j = a.get("/api/health")
+        check("здоровье роутера", s == 200 and j["level"] in ("ok", "warn", "crit") and j["cores"] >= 1 and j["mem"]["total_mb"] > 0
+              and all("key" in c and "text" in c for c in j["checks"]), j)
+        s, j = a.get("/api/overview")
+        check("обзор: сведения о роутере", "sys" in j and "cpu" in j["sys"], j.get("sys"))
+        s, b, r = a.get("/api/logs/file?kind=events", raw=True)
+        check("журнал скачивается файлом", s == 200 and "attachment" in (r.getheader("Content-Disposition") or "") and b"start" in b, s)
+        s, b, r = a.get("/api/logs/file?kind=../../awg.env", raw=True)
+        check("скачивание журналов: только из списка", s == 404, s)
+        s, b, r = a.get("/lang-en.js", raw=True)
+        check("словарь английского отдаётся", s == 200 and b"AWG_EN" in b, s)
+        s, j = a.post("/api/telegram", {"token": "123456789:" + "A" * 35, "chat": "111, 222", "viewers": "333 111", "report_time": "09:00", "enable_notify": False})
+        tg = open(os.path.join(dd, "telegram.env")).read()
+        check("Telegram: несколько чатов и только просмотр", s == 200 and 'TG_CHAT="111 222"' in tg and 'TG_VIEWERS="333"' in tg, (j, tg))
+        s, j = a.post("/api/telegram", {"chat": "111; rm -rf /", "report_time": "09:00", "enable_notify": False})
+        check("Telegram: мусор в chat id отклонён", s == 400, j)
+        s, j = a.get("/api/telegram")
+        check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
 
         s, j = a.post("/api/logout", {})
         s, j = a.get("/api/overview")

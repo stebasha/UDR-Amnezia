@@ -22,7 +22,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.4.0
+INSTALLER_VERSION=1.4.1
 __AWG_NEW=1   # метка нового установщика (см. «площадки» ниже)
 # ветка и репозиторий, с которых ставились (install.sh --update и панель обновляются оттуда же)
 if [ -r "${DD:-/data/awg}/.channel" ]; then
@@ -269,7 +269,7 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/web/panel.py awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/bot.py awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -1394,8 +1394,9 @@ step_domains(){
 step_bot(){
   title "Команды и оповещения в Telegram (awg-bot)"
   [ -s "$DD/telegram.env" ] || { warn "сначала настройте Telegram (Компоненты → Сервисы → Telegram): бот использует тот же токен и chat id."; return 1; }
-  say "  ${D}Бот отвечает только в вашем чате (chat id из telegram.env): /status /ip /switch /auto /events /stats /selftest /restart /help.${N}"
-  say "  ${D}Дополнительно шлёт: деградация канала, ручное переключение, мало места на /data, остановка служб, пропавшая подсеть VPN-сервера, недельный отчёт.${N}"
+  say "  ${D}Бот с кнопками: состояние, каналы и переключение (с подтверждением), события, статистика, проверки, роутер, клиенты, тишина уведомлений.${N}"
+  say "  ${D}Отвечает только своим чатам: TG_CHAT — администраторы, TG_VIEWERS — только просмотр (добавляются в веб-панели: Настройки → Telegram).${N}"
+  say "  ${D}Дополнительно шлёт: проблемы роутера (место, память, процессор, температура), остановка служб, пропавшая подсеть VPN-сервера, недельный отчёт.${N}"
   say "  ${D}Бот читает сообщения (getUpdates): токен не должен использоваться ещё какой-либо программой, иначе Telegram вернёт 409.${N}"
   yn "Включить бота?" Y || return 0
   unit_on awg-bot; sleep 3

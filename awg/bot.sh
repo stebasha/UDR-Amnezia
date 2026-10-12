@@ -6,6 +6,11 @@
 # пропавший интерфейс VPN-сервера, неверное время; раз в неделю (понедельник, после REPORT_TIME) сводка.
 #   bot.sh              демон (systemd)
 #   bot.sh --once-from ФАЙЛ   обработать готовый ответ getUpdates из файла (для тестов)
+# С 1.4.1 бот написан на Python (кнопки, несколько чатов): если python3 есть — запускаем его,
+# иначе работает прежний вариант ниже (только текстовые команды).
+if [ "${1:-}" != --once-from ] && [ "${AWG_BOT_LEGACY:-}" != 1 ] && command -v python3 >/dev/null 2>&1 && [ -f "${DD:-/data/awg}/bot.py" ]; then
+  exec python3 "${DD:-/data/awg}/bot.py" "$@"
+fi
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -85,12 +90,12 @@ handle(){  # handle "/команда аргументы"
 
 process(){  # process ФАЙЛ_С_JSON → обработать, сохранить offset
   local u cid txt kind last="" want
-  want=$(printf '%s' "$TG_CHAT" | tr -cd '0-9-')       # без пробелов и \r из telegram.env
+  want=" $(printf '%s %s' "$TG_CHAT" "${TG_VIEWERS:-}" | tr ',;' '  ' | tr -cd '0-9- ') "   # список чатов, без \r
   while IFS='|' read -r u cid txt kind; do
     [ -n "$u" ] || continue
     last=$u
     if [ -z "$cid" ]; then log "пропускаю обновление без чата (тип ${kind:-?})"; continue; fi
-    if [ "$cid" != "$want" ]; then log "игнорирую чужой чат $cid (ожидается $want)"; continue; fi
+    case "$want" in *" $cid "*) ;; *) log "игнорирую чужой чат $cid (разрешены:$want)"; continue;; esac
     case "$txt" in /*) log "команда: ${txt%% *}"; handle "$txt";; esac
   done < <(parse < "$1")
   [ -n "$last" ] && echo $((last+1)) > "$OFFF"

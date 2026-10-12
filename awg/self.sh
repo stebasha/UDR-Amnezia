@@ -365,8 +365,14 @@ check(){
   local rc=0 n wip ok d c fw ips code pid dir st mt up
   if [ "$(iptables -t mangle -S OUTPUT | grep '^-A OUTPUT' | head -n1)" = "-A OUTPUT -j $CH" ]; then echo "OK     цепочка $CH стоит первой в mangle OUTPUT"
   else echo "FAIL   переход в $CH не первый в mangle OUTPUT (служба awg-self запущена?)"; rc=1; fi
-  n=$(pgrep -fc 'self\.sh run' 2>/dev/null); n=${n:-0}
-  [ "$n" -gt 1 ] && { echo "WARN   запущено $n копий «self.sh run» — должна быть одна (служба awg-self): $(pgrep -f 'self\.sh run' | tr '\n' ' ')"; }
+  # считаем только «корневые» процессы: подоболочки (циклы, конвейеры) самой службы — не копии
+  local roots="" p pp
+  for p in $(pgrep -f 'self\.sh run' 2>/dev/null); do
+    pp=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)
+    tr '\0' ' ' < "/proc/$pp/cmdline" 2>/dev/null | grep -q 'self\.sh run' || roots="$roots $p"
+  done
+  n=$(echo $roots | wc -w)
+  [ "$n" -gt 1 ] && { echo "WARN   запущено $n копий «self.sh run» — должна быть одна (служба awg-self):$roots"; }
   local exp; exp=$(want | grep -c .); ui_on && exp=$((exp + 2)); [ "$DNS_ALL_TUNNEL" = yes ] && { c=$(grep -c . "$UPF" 2>/dev/null); exp=$((exp + ${c:-0})); }
   [ "$(iptables -t mangle -S $CH 2>/dev/null | grep -c -- ' -j MARK ')" -gt "$exp" ] && echo "WARN   в $CH есть лишние правила (выполните $DD/self.sh apply)"
   n=$(want | grep -c .)

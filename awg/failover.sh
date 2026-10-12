@@ -131,17 +131,35 @@ dns_probe(){
 }
 
 # Проба качества: заполняет QLOSS (потери %) и QRTT (RTT мс). Возвращает 0, если канал деградировал.
-declare -A ICMP_SEEN QLOSS QRTT
+# Сначала ICMP (5 пингов до 1.1.1.1). Если ICMP через канал не ходит (часто у VPN-провайдеров), меряем TCP:
+# время установки соединения :443 до трёх независимых узлов, «потеря» — неудавшееся соединение.
+declare -A ICMP_SEEN QLOSS QRTT QMETH
+probe_tcp(){
+  local i=$1 t c ok=0 n=0 sum=0
+  for t in $TARGETS; do
+    n=$((n+1))
+    c=$(curl -sk -o /dev/null --connect-timeout 2 -m 3 --interface "$i" -w '%{time_connect}' "https://$t/" 2>/dev/null)
+    case "$c" in ""|0|0.000000|0,000000) continue;; esac
+    ok=$((ok+1)); sum=$(( sum + $(awk -v x="$c" 'BEGIN{printf "%d", x*1000+0.5}') ))
+  done
+  [ $n -gt 0 ] || n=1
+  QLOSS[$i]=$(( (n-ok)*100/n )); QRTT[$i]=0; [ $ok -gt 0 ] && QRTT[$i]=$(( sum/ok )); QMETH[$i]=tcp
+}
 probe(){
   local i=$1 out l r
-  out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2>/dev/null)
-  l=$(echo "$out" | awk '/packet loss/{for(k=1;k<=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
-  r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
-  [ -z "$l" ] && l=100
-  QLOSS[$i]=$l; QRTT[$i]=${r:-0}
-  [ "$l" -lt 100 ] && ICMP_SEEN[$i]=1
-  [ "${ICMP_SEEN[$i]:-0}" = 1 ] || return 1                  # ICMP через этот канал ни разу не проходил: качество не оцениваем
-  [ "$l" -ge "$QUALITY_LOSS" ] && return 0
+  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] || [ "${QMETH[$i]:-icmp}" = icmp ]; then
+    out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2>/dev/null)
+    l=$(echo "$out" | awk '/packet loss/{for(k=1;k<=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
+    r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
+    [ -z "$l" ] && l=100
+    [ "$l" -lt 100 ] && ICMP_SEEN[$i]=1
+  fi
+  if [ "${ICMP_SEEN[$i]:-0}" = 1 ]; then
+    QLOSS[$i]=$l; QRTT[$i]=${r:-0}; QMETH[$i]=icmp
+  else
+    probe_tcp "$i"; l=${QLOSS[$i]}
+  fi
+  [ "${QLOSS[$i]}" -ge "$QUALITY_LOSS" ] && return 0
   [ "$QUALITY_RTT" -gt 0 ] && [ "${QRTT[$i]}" -ge "$QUALITY_RTT" ] && return 0
   return 1
 }
@@ -198,7 +216,7 @@ write_state(){
     echo "FORCED=$forced"
     echo "UPDATED=$(date +%s)"
     echo "TUNNELS=\"${TUNS[*]}\""
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
+    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
   } > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF"
 }
 

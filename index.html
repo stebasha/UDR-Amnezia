@@ -1077,17 +1077,35 @@ dns_probe(){
 }
 
 <span class="c"># Проба качества: заполняет QLOSS (потери %) и QRTT (RTT мс). Возвращает 0, если канал деградировал.</span>
-declare -A ICMP_SEEN QLOSS QRTT
+<span class="c"># Сначала ICMP (5 пингов до 1.1.1.1). Если ICMP через канал не ходит (часто у VPN-провайдеров), меряем TCP:</span>
+<span class="c"># время установки соединения :443 до трёх независимых узлов, «потеря» — неудавшееся соединение.</span>
+declare -A ICMP_SEEN QLOSS QRTT QMETH
+probe_tcp(){
+  local i=$1 t c ok=0 n=0 sum=0
+  for t in $TARGETS; do
+    n=$((n+1))
+    c=$(curl -sk -o /dev/null --connect-timeout 2 -m 3 --interface "$i" -w '%{time_connect}' "https://$t/" 2&gt;/dev/null)
+    case "$c" in ""|0|0.000000|0,000000) continue;; esac
+    ok=$((ok+1)); sum=$(( sum + $(awk -v x="$c" 'BEGIN{printf "%d", x*1000+0.5}') ))
+  done
+  [ $n -gt 0 ] || n=1
+  QLOSS[$i]=$(( (n-ok)*100/n )); QRTT[$i]=0; [ $ok -gt 0 ] &amp;&amp; QRTT[$i]=$(( sum/ok )); QMETH[$i]=tcp
+}
 probe(){
   local i=$1 out l r
-  out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2&gt;/dev/null)
-  l=$(echo "$out" | awk '/packet loss/{for(k=1;k&lt;=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
-  r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
-  [ -z "$l" ] &amp;&amp; l=100
-  QLOSS[$i]=$l; QRTT[$i]=${r:-0}
-  [ "$l" -lt 100 ] &amp;&amp; ICMP_SEEN[$i]=1
-  [ "${ICMP_SEEN[$i]:-0}" = 1 ] || return 1                  # ICMP через этот канал ни разу не проходил: качество не оцениваем
-  [ "$l" -ge "$QUALITY_LOSS" ] &amp;&amp; return 0
+  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] || [ "${QMETH[$i]:-icmp}" = icmp ]; then
+    out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2&gt;/dev/null)
+    l=$(echo "$out" | awk '/packet loss/{for(k=1;k&lt;=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
+    r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
+    [ -z "$l" ] &amp;&amp; l=100
+    [ "$l" -lt 100 ] &amp;&amp; ICMP_SEEN[$i]=1
+  fi
+  if [ "${ICMP_SEEN[$i]:-0}" = 1 ]; then
+    QLOSS[$i]=$l; QRTT[$i]=${r:-0}; QMETH[$i]=icmp
+  else
+    probe_tcp "$i"; l=${QLOSS[$i]}
+  fi
+  [ "${QLOSS[$i]}" -ge "$QUALITY_LOSS" ] &amp;&amp; return 0
   [ "$QUALITY_RTT" -gt 0 ] &amp;&amp; [ "${QRTT[$i]}" -ge "$QUALITY_RTT" ] &amp;&amp; return 0
   return 1
 }
@@ -1144,7 +1162,7 @@ write_state(){
     echo "FORCED=$forced"
     echo "UPDATED=$(date +%s)"
     echo "TUNNELS=\"${TUNS[*]}\""
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
+    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
   } &gt; "$STATEF.tmp" &amp;&amp; mv "$STATEF.tmp" "$STATEF"
 }
 
@@ -1287,7 +1305,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 345 строк">Показать целиком · 345 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 363 строк">Показать целиком · 363 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -2010,30 +2028,51 @@ log() {
   if [ "$(wc -l &lt; "$LOG")" -gt 300 ]; then tail -n 200 "$LOG" &gt; "$LOG.t" &amp;&amp; mv "$LOG.t" "$LOG"; fi
 }
 
-<span class="c"># $1=интерфейс или "", $2=таймаут, $3=текст. Токен идёт через stdin: в списке процессов его не видно.</span>
+<span class="c"># Получатели: TG_CHAT (администраторы) и TG_VIEWERS (только просмотр), через пробел или запятую.</span>
+<span class="c"># Чат может временно выключить уведомления кнопкой бота (файл bot.mute: «chat_id до_epoch»);</span>
+<span class="c"># сообщения о полной потере каналов (🛑) приходят всегда.</span>
+CHATS=()
+for c in $(printf '%s %s' "${TG_CHAT:-}" "${TG_VIEWERS:-}" | tr ',;' '  '); do
+  c=$(printf '%s' "$c" | tr -cd '0-9-'); [ -n "$c" ] || continue
+  case " ${CHATS[*]} " in *" $c "*) continue;; esac
+  if [ -r "$DD/bot.mute" ] &amp;&amp; [ "${TEXT#*🛑}" = "$TEXT" ] &amp;&amp; awk -v c="$c" -v n="$(date +%s)" '$1==c &amp;&amp; $2&gt;n {f=1} END{exit !f}' "$DD/bot.mute"; then
+    continue
+  fi
+  CHATS+=("$c")
+done
+[ ${#CHATS[@]} -gt 0 ] || exit 0
+<span class="c"># кнопки под уведомлением, если работает бот (нажатие открывает его меню)</span>
+MARKUP=""
+systemctl is-active --quiet awg-bot 2&gt;/dev/null &amp;&amp; MARKUP='{"inline_keyboard":[[{"text":"📊 Состояние","callback_data":"m:main"},{"text":"🔀 Каналы","callback_data":"m:tun"}]]}'
+
+<span class="c"># $1=интерфейс или "", $2=таймаут, $3=текст, $4=chat id. Токен идёт через stdin: в списке процессов его не видно.</span>
 send_via() {
   local args=(-4 -s -m "$2" -o /dev/null -w '%{http_code}')
   [ -n "$1" ] &amp;&amp; args+=(--interface "$1")
   [ "$MODE" = html ] &amp;&amp; args+=(--data-urlencode "parse_mode=HTML")
+  [ -n "$MARKUP" ] &amp;&amp; args+=(--data-urlencode "reply_markup=$MARKUP")
   printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TG_TOKEN" |
     curl "${args[@]}" -K - \
-      --data-urlencode "chat_id=${TG_CHAT}" \
+      --data-urlencode "chat_id=$4" \
       --data-urlencode "text=$3" \
       --data-urlencode "disable_web_page_preview=true" 2&gt;/dev/null
 }
 
-send_text() {
-  local i to code
+send_text() {  # канал выбирается по первому получателю, остальным — тем же путём
+  local i to code c ok=1
   for i in "${IFACES[@]}"; do
     if [ "$i" = "$MAIN" ]; then to=10; else to=15; fi
-    code=$(send_via "$i" "$to" "$1")
+    code=$(send_via "$i" "$to" "$1" "${CHATS[0]}")
     if [ "$code" = 200 ]; then
       [ "$i" != "$MAIN" ] &amp;&amp; log "доставлено через ${i:-WAN}"
-      return 0
+      for c in "${CHATS[@]:1}"; do
+        code=$(send_via "$i" "$to" "$1" "$c"); [ "$code" = 200 ] || log "чат $c: HTTP ${code:-000}"
+      done
+      ok=0; break
     fi
     log "не удалось через ${i:-WAN}: HTTP ${code:-000}"
   done
-  return 1
+  return $ok
 }
 
 spool_add() {
@@ -2067,7 +2106,7 @@ log "ВСЕ КАНАЛЫ НЕДОСТУПНЫ, сообщение отложен
 spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
 exit 1
 EOF
-chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 86 строк">Показать целиком · 86 строк</button></figure>
+chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 107 строк">Показать целиком · 107 строк</button></figure>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-notify.sh — уведомления в Telegram о работе failover.</span>
@@ -2348,7 +2387,7 @@ awgctl drift<span class="c">                  # сверка правил и с�
 
   <h3>Веб-панель управления</h3>
   <p>Всё то же, что в меню установщика и в <code>awgctl</code>, но в браузере, в стиле UniFi Network. Включается одной командой <code>/data/awg/install.sh --web</code>; мастер установки и <code>--update</code> предлагают включить панель сами. Мастер спросит порт (по умолчанию <code>4443</code>; порты UniFi вроде 8443 не предлагаются), имя и пароль администратора, создаст сертификат и запустит службу <code>awg-web</code>. Открывайте <code>https://IP_РОУТЕРА:4443/</code> с компьютера или телефона в LAN; браузер один раз предупредит о самоподписанном сертификате.</p>
-  <img src="docs/img/panel-overview.png" alt="Веб-панель: обзор" loading="lazy" width="1440" height="1611">
+  <img src="docs/img/panel-overview.png" alt="Веб-панель: обзор" loading="lazy" width="1440" height="1608">
   <ul>
     <li><b>Обзор</b>: состояние, активный канал, handshake, скорость, доля времени на основном канале, схема подключения, график трафика за 10 минут и за сутки, события, службы.</li>
     <li><b>Туннели</b>: карточки с полосой доступности за сутки (адрес сервера скрыт до нажатия на «глаз»), «Активировать», «Автовыбор», тест (HTTPS к трём адресам, DNS через туннель, внешний IP, MTU), перезапуск. «Настроить» открывает редактор: форма по разделам с проверкой значений, предпросмотр изменений построчно, правка текстом и замена файлом, история версий с возвратом, качество (RTT, потери, замер скорости), экспорт, порядок и удаление. Ключи в браузер не передаются; если туннель с новым конфигом не поднимется, вернётся прежний.</li>
@@ -2358,6 +2397,9 @@ awgctl drift<span class="c">                  # сверка правил и с�
     <li><b>Инструменты</b>: диагностика, самопроверка, проверка kill switch, тест переключения, проверка домена, скорость каналов, ping и трассировка через туннель, сверка правил с эталоном, подбор и применение MTU, аудит, очистка дубликатов, отчёт со скачиванием.</li>
     <li><b>Журналы</b> и <b>Настройки</b>: события со статистикой, журналы служб, действия в панели; Telegram, службы, пользователи и 2FA (QR-код для Google Authenticator, Aegis и т. п.), активные сеансы, порт и сертификат, резервные копии с проверкой, перенос настроек, обновление в один клик с автоматическим откатом.</li>
   </ul>
+  <h3>Роутер, язык, загрузка файлов</h3>
+  <p>Страница «Роутер» (или нажатие на плитку «Роутер» в обзоре): процессор, память, диск <code>/data</code>, температура, таблица соединений — кольцами и графиками за сутки; проверки железа с советами (мало места и прогноз заполнения, нехватка памяти, перегрев, переполнение таблицы соединений, OOM и ошибки ввода-вывода в журнале ядра); процессы, занимающие больше всего памяти. Замечания появляются и в обзоре, и в Telegram. Все плитки обзора нажимаются: состояние — список замечаний, канал — туннели, handshake — тест, скорость — график, основной канал — события.</p>
+  <p>Переключатель EN/RU — в верхней строке и на странице входа (запоминается в браузере). Вывод скриптов на роутере остаётся русским. Вывод любой команды можно скопировать или скачать файлом, журналы — кнопкой «Скачать», отчёт для помощи скачивается сам после сбора.</p>
   <h3>Сертификат UniFi для панели</h3>
   <p>Если у веб-интерфейса роутера настоящий сертификат (свой домен, автообновление в UniFi), панель возьмёт его: «Настройки → Панель и сертификат → Источник: сертификат UniFi». Панель перечитывает файлы раз в минуту, поэтому продление подхватывается без перезапуска. Имена из сертификата разрешены для входа: открывайте <code>https://ваше.имя:4443/</code>. Файлы UniFi панель только читает.</p>
   <h3>Сверка правил и обновление с откатом</h3>
@@ -2411,8 +2453,15 @@ systemctl restart awg-web<span class="c">      # после правки /data/a
 /data/awg/mtu.sh awgmain --apply<span class="c">   # записать MTU в конфиг (с копией) и перезапустить туннель</span></code></pre></figure>
   <p>Скрипт меряет максимальный пакет без фрагментации до сервера через WAN и вычитает накладные расходы AmneziaWG. Нужен ICMP на пути; если он закрыт, скрипт ничего не меняет.</p>
 
-  <h3>Telegram: бот и недельный отчёт</h3>
-  <p>Поверх уведомлений части 10. Бот отвечает только в вашем чате: <code>/status</code>, <code>/ip</code>, <code>/switch main|backup|имя</code>, <code>/auto</code>, <code>/events</code>, <code>/stats</code>, <code>/selftest</code>, <code>/restart</code>, <code>/help</code>. Дополнительно предупреждает о малом месте на <code>/data</code>, остановленных службах, пропавшей подсети VPN-сервера, неверном времени, и раз в неделю присылает сводку. Боту нужен отдельный токен: если тот же бот читает другая программа (например, 3x-ui), Telegram вернёт 409.</p>
+  <h3>Telegram: бот с кнопками и несколько получателей</h3>
+  <p>Поверх уведомлений части 10. С версии 1.4.1 бот работает меню кнопками: <code>/menu</code> показывает состояние (активный канал, handshake, качество, запасной канал, процессор, память, диск, замечания) и кнопки «Каналы», «События», «Статистика», «Проверки», «Роутер», «Клиенты», «Уведомления», «Службы». Сообщение обновляется на месте, переключение канала и перезапуск — с подтверждением. Под каждым уведомлением о переключении есть кнопки «Состояние» и «Каналы».</p>
+  <ul>
+    <li><b>Несколько человек.</b> В <code>telegram.env</code> (или в веб-панели: Настройки → Telegram) <code>TG_CHAT</code> — администраторы (всё), <code>TG_VIEWERS</code> — только просмотр: видят состояние и получают уведомления, но не переключают каналы и не трогают службы. Чат id — через пробел. Чужому чату бот отвечает только его id, чтобы его было легко добавить.</li>
+    <li><b>Тишина.</b> Кнопка «Уведомления»: выключить на 1 час, 8 часов или сутки для своего чата. Сообщение «🛑 Нет рабочего канала» приходит всегда.</li>
+    <li><b>Проверки из Telegram:</b> диагностика, самопроверка, внешние IP, проверка сайта, скорость каналов, отчёт файлом, сверка правил.</li>
+    <li><b>Тревоги:</b> место на <code>/data</code> и его прогноз, память, процессор, температура, таблица соединений, ошибки ядра, часы, остановленные службы, пропавшая подсеть VPN-сервера; раз в неделю — сводка.</li>
+  </ul>
+  <p>Бот написан на Python (он есть на роутере); без Python работает прежний вариант с текстовыми командами. Боту нужен отдельный токен: если тот же бот читает другая программа (например, 3x-ui), Telegram вернёт 409.</p>
 
   <h3>Метрики Prometheus</h3>
   <p>Служба <code>awg-metrics</code> каждые 15 с пишет <code>/data/awg/metrics/metrics</code>: handshake и трафик туннелей, активный канал, потери и RTT, события, состояние служб. С <code>METRICS_PORT</code> отдаёт его по HTTP только на LAN-адресе роутера.</p>

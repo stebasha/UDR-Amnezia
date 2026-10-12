@@ -38,7 +38,7 @@ s(){ echo; echo "===== $* ====="; }
   s "Версии"
   echo "модель: $(ubnt-device-info model 2>/dev/null || echo ?)"
   echo "UniFi OS: $(ubnt-device-info firmware 2>/dev/null || echo ?)"
-  echo "Network: $(dpkg-query -W -f='${Version}' unifi 2>/dev/null || echo ?)"
+  echo "Network: $(for pk in unifi unifi-native unifi-network; do v=$(dpkg-query -W -f='${Version}' "$pk" 2>/dev/null) && [ -n "$v" ] && { echo "$v ($pk)"; break; }; done)"
   echo "ядро: $(uname -r) $(uname -m)"
   echo "набор: $(cat "$DD/VERSION" 2>/dev/null || echo ?), установщик: $(sed -n 's/^INSTALLER_VERSION=//p' "$DD/install.sh" 2>/dev/null | head -n1)"
   echo "awg: $("$DD/awg" --version 2>&1 | head -1)"

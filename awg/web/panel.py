@@ -40,7 +40,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -188,7 +188,9 @@ def conf_get(text, key):
 
 def proto_of(text):
     keys = {line.split("=", 1)[0].strip().lower() for line in text.splitlines() if "=" in line}
-    if keys & {"s3", "s4", "i1", "i2", "headerprotectionkey"}:
+    if keys & {"headerprotectionkey", "contentpaddingaddition", "rekeyaftertime", "randomtrailers", "disablecookies"}:
+        return "AWG 3.x"
+    if keys & {"s3", "s4", "i1", "i2"}:
         return "AWG 2.0"
     if keys & {"jc", "s1", "h1"}:
         return "AWG 1.x"
@@ -611,6 +613,213 @@ class Throttle:
 THR = Throttle()
 
 
+# ======================================================================= здоровье роутера
+PROC = os.environ.get("AWG_PROC", "/proc")
+SYSFS = os.environ.get("AWG_SYSFS", "/sys")
+
+
+def cpu_times():
+    try:
+        p = read_file(os.path.join(PROC, "stat")).splitlines()[0].split()[1:]
+        v = [int(x) for x in p[:8]]
+        idle = v[3] + v[4]
+        return sum(v), idle
+    except (IndexError, ValueError):
+        return 0, 0
+
+
+def cpu_pct_now(delay=0.4):
+    a = cpu_times()
+    time.sleep(delay)
+    b = cpu_times()
+    tot = b[0] - a[0]
+    return round(100.0 * (tot - (b[1] - a[1])) / tot, 1) if tot > 0 else 0.0
+
+
+def temps():
+    out = []
+    base = os.path.join(SYSFS, "class", "thermal")
+    try:
+        for z in sorted(os.listdir(base)):
+            if not z.startswith("thermal_zone"):
+                continue
+            v = read_file(os.path.join(base, z, "temp")).strip()
+            if v.lstrip("-").isdigit():
+                c = int(v) / 1000.0 if abs(int(v)) > 1000 else float(v)
+                if -40 < c < 150:
+                    out.append({"name": read_file(os.path.join(base, z, "type")).strip() or z, "c": round(c, 1)})
+    except OSError:
+        pass
+    hb = os.path.join(SYSFS, "class", "hwmon")
+    try:
+        for hw in sorted(os.listdir(hb)):
+            nm = read_file(os.path.join(hb, hw, "name")).strip() or hw
+            for f in sorted(os.listdir(os.path.join(hb, hw))):
+                if f.startswith("temp") and f.endswith("_input"):
+                    v = read_file(os.path.join(hb, hw, f)).strip()
+                    if v.lstrip("-").isdigit() and -40000 < int(v) < 150000:
+                        lab = read_file(os.path.join(hb, hw, f.replace("_input", "_label"))).strip()
+                        out.append({"name": "%s %s" % (nm, lab or f[:-6]), "c": round(int(v) / 1000.0, 1)})
+    except OSError:
+        pass
+    return out
+
+
+def fs_usage(path):
+    try:
+        s = os.statvfs(path)
+        tot = s.f_blocks * s.f_frsize
+        free = s.f_bavail * s.f_frsize
+        if tot <= 0:
+            return None
+        return {"path": path, "total_mb": tot // 1048576, "free_mb": free // 1048576, "used_pct": round(100.0 * (tot - free) / tot, 1)}
+    except OSError:
+        return None
+
+
+def top_procs(n=8):
+    out = []
+    try:
+        pids = [p for p in os.listdir(PROC) if p.isdigit()]
+    except OSError:
+        return [], 0
+    for p in pids:
+        st = read_file(os.path.join(PROC, p, "status"))
+        m = re.search(r"^VmRSS:\s+(\d+)", st, re.M)
+        nm = re.search(r"^Name:\s+(.+)$", st, re.M)
+        if m and nm:
+            cmd = read_file(os.path.join(PROC, p, "cmdline")).replace("\0", " ").strip()
+            out.append({"pid": int(p), "name": nm.group(1).strip(), "rss_mb": round(int(m.group(1)) / 1024.0, 1), "cmd": cmd[:120]})
+    out.sort(key=lambda x: -x["rss_mb"])
+    return out[:n], len(pids)
+
+
+def read_int(p, default=-1):
+    v = read_file(p).strip()
+    return int(v) if v.isdigit() else default
+
+
+def kernel_events():
+    """OOM и ошибки ввода-вывода за сутки из журнала ядра (если доступен)."""
+    rc, out = run(["journalctl", "-k", "--since", "-24h", "-q", "--no-pager", "-o", "cat"], timeout=10)
+    if rc != 0:
+        return {"oom": -1, "io": -1, "lines": []}
+    oom = [l for l in out.splitlines() if re.search(r"Out of memory|oom-kill|Killed process", l)]
+    io = [l for l in out.splitlines() if re.search(r"I/O error|EXT4-fs error|UBIFS error|squashfs error|Buffer I/O", l)]
+    return {"oom": len(oom), "io": len(io), "lines": (oom + io)[-6:]}
+
+
+def system_health(cpu=None, hist=None):
+    """Показатели железа и проверки с понятным текстом: что не так и что делать."""
+    mi = {}
+    for line in read_file(os.path.join(PROC, "meminfo")).splitlines():
+        p = line.split()
+        if len(p) >= 2 and p[1].isdigit():
+            mi[p[0].rstrip(":")] = int(p[1])
+    tot, av = mi.get("MemTotal", 0), mi.get("MemAvailable", 0)
+    mem = {"total_mb": tot // 1024, "avail_mb": av // 1024, "used_pct": round(100.0 * (tot - av) / tot, 1) if tot else 0,
+           "swap_total_mb": mi.get("SwapTotal", 0) // 1024, "swap_used_mb": (mi.get("SwapTotal", 0) - mi.get("SwapFree", 0)) // 1024}
+    load = [float(x) for x in read_file(os.path.join(PROC, "loadavg"), "0 0 0").split()[:3]]
+    cores = len(re.findall(r"^processor\s*:", read_file(os.path.join(PROC, "cpuinfo")), re.M)) or (os.cpu_count() or 1)
+    if cpu is None:
+        cpu = cpu_pct_now()
+    try:
+        up = int(float(read_file(os.path.join(PROC, "uptime"), "0").split()[0]))
+    except (ValueError, IndexError):
+        up = 0
+    ts = temps()
+    tmax = max([t["c"] for t in ts] or [0])
+    ct_n = read_int(os.path.join(PROC, "sys/net/netfilter/nf_conntrack_count"))
+    ct_m = read_int(os.path.join(PROC, "sys/net/netfilter/nf_conntrack_max"))
+    fds = read_file(os.path.join(PROC, "sys/fs/file-nr")).split()
+    disks = [d for d in (fs_usage(DD), fs_usage("/"), fs_usage("/tmp"), fs_usage("/var/log")) if d]
+    seen, dl = set(), []
+    for d in disks:
+        k = (d["total_mb"], d["free_mb"])
+        if k not in seen:
+            seen.add(k)
+            dl.append(d)
+    procs, nproc = top_procs()
+    ke = kernel_events()
+    checks = []
+
+    def ck(key, level, text, advice=""):
+        checks.append({"key": key, "level": level, "text": text, "advice": advice})
+    # диск
+    dd = fs_usage(DD)
+    if dd:
+        if dd["free_mb"] < 200:
+            ck("disk", "crit", "На /data осталось %d МБ" % dd["free_mb"], "удалите старые копии: Настройки → Резервные копии; журналы: journalctl --vacuum-size=50M")
+        elif dd["free_mb"] < 500 or dd["used_pct"] > 90:
+            ck("disk", "warn", "На /data мало места: %d МБ (%s%% занято)" % (dd["free_mb"], dd["used_pct"]), "проверьте старые резервные копии и /data/unifi (бэкапы UniFi)")
+        else:
+            ck("disk", "ok", "/data: свободно %d МБ" % dd["free_mb"])
+    for d in dl:
+        if d["path"] in ("/tmp", "/var/log") and d["used_pct"] > 85:
+            ck("fs" + d["path"], "warn", "%s заполнен на %s%% (это оперативная память)" % (d["path"], d["used_pct"]), "найти крупные файлы: du -sh %s/* | sort -h | tail" % d["path"])
+        if d["path"] == "/" and d["used_pct"] > 95:
+            ck("fs" + d["path"], "warn", "Системный раздел заполнен на %s%%" % d["used_pct"], "это раздел UniFi OS: обычно освобождается обновлением прошивки")
+    # прогноз заполнения /data
+    pts = [p for p in (hist or []) if p.get("data_free")]
+    if dd and len(pts) >= 120:
+        a, b = pts[0], pts[-1]
+        dt = (b["t"] - a["t"]) / 86400.0
+        drop = a["data_free"] - b["data_free"]
+        if dt > 0.05 and drop > 5:
+            days = dd["free_mb"] / (drop / dt)
+            if days < 14:
+                ck("trend", "warn", "/data заполняется: ~%d МБ в сутки, места хватит примерно на %d дн." % (drop / dt, days), "посмотрите, что растёт: du -sh /data/* | sort -h | tail")
+    # память
+    if mem["used_pct"] > 95:
+        ck("mem", "crit", "Память занята на %s%% (свободно %d МБ)" % (mem["used_pct"], mem["avail_mb"]), "возможны падения служб: перезагрузите роутер в удобное время, проверьте процессы ниже")
+    elif mem["used_pct"] > 88:
+        ck("mem", "warn", "Память занята на %s%%" % mem["used_pct"], "следите за ростом; крупные процессы — в таблице ниже")
+    else:
+        ck("mem", "ok", "Память: занято %s%%, свободно %d МБ" % (mem["used_pct"], mem["avail_mb"]))
+    # процессор
+    recent = [p["cpu"] for p in (hist or [])[-5:] if p.get("cpu") is not None]
+    avg5 = sum(recent) / len(recent) if recent else cpu
+    if avg5 > 90:
+        ck("cpu", "warn", "Процессор загружен на %d%% последние минуты" % avg5, "посмотрите нагрузку: top -o %CPU (IDS/IPS и DPI UniFi сильно грузят процессор)")
+    elif load[0] > cores * 2:
+        ck("cpu", "warn", "Высокая средняя нагрузка: %.2f при %d ядрах" % (load[0], cores), "кратковременно — нормально; долго — смотрите top")
+    else:
+        ck("cpu", "ok", "Процессор: %d%%, нагрузка %.2f (ядер: %d)" % (cpu, load[0], cores))
+    # температура
+    if ts:
+        if tmax >= 95:
+            ck("temp", "crit", "Температура %d°C" % tmax, "проверьте вентиляцию: роутер может перегреться и перезагрузиться")
+        elif tmax >= 85:
+            ck("temp", "warn", "Температура высокая: %d°C" % tmax, "уберите от источников тепла, обеспечьте приток воздуха")
+        else:
+            ck("temp", "ok", "Температура: %d°C" % tmax)
+    # conntrack
+    if ct_n >= 0 and ct_m > 0:
+        pct = 100.0 * ct_n / ct_m
+        if pct > 95:
+            ck("ct", "crit", "Таблица соединений почти полна: %d из %d" % (ct_n, ct_m), "новые соединения будут отбрасываться: ищите устройство с тысячами соединений (страница «Клиенты»)")
+        elif pct > 80:
+            ck("ct", "warn", "Таблица соединений заполнена на %d%%" % pct, "проверьте устройства с большим числом соединений (торренты, сканеры)")
+        else:
+            ck("ct", "ok", "Соединений: %d из %d" % (ct_n, ct_m))
+    # ядро
+    if ke["oom"] > 0:
+        ck("oom", "warn", "За сутки ядро %d раз завершало процессы из-за нехватки памяти" % ke["oom"], "журнал: journalctl -k | grep -i oom")
+    if ke["io"] > 0:
+        ck("io", "warn", "За сутки ошибок ввода-вывода: %d" % ke["io"], "возможен износ флеш-памяти: сделайте резервную копию")
+    if up < 900:
+        ck("reboot", "info", "Роутер перезагружался %d мин назад" % (up // 60))
+    if time.localtime().tm_year < 2025:
+        ck("clock", "crit", "Часы роутера неверны (%s)" % time.strftime("%F"), "handshake туннелей не пройдёт: проверьте NTP в UniFi")
+    if len(fds) >= 3 and fds[0].isdigit() and fds[2].isdigit() and int(fds[2]) and int(fds[0]) > 0.8 * int(fds[2]):
+        ck("fd", "warn", "Открытых файлов %s из %s" % (fds[0], fds[2]), "")
+    level = "crit" if any(c["level"] == "crit" for c in checks) else "warn" if any(c["level"] == "warn" for c in checks) else "ok"
+    return {"level": level, "checks": checks, "cpu": cpu, "cores": cores, "load": load, "mem": mem, "uptime": up,
+            "temps": ts, "temp_max": tmax, "conntrack": {"count": ct_n, "max": ct_m}, "disks": dl,
+            "procs": procs, "nproc": nproc, "kernel": ke, "model": read_file("/proc/device-tree/model").strip("\0\n ") or socket.gethostname(),
+            "kernel_ver": os.uname().release, "time": now()}
+
+
 # ======================================================================= сбор данных
 class Sampler(threading.Thread):
     """Каждые 2 с: скорость по туннелям (10 минут в памяти); раз в минуту — точка истории (сутки)."""
@@ -623,6 +832,9 @@ class Sampler(threading.Thread):
         self.acc = collections.defaultdict(lambda: [0, 0, 0])
         self.lock = threading.Lock()
         self.last_save = now()
+        self.cpu_prev = cpu_times()
+        self.cpu = 0.0
+        self.cpu_acc = [0.0, 0]
         try:
             h = json.loads(read_file(HIST_F, "{}"))
             if isinstance(h.get("points"), list):
@@ -647,6 +859,13 @@ class Sampler(threading.Thread):
 
     def tick(self):
         t0 = time.time()
+        c = cpu_times()
+        tot = c[0] - self.cpu_prev[0]
+        if tot > 0:
+            self.cpu = round(100.0 * (tot - (c[1] - self.cpu_prev[1])) / tot, 1)
+            self.cpu_acc[0] += self.cpu
+            self.cpu_acc[1] += 1
+        self.cpu_prev = c
         for t in tunnels():
             rx, tx = sysnet(t, "rx_bytes"), sysnet(t, "tx_bytes")
             p = self.prev.get(t)
@@ -670,9 +889,20 @@ class Sampler(threading.Thread):
                 a = self.acc.pop(t, [0, 0, 0])
                 n = a[2] or 1
                 pt["tun"][t] = {"rx": int(a[0] / n), "tx": int(a[1] / n), "hs": hs_age(t),
-                                "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, "")}
+                                "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, ""), "qm": st.get("QMETH_" + t, "")}
             self.hist["points"].append(pt)
             self.hist["points"] = self.hist["points"][-1440:]
+            n = self.cpu_acc[1] or 1
+            mi = parse_meminfo()
+            ct_n = read_int(os.path.join(PROC, "sys/net/netfilter/nf_conntrack_count"))
+            ct_m = read_int(os.path.join(PROC, "sys/net/netfilter/nf_conntrack_max"))
+            ts = temps()
+            sp = {"t": now(), "cpu": round(self.cpu_acc[0] / n, 1), "mem": round(100.0 * mi["used_mb"] / mi["total_mb"], 1) if mi["total_mb"] else 0,
+                  "temp": max([x["c"] for x in ts] or [0]) or None, "ct": round(100.0 * ct_n / ct_m, 1) if ct_m > 0 and ct_n >= 0 else None,
+                  "load": float((read_file(os.path.join(PROC, "loadavg"), "0").split() or ["0"])[0]), "data_free": disk_free_mb()}
+            self.cpu_acc = [0.0, 0]
+            self.hist.setdefault("sys", []).append(sp)
+            self.hist["sys"] = self.hist["sys"][-1440:]
 
     def save(self):
         self.last_save = now()
@@ -689,6 +919,10 @@ class Sampler(threading.Thread):
     def history(self):
         with self.lock:
             return list(self.hist["points"])
+
+    def sys_history(self):
+        with self.lock:
+            return list(self.hist.get("sys", []))
 
 
 SAMPLER = Sampler()
@@ -744,7 +978,7 @@ def tunnel_info(t, e, st, active):
         "mtu": read_file("%s/%s/mtu" % (SYSNET, t)).strip() or conf_get(text, "MTU"),
         "proto": proto_of(text), "conf": os.path.basename(cp), "conf_mode": oct(os.stat(cp).st_mode & 0o777)[2:] if os.path.exists(cp) else "",
         "rx": sysnet(t, "rx_bytes"), "tx": sysnet(t, "tx_bytes"),
-        "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, ""), "dns": st.get("DNS_" + t, ""),
+        "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, ""), "dns": st.get("DNS_" + t, ""), "qm": st.get("QMETH_" + t, ""),
         "active": t == active, "forced": st.get("FORCED", "") == t,
     }
 
@@ -788,6 +1022,10 @@ def overview():
     newest = max([os.stat(os.path.join(bkd, f)).st_mtime for f in bk] or [0])
     if now() - newest > 30 * 86400:
         alerts.append(["info", "Резервной копии нет или ей больше 30 дней (Настройки → Резервные копии)"])
+    hl = health_cached()
+    for c in hl["checks"]:
+        if c["level"] in ("warn", "crit"):
+            alerts.append([c["level"], "Роутер: " + c["text"] + (" — " + c["advice"] if c["advice"] else "")])
     level = "crit" if any(a[0] == "crit" for a in alerts) else ("warn" if any(a[0] == "warn" for a in alerts) else "ok")
     try:
         up = int(float(read_file("/proc/uptime", "0").split()[0]))
@@ -807,6 +1045,8 @@ def overview():
                      "domains": bool(e.get("TUN_DOMAINS", "").strip()), "subnets": bool(e.get("EXTRA_SUBNETS", "").strip()),
                      "quality": e.get("QUALITY", "yes") == "yes"},
         "data_free_mb": disk_free_mb(),
+        "sys": {"cpu": SAMPLER.cpu, "cores": hl["cores"], "temp": hl["temp_max"], "mem_pct": hl["mem"]["used_pct"], "level": hl["level"],
+                "conntrack": hl["conntrack"]},
     }
 
 
@@ -955,7 +1195,7 @@ def lan_ip():
 
 STATIC_FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/index.html": ("index.html", "text/html; charset=utf-8"),
                 "/app.js": ("app.js", "application/javascript; charset=utf-8"), "/app.css": ("app.css", "text/css; charset=utf-8"),
-                "/favicon.svg": ("favicon.svg", "image/svg+xml")}
+                "/favicon.svg": ("favicon.svg", "image/svg+xml"), "/lang-en.js": ("lang-en.js", "application/javascript; charset=utf-8")}
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
@@ -1156,6 +1396,24 @@ def api_logout(h, d):
     SESS.drop(tok=h.cookie("awgsid"))
     h.act("logout")
     return {"ok": True}
+
+
+_HL = {"t": 0.0, "v": None}
+_HL_LOCK = threading.Lock()
+
+
+def health_cached(maxage=30):
+    with _HL_LOCK:
+        if _HL["v"] is None or time.time() - _HL["t"] > maxage:
+            _HL["v"] = system_health(cpu=SAMPLER.cpu if SAMPLER.is_alive() else None, hist=SAMPLER.sys_history())
+            _HL["t"] = time.time()
+        return _HL["v"]
+
+
+def api_health(h, q):
+    r = dict(health_cached(5))
+    r["history"] = SAMPLER.sys_history()
+    return r
 
 
 _OV = {"t": 0.0, "v": None}
@@ -1434,7 +1692,9 @@ def api_logs(h, q):
 def api_tg_get(h, q):
     t = parse_env_text(read_file(os.path.join(DD, "telegram.env")))
     tok = t.get("TG_TOKEN", "")
-    return {"configured": bool(tok), "token": (tok.split(":")[0] + ":…" + tok[-4:]) if tok else "", "chat": t.get("TG_CHAT", ""),
+    return {"configured": bool(tok), "token": (tok.split(":")[0] + ":…" + tok[-4:]) if tok else "",
+            "chat": " ".join(re.findall(r"-?\d+", t.get("TG_CHAT", ""))), "viewers": " ".join(re.findall(r"-?\d+", t.get("TG_VIEWERS", ""))),
+            "muted": [l.split()[0] for l in read_file(os.path.join(DD, "bot.mute")).splitlines() if len(l.split()) == 2 and l.split()[1].isdigit() and int(l.split()[1]) > now()],
             "report_time": t.get("REPORT_TIME", "0900"), "no_wan": t.get("TG_NO_WAN", "0") == "1",
             "notify": svc_active("awg-notify"), "bot": svc_active("awg-bot")}
 
@@ -1449,13 +1709,27 @@ def api_tg_set(h, d):
         t["TG_TOKEN"] = tok
     if not t.get("TG_TOKEN"):
         raise ValueError("нужен токен бота")
-    chat = str(d.get("chat", t.get("TG_CHAT", ""))).strip()
-    if not re.match(r"^-?\d{1,20}$", chat):
-        raise ValueError("chat id — число")
+    def chats(v, what, need):
+        lst = []
+        for x in re.split(r"[\s,;]+", str(v or "").strip()):
+            if not x:
+                continue
+            if not re.match(r"^-?\d{1,20}$", x):
+                raise ValueError("%s: «%s» — не chat id (число, у групп — с минусом)" % (what, x))
+            if x not in lst:
+                lst.append(x)
+        if need and not lst:
+            raise ValueError("нужен хотя бы один chat id администратора")
+        if len(lst) > 10:
+            raise ValueError("%s: не больше 10" % what)
+        return lst
+    admins = chats(d.get("chat", t.get("TG_CHAT", "")), "администраторы", True)
+    viewers = [x for x in chats(d.get("viewers", t.get("TG_VIEWERS", "")), "только просмотр", False) if x not in admins]
+    chat = " ".join(admins)
     rt = str(d.get("report_time", t.get("REPORT_TIME", "0900"))).strip().replace(":", "")
     if not re.match(r"^([01]\d|2[0-3])[0-5]\d$", rt):
         raise ValueError("время отчёта: ЧЧММ, например 0900")
-    lines = ["TG_TOKEN=%s" % t["TG_TOKEN"], "TG_CHAT=%s" % chat, "REPORT_TIME=%s" % rt]
+    lines = ["TG_TOKEN=%s" % t["TG_TOKEN"], 'TG_CHAT="%s"' % chat, 'TG_VIEWERS="%s"' % " ".join(viewers), "REPORT_TIME=%s" % rt]
     if d.get("no_wan"):
         lines.append("TG_NO_WAN=1")
     with LOCK:
@@ -1467,7 +1741,10 @@ def api_tg_set(h, d):
         if d.get("enable_bot"):
             rc, out = unit_on("awg-bot")
             msgs.append("awg-bot: " + ("работает" if rc == 0 else out.strip()[:200]))
-    h.act("telegram-set", {"chat": chat, "report_time": rt})
+        elif svc_installed("awg-bot"):
+            unit_off("awg-bot")
+            msgs.append("awg-bot: выключен")
+    h.act("telegram-set", {"chat": chat, "viewers": viewers, "report_time": rt})
     return {"ok": True, "msg": "сохранено\n" + "\n".join(msgs)}
 
 
@@ -1695,6 +1972,16 @@ def _itag(v):
         raise ValueError("последовательность тегов вида <b 0x…><r 16>")
 
 
+def _onoff(v):
+    if v.lower() not in ("on", "off", "true", "false", "1", "0", "yes", "no"):
+        raise ValueError("on или off")
+
+
+def _b64(v):
+    if not re.match(r"^[A-Za-z0-9+/]{16,128}={0,2}$", v):
+        raise ValueError("ключ в base64")
+
+
 def _mtu(v):
     _ints(1000, 1500)(v)
 
@@ -1721,6 +2008,15 @@ CONF_FIELDS = [
     ("Interface", "I3", _itag, False, ""),
     ("Interface", "I4", _itag, False, ""),
     ("Interface", "I5", _itag, False, ""),
+    ("Interface", "HeaderProtectionKey", _b64, False, "AWG 3.x: ключ защиты заголовков"),
+    ("Interface", "ContentPaddingAddition", _hrange, False, "AWG 3.x: добавка к данным, «от-до»"),
+    ("Interface", "RekeyAfterTime", _hrange, False, "AWG 3.x: смена ключей через, с"),
+    ("Interface", "RekeyTimeout", _hrange, False, "AWG 3.x: таймаут смены ключей, с"),
+    ("Interface", "RejectAfterTime", _hrange, False, "AWG 3.x: отклонять старый ключ через, с"),
+    ("Interface", "KeepaliveTimeout", _hrange, False, "AWG 3.x: таймаут keepalive, с"),
+    ("Interface", "MaxHandshakeAttempts", _hrange, False, "AWG 3.x: попыток handshake"),
+    ("Interface", "RandomTrailers", _onoff, False, "AWG 3.x: случайные хвосты пакетов"),
+    ("Interface", "DisableCookies", _onoff, False, "AWG 3.x: без cookie-ответов"),
     ("Peer", "PublicKey", _key, True, "открытый ключ сервера"),
     ("Peer", "PresharedKey", _key, False, "общий ключ (если есть)"),
     ("Peer", "Endpoint", _endpoint, True, "адрес и порт сервера"),
@@ -2648,6 +2944,7 @@ ROUTES = {
     ("POST", "/api/import/parse"): api_import_parse,
     ("POST", "/api/import/apply"): api_import_apply,
     ("GET", "/api/speed"): api_speed,
+    ("GET", "/api/health"): api_health,
     ("GET", "/api/clients"): api_clients,
     ("GET", "/api/sessions"): api_sessions,
     ("POST", "/api/session/revoke"): api_session_revoke,
@@ -2683,7 +2980,25 @@ ROUTES = {
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
 }
-PREFIX_ROUTES = {("GET", "/api/backup/file"): get_backup_file, ("GET", "/api/report/file"): get_report_file}
+def get_log_file(h, rest, q):
+    k = (q.get("kind") or [""])[0]
+    if k == "journal":
+        text = run(["journalctl", "-u", "awg-*", "-n", "20000", "--no-pager", "-o", "short-iso"], timeout=30)[1]
+    elif k == "audit":
+        text = read_file(AUDIT_F)
+    elif k == "events":
+        text = "\n".join("%s  %-8s %s" % (time.strftime("%F %T", time.localtime(e["t"])), e["type"], e["text"]) for e in events(3000))
+    elif k in LOGS:
+        text = read_file(os.path.join(DD, LOGS[k]))
+    else:
+        return h.send(404, {"error": "нет такого журнала"})
+    h.act("log-download", k)
+    fn = "awg-%s-%s.log" % (k, time.strftime("%Y%m%d-%H%M%S"))
+    return h.send(200, text, "text/plain; charset=utf-8", {"Content-Disposition": 'attachment; filename="%s"' % fn})
+
+
+PREFIX_ROUTES = {("GET", "/api/backup/file"): get_backup_file, ("GET", "/api/report/file"): get_report_file,
+                 ("GET", "/api/logs/file"): get_log_file}
 
 
 # ======================================================================= сервер
