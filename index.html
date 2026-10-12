@@ -39,6 +39,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:1
 a{color:var(--accent);text-underline-offset:2px}
 a:focus-visible,button:focus-visible,summary:focus-visible,input:focus-visible,label:focus-within{outline:2px solid var(--accent-strong);outline-offset:2px}
 code{font-family:var(--f-mono);font-size:.88em;background:color-mix(in srgb,var(--line) 55%,transparent);padding:.08em .35em;border-radius:4px;overflow-wrap:anywhere}
+.part img{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:10px;margin:14px 0}
 h1,h2,h3{text-wrap:balance;line-height:1.2}
 h2{font-family:var(--f-display);font-weight:700;font-size:1.55rem;margin:0}
 h3{font-size:1.12rem;font-weight:600;margin:2.2rem 0 .6rem}
@@ -970,13 +971,14 @@ RS_ENV=$RECOVER_SEC                # RECOVER_SEC из окружения важ�
 [ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
 [ -n "$RS_ENV" ] &amp;&amp; RECOVER_SEC=$RS_ENV
 
-<span class="c"># правила iptables одного туннеля (их же убирает forget)</span>
+<span class="c"># правила iptables одного туннеля (их же убирает forget). Записаны так, как их печатает «iptables -S»:</span>
+<span class="c"># тогда наличие правила проверяется по одному снимку таблицы, без отдельного вызова iptables на каждое правило.</span>
 fw_rules(){  # fw_rules ИНТЕРФЕЙС → строки «таблица|правило»
   echo "nat|POSTROUTING -o $1 -j MASQUERADE"
-  echo "mangle|FORWARD -o $1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
-  echo "mangle|FORWARD -i $1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+  echo "mangle|FORWARD -o $1 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+  echo "mangle|FORWARD -i $1 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
   echo "filter|FORWARD -o $1 -j ACCEPT"
-  echo "filter|FORWARD -i $1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+  echo "filter|FORWARD -i $1 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
 }
 
 <span class="c"># Удалить лишние копии одинаковых правил, где участвует интерфейс awg* или цепочка AWG_*. Одна копия остаётся.</span>
@@ -1033,7 +1035,7 @@ QUALITY_RTT=${QUALITY_RTT:-0}             # мс; 0 — задержку не у
 QUALITY_FAILS=${QUALITY_FAILS:-3}         # столько проб подряд
 QUALITY_INTERVAL=${QUALITY_INTERVAL:-30}  # секунд между пробами
 MIN_DWELL=${MIN_DWELL:-120}               # после любого переключения не переключаться по качеству столько секунд
-TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8"}
+TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
@@ -1054,17 +1056,24 @@ log(){
 }
 ev(){ echo "$(date +%s)|$1|$2" &gt;&gt; "$EVF"; if [ "$(wc -l &lt; "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" &gt; "$EVF.tmp" &amp;&amp; mv "$EVF.tmp" "$EVF"; fi; }
 
-<span class="c"># Канал жив, если через него открывается HTTPS (или, если не открылся, проходит ping).</span>
-<span class="c"># Первым идёт HTTPS: ICMP через туннели многих операторов не проходит.</span>
+<span class="c"># Канал жив, если через него открывается HTTPS хотя бы к одному из независимых узлов TARGETS</span>
+<span class="c"># (отказ одного сайта канал не роняет). Если HTTPS не прошёл ни к одному — пробуем ping (ICMP у части</span>
+<span class="c"># операторов не ходит, поэтому он вторым). Канал мёртв, только если не ответил никто.</span>
 check(){
   [ "$1" = "$MAIN" ] &amp;&amp; [ -e "$SIM" ] &amp;&amp; return 1
   local t c
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2&gt;/dev/null)
     [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; return 0
-    ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; return 0
   done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; return 0; done
   return 1
+}
+<span class="c"># DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.</span>
+declare -A DNSOK
+dns_probe(){
+  local r; r=$(curl -s -m 5 --interface "$1" -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=example.com&amp;type=A' 2&gt;/dev/null)
+  case "$r" in *'"Status":0'*) DNSOK[$1]=1;; *) DNSOK[$1]=0;; esac
 }
 
 <span class="c"># Проба качества: заполняет QLOSS (потери %) и QRTT (RTT мс). Возвращает 0, если канал деградировал.</span>
@@ -1084,14 +1093,22 @@ probe(){
 }
 
 prepare(){
+<span class="c">  # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables</span>
+<span class="c">  # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,</span>
+<span class="c">  # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.</span>
   local i t r
+  declare -A S
+  for t in nat mangle filter; do S[$t]=$(iptables -t "$t" -S 2&gt;/dev/null) || return 0; done
   for i in "${TUNS[@]}"; do
     while IFS='|' read -r t r; do
+      grep -q -x -F -- "-A $r" &lt;&lt;&lt; "${S[$t]}" &amp;&amp; continue
 <span class="c">      # shellcheck disable=SC2086</span>
       ensure "$t" -I $r
     done &lt; &lt;(fw_rules "$i")
   done
-  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
+<span class="c">  # правило PBR (если UniFi его потерял) добавляем со своей меткой proto 99: так удаление отличит его от правила UniFi</span>
+  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null \
+    || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
 }
 
 declare -A NEXT_TRY
@@ -1127,7 +1144,7 @@ write_state(){
     echo "FORCED=$forced"
     echo "UPDATED=$(date +%s)"
     echo "TUNNELS=\"${TUNS[*]}\""
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; done
+    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
   } &gt; "$STATEF.tmp" &amp;&amp; mv "$STATEF.tmp" "$STATEF"
 }
 
@@ -1233,6 +1250,9 @@ while true; do
     done
   fi
 
+<span class="c">  # ---- DNS через активный туннель, раз в минуту (только наблюдение: канал из-за DNS не переключаем) ----</span>
+  if [ $fails -eq 0 ] &amp;&amp; [ $(( now - ${last_dns:-0} )) -ge 60 ]; then last_dns=$now; dns_probe "${TUNS[$idx]}"; fi
+
 <span class="c">  # ---- качество ----</span>
   if [ "$QUALITY" = yes ] &amp;&amp; [ "$N" -gt 1 ] &amp;&amp; [ -z "$forced" ] &amp;&amp; [ $fails -eq 0 ] &amp;&amp; [ $(( now - last_q )) -ge "$QUALITY_INTERVAL" ]; then
     last_q=$now
@@ -1267,7 +1287,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 326 строк">Показать целиком · 326 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 345 строк">Показать целиком · 345 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -2319,7 +2339,28 @@ awgctl stats 7<span class="c">                # статистика за 7 дн
 awgctl ip<span class="c">                     # внешний IP через каждый туннель и напрямую</span>
 awgctl selftest<span class="c">               # самопроверка всей схемы (только чтение)</span>
 awgctl selftest --full<span class="c">        # плюс живая проверка kill switch (доли секунды без маршрута)</span>
-awgctl dedup<span class="c">                  # убрать дубликаты правил iptables для туннелей</span></code></pre></figure>
+awgctl dedup<span class="c">                  # убрать дубликаты правил iptables для туннелей</span>
+awgctl diagnose<span class="c">               # что сломано и как исправить: первая причина и команда</span>
+awgctl domain youtube.com<span class="c">     # куда пойдёт сайт, открывается ли через туннель и напрямую</span>
+awgctl report<span class="c">                 # обезличенный отчёт для issue (ключи и IP скрыты)</span>
+awgctl web<span class="c">                    # адрес веб-панели</span></code></pre></figure>
+
+  <h3>Веб-панель управления</h3>
+  <p>Всё то же, что в меню установщика и в <code>awgctl</code>, но в браузере, в стиле UniFi Network. Включается в мастере или в меню: <code>/data/awg/install.sh</code> → «Компоненты → Службы и оповещения → Веб-панель». Мастер спросит порт (по умолчанию <code>4443</code>; порты UniFi вроде 8443 не предлагаются), имя и пароль администратора, создаст сертификат и запустит службу <code>awg-web</code>. Открывайте <code>https://IP_РОУТЕРА:4443/</code> с компьютера или телефона в LAN; браузер один раз предупредит о самоподписанном сертификате.</p>
+  <img src="docs/img/panel-overview.png" alt="Веб-панель: обзор" loading="lazy" width="1440" height="1246">
+  <ul>
+    <li><b>Обзор</b>: состояние, активный канал, handshake, скорость, доля времени на основном канале, схема подключения, график трафика за 10 минут и за сутки, события, службы.</li>
+    <li><b>Туннели</b>: карточки (адрес сервера скрыт до нажатия на «глаз»), «Активировать», «Автовыбор», тест (HTTPS к трём адресам, DNS через туннель, внешний IP, MTU), перезапуск, правка конфига, добавление и удаление дополнительных туннелей. В редакторе ключи заменены на <code>&lt;скрыто&gt;</code> и сохраняют прежнее значение; если туннель с новым конфигом не поднимется, вернётся прежний.</li>
+    <li><b>Маршрутизация</b>: таблица и метка PBR, kill switch, домены через туннель, исключения, защита от утечек, подсети VPN-сервера, облако UniFi. Изменения применяются сразу: нужные службы перезапускаются или включаются.</li>
+    <li><b>Инструменты</b>: диагностика, самопроверка, проверка kill switch, тест переключения, проверка домена, подбор и применение MTU, аудит, очистка дубликатов, отчёт со скачиванием.</li>
+    <li><b>Журналы</b> и <b>Настройки</b>: события со статистикой, журналы служб, действия в панели; Telegram, службы, пользователи и 2FA (QR-код для Google Authenticator, Aegis и т. п.), резервные копии, версии и проверка обновлений.</li>
+  </ul>
+  <div class="note n-exp"><b>Безопасность</b><p>Панель слушает только LAN-адрес роутера и отвечает только частным сетям, работает по HTTPS. Пароли хранятся как PBKDF2-SHA256, есть второй фактор TOTP, после 5 неудачных входов адрес блокируется на 15 минут. Защита от CSRF и DNS rebinding, строгая CSP, никаких внешних библиотек и CDN. Команды выполняются только из списка разрешённых, параметры проверяются, ключи из конфигов в браузер не передаются. Все действия пишутся в <code>/data/awg/web/audit.log</code>. Не пробрасывайте порт панели в интернет: для удалённого доступа используйте VPN-сервер роутера (WireGuard / Teleport).</p></div>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">пользователи и сертификат</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl web passwd admin<span class="c">        # сменить пароль или добавить пользователя</span>
+awgctl web users
+awgctl web totp-off admin<span class="c">      # выключить 2FA, если потерян телефон</span>
+awgctl web cert<span class="c">                # новый сертификат (например, сменился IP роутера)</span>
+systemctl restart awg-web<span class="c">      # после правки /data/awg/web/web.conf (порт, адрес, сети)</span></code></pre></figure>
   <div class="note n-exp"><b>Почему важен -w у iptables</b><p>На UDR7 iptables 1.8.7 работает в режиме legacy. Без ключа <code>-w</code> команда не ждёт освобождения общей блокировки, а сразу завершается с ошибкой. Блокировку постоянно берут UniFi и наши службы, и проверка «есть ли правило» (<code>iptables -C</code>) в такой момент отвечала «нет», после чего добавлялась ещё одна копия. Копии копились неделями, каждый транзитный пакет проходил их все. Теперь все скрипты вызывают iptables с <code>-w</code>, добавляют правило только при ответе «правила нет» (код 1) и при занятой блокировке ничего не меняют до следующего круга. Сторож при старте и установщик при обновлении убирают накопившиеся копии, <code>awg-audit</code> и <code>awgctl selftest</code> их показывают.</p></div>
 
   <h3>Несколько туннелей и выбор по качеству</h3>
@@ -2419,7 +2460,7 @@ BASHRC=${BASHRC:-/root/.bashrc}
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
 <span class="c"># 1. службы — сначала остановить: иначе их 5-секундный цикл вернёт правила, пока мы их убираем</span>
-for u in awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
+for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2&gt;/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
@@ -2446,7 +2487,9 @@ for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2&gt;/dev/null; d
 for i in $(ip -br link 2&gt;/dev/null | awk '$1 ~ /^awg/ {sub(/@.*/,"",$1); print $1}'); do ip link del "$i" 2&gt;/dev/null &amp;&amp; echo "туннель $i удалён"; done
 pkill -x amneziawg-go 2&gt;/dev/null
 
-<span class="c"># 5. ip rule подсетей VPN-сервера (если subnets.sh уже нет)</span>
+<span class="c"># 5. правило PBR, которое добавил сам сторож (метка proto 99; правило UniFi не трогаем)</span>
+ip -4 rule show 2&gt;/dev/null | awk '/ proto 99/ {sub(":","",$1); print $1}' | while read -r p; do ip -4 rule del priority "$p" proto 99 2&gt;/dev/null; done
+<span class="c"># ip rule подсетей VPN-сервера (если subnets.sh уже нет)</span>
 for p in 6100 6101; do for _ in 1 2 3 4 5 6 7 8; do ip rule del priority $p 2&gt;/dev/null || break; done; done
 
 <span class="c"># 6. панель, команды, баннер, автовосстановление</span>
@@ -2460,7 +2503,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 58 строк">Показать целиком · 58 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 60 строк">Показать целиком · 60 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 

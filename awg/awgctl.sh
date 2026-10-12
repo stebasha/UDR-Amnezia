@@ -10,6 +10,10 @@
 #   awgctl mtu [...]          подбор MTU (mtu.sh)
 #   awgctl backup [...]       резервная копия (backup.sh)
 #   awgctl dedup              убрать дубликаты правил iptables для туннелей
+#   awgctl diagnose           дерево причин: что сломано и как исправить
+#   awgctl domain ДОМЕН       куда пойдёт сайт, открывается ли через туннель и напрямую
+#   awgctl report             обезличенный отчёт для issue (ключи и IP скрыты)
+#   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
 DD=${DD:-/data/awg}
 AWG=$DD/awg
 FORCEF=${FORCEF:-/run/awg-force}
@@ -99,6 +103,15 @@ case "${1:-status}" in
   mtu)     shift; exec "$DD/mtu.sh" "$@";;
   backup)  shift; exec "$DD/backup.sh" "$@";;
   dedup)   exec "$DD/failover.sh" dedup;;
-  help|-h|--help) sed -n '2,14p' "$0";;
+  diagnose|diag) exec "$DD/diagnose.sh";;
+  domain)  exec "$DD/domain-check.sh" "$2";;
+  report)  shift; exec "$DD/report.sh" "$@";;
+  web)     shift
+           case "${1:-url}" in
+             url) p=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null); b=$(ip -4 -br addr show br0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
+                  echo "https://${b:-IP_РОУТЕРА}:${p:-4443}/  (служба awg-web: $(systemctl is-active awg-web 2>/dev/null))";;
+             *) exec python3 "$DD/web/panel.py" "$@";;
+           esac;;
+  help|-h|--help) sed -n '2,18p' "$0";;
   *) echo "неизвестная команда: $1 (awgctl help)"; exit 1;;
 esac

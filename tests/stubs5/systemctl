@@ -1,0 +1,4 @@
+#!/bin/bash
+S=${STUB:?}
+case "$1" in is-active) shift; [ "$1" = --quiet ] && shift; [ -e "$S/svc/$1" ] && { echo active; exit 0; } || { echo inactive; exit 3; };; esac
+exit 0

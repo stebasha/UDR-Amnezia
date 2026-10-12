@@ -13,7 +13,7 @@ BASHRC=${BASHRC:-/root/.bashrc}
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
 # 1. службы — сначала остановить: иначе их 5-секундный цикл вернёт правила, пока мы их убираем
-for u in awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
+for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
@@ -40,7 +40,9 @@ for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2>/dev/null; done
 for i in $(ip -br link 2>/dev/null | awk '$1 ~ /^awg/ {sub(/@.*/,"",$1); print $1}'); do ip link del "$i" 2>/dev/null && echo "туннель $i удалён"; done
 pkill -x amneziawg-go 2>/dev/null
 
-# 5. ip rule подсетей VPN-сервера (если subnets.sh уже нет)
+# 5. правило PBR, которое добавил сам сторож (метка proto 99; правило UniFi не трогаем)
+ip -4 rule show 2>/dev/null | awk '/ proto 99/ {sub(":","",$1); print $1}' | while read -r p; do ip -4 rule del priority "$p" proto 99 2>/dev/null; done
+# ip rule подсетей VPN-сервера (если subnets.sh уже нет)
 for p in 6100 6101; do for _ in 1 2 3 4 5 6 7 8; do ip rule del priority $p 2>/dev/null || break; done; done
 
 # 6. панель, команды, баннер, автовосстановление

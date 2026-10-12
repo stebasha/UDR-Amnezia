@@ -25,13 +25,14 @@ RS_ENV=$RECOVER_SEC                # RECOVER_SEC из окружения важ�
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 [ -n "$RS_ENV" ] && RECOVER_SEC=$RS_ENV
 
-# правила iptables одного туннеля (их же убирает forget)
+# правила iptables одного туннеля (их же убирает forget). Записаны так, как их печатает «iptables -S»:
+# тогда наличие правила проверяется по одному снимку таблицы, без отдельного вызова iptables на каждое правило.
 fw_rules(){  # fw_rules ИНТЕРФЕЙС → строки «таблица|правило»
   echo "nat|POSTROUTING -o $1 -j MASQUERADE"
-  echo "mangle|FORWARD -o $1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
-  echo "mangle|FORWARD -i $1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+  echo "mangle|FORWARD -o $1 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
+  echo "mangle|FORWARD -i $1 -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"
   echo "filter|FORWARD -o $1 -j ACCEPT"
-  echo "filter|FORWARD -i $1 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+  echo "filter|FORWARD -i $1 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
 }
 
 # Удалить лишние копии одинаковых правил, где участвует интерфейс awg* или цепочка AWG_*. Одна копия остаётся.
@@ -88,7 +89,7 @@ QUALITY_RTT=${QUALITY_RTT:-0}             # мс; 0 — задержку не у
 QUALITY_FAILS=${QUALITY_FAILS:-3}         # столько проб подряд
 QUALITY_INTERVAL=${QUALITY_INTERVAL:-30}  # секунд между пробами
 MIN_DWELL=${MIN_DWELL:-120}               # после любого переключения не переключаться по качеству столько секунд
-TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8"}
+TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
@@ -109,17 +110,24 @@ log(){
 }
 ev(){ echo "$(date +%s)|$1|$2" >> "$EVF"; if [ "$(wc -l < "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" > "$EVF.tmp" && mv "$EVF.tmp" "$EVF"; fi; }
 
-# Канал жив, если через него открывается HTTPS (или, если не открылся, проходит ping).
-# Первым идёт HTTPS: ICMP через туннели многих операторов не проходит.
+# Канал жив, если через него открывается HTTPS хотя бы к одному из независимых узлов TARGETS
+# (отказ одного сайта канал не роняет). Если HTTPS не прошёл ни к одному — пробуем ping (ICMP у части
+# операторов не ходит, поэтому он вторым). Канал мёртв, только если не ответил никто.
 check(){
   [ "$1" = "$MAIN" ] && [ -e "$SIM" ] && return 1
   local t c
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2>/dev/null)
     [ -n "$c" ] && [ "$c" != 000 ] && return 0
-    ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && return 0
   done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && return 0; done
   return 1
+}
+# DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.
+declare -A DNSOK
+dns_probe(){
+  local r; r=$(curl -s -m 5 --interface "$1" -H 'accept: application/dns-json' 'https://1.1.1.1/dns-query?name=example.com&type=A' 2>/dev/null)
+  case "$r" in *'"Status":0'*) DNSOK[$1]=1;; *) DNSOK[$1]=0;; esac
 }
 
 # Проба качества: заполняет QLOSS (потери %) и QRTT (RTT мс). Возвращает 0, если канал деградировал.
@@ -139,14 +147,22 @@ probe(){
 }
 
 prepare(){
+  # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables
+  # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,
+  # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.
   local i t r
+  declare -A S
+  for t in nat mangle filter; do S[$t]=$(iptables -t "$t" -S 2>/dev/null) || return 0; done
   for i in "${TUNS[@]}"; do
     while IFS='|' read -r t r; do
+      grep -q -x -F -- "-A $r" <<< "${S[$t]}" && continue
       # shellcheck disable=SC2086
       ensure "$t" -I $r
     done < <(fw_rules "$i")
   done
-  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
+  # правило PBR (если UniFi его потерял) добавляем со своей меткой proto 99: так удаление отличит его от правила UniFi
+  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2>/dev/null \
+    || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
 }
 
 declare -A NEXT_TRY
@@ -182,7 +198,7 @@ write_state(){
     echo "FORCED=$forced"
     echo "UPDATED=$(date +%s)"
     echo "TUNNELS=\"${TUNS[*]}\""
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; done
+    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
   } > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF"
 }
 
@@ -287,6 +303,9 @@ while true; do
       fi
     done
   fi
+
+  # ---- DNS через активный туннель, раз в минуту (только наблюдение: канал из-за DNS не переключаем) ----
+  if [ $fails -eq 0 ] && [ $(( now - ${last_dns:-0} )) -ge 60 ]; then last_dns=$now; dns_probe "${TUNS[$idx]}"; fi
 
   # ---- качество ----
   if [ "$QUALITY" = yes ] && [ "$N" -gt 1 ] && [ -z "$forced" ] && [ $fails -eq 0 ] && [ $(( now - last_q )) -ge "$QUALITY_INTERVAL" ]; then

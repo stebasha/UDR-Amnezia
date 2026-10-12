@@ -21,7 +21,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.2.0
+INSTALLER_VERSION=1.3.0
 __AWG_NEW=1   # метка нового установщика (см. «площадки» ниже)
 AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}          # GitHub: владелец/репозиторий со скриптами (awg/, server/)
 AWG_BRANCH=${AWG_BRANCH:-main}
@@ -260,7 +260,8 @@ KIT=""
 KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.sh awg/notify.sh awg/awg-notify.sh awg/awg-restore.sh
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
- awg/awg-bot.service awg/awg-metrics.service
+ awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
+ awg/web/panel.py awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -292,6 +293,9 @@ get_kit(){
 kit_verify(){
   local f bad=0
   for f in "$KIT"/awg/*.sh "$KIT"/server/*.sh; do bash -n "$f" 2>/dev/null || { err "синтаксическая ошибка в $f"; bad=1; }; done
+  if command -v python3 >/dev/null && [ -f "$KIT/awg/web/panel.py" ]; then
+    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$KIT/awg/web/panel.py" 2>/dev/null || { err "синтаксическая ошибка в awg/web/panel.py"; bad=1; }
+  fi
   [ $bad = 0 ] && ok "скрипты прошли проверку синтаксиса" || die "скрипты повреждены, скачайте заново."
   [ -f "$KIT/VERSION" ] && info "версия набора: $(cat "$KIT/VERSION")"
 }
@@ -302,7 +306,14 @@ put(){  # put ИСТОЧНИК ЦЕЛЬ — заменить файл целик
 install_files(){
   mkdir -p "$DD"; chmod 700 "$DD"
   local f
-  for f in "$KIT"/awg/*; do put "$f" "$DD/$(basename "$f")"; done
+  for f in "$KIT"/awg/*; do [ -f "$f" ] && put "$f" "$DD/$(basename "$f")"; done
+  # веб-панель: код и страница заменяются, пользователи, сертификат и настройки панели (web/*.json, *.pem, web.conf) остаются
+  if [ -d "$KIT/awg/web" ]; then
+    mkdir -p "$DD/web/static"; chmod 700 "$DD/web"
+    put "$KIT/awg/web/panel.py" "$DD/web/panel.py"; chmod 700 "$DD/web/panel.py"
+    for f in "$KIT"/awg/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
+    chmod 644 "$DD"/web/static/*
+  fi
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh" "$DD/bot.sh"
   chmod 644 "$DD"/*.service
   # юниты в репозитории ссылаются на /data/awg; при другой папке (тесты) поправить пути
@@ -1158,7 +1169,7 @@ valid_domain(){ [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([
 list_tunnels(){ echo "$MAIN $(env_get BACKUP) $(env_get TUNNELS_EXTRA)" | tr -s ' ' '\n' | grep -v '^$'; }
 
 write_manifest(){
-  ( cd "$DD" && sha256sum ./*.sh ./*.service 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
+  ( cd "$DD" && sha256sum ./*.sh ./*.service ./web/panel.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
 }
 do_verify(){
   title "Проверка файлов установки"
@@ -1396,6 +1407,56 @@ step_metrics(){
   [ -z "$p" ] && hint "Файл: $DD/metrics/metrics (для node_exporter textfile)"
 }
 
+web_url(){
+  local p b t
+  p=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null); b=$(sed -n 's/^WEB_BIND=//p' "$DD/web/web.conf" 2>/dev/null)
+  t=$(sed -n 's/^WEB_TLS=//p' "$DD/web/web.conf" 2>/dev/null)
+  [ -z "$b" ] || [ "$b" = auto ] && b=$(lan_ip)
+  echo "$([ "${t:-yes}" = no ] && echo http || echo https)://$b:${p:-4443}/"
+}
+port_busy(){ ss -ltnH 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]$1\$"; }
+step_web(){
+  title "Веб-панель управления"
+  command -v python3 >/dev/null || { err "на роутере нет python3: панель не запустится. Проверьте: python3 --version"; return 1; }
+  [ -f "$DD/web/panel.py" ] || { get_kit; install_files; }
+  say "  ${D}Панель в стиле UniFi: состояние каналов, схема, графики, туннели (тест, переключение, конфиги), домены и исключения,${N}"
+  say "  ${D}инструменты (диагностика, MTU, проверка домена), журналы, Telegram, службы, резервные копии, пользователи и 2FA.${N}"
+  say "  ${D}Слушает только LAN-адрес роутера ($(lan_ip)), HTTPS с самоподписанным сертификатом; из интернета недоступна.${N}"
+  local p cur u pw pw2
+  cur=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null)
+  while :; do
+    ask p "Порт панели" "${cur:-4443}"
+    if ! [[ "$p" =~ ^[0-9]+$ ]] || [ "$p" -lt 1024 ] || [ "$p" -gt 65535 ]; then err "порт — число 1024–65535"; continue; fi
+    case $p in 8443|8080|8880|8843|6789|3478|10001|5514|11443|1900|8444|5671|5656|9543) err "порт $p занят службами UniFi, выберите другой"; continue;; esac
+    if port_busy "$p" && ! { svc_active awg-web && [ "$p" = "$cur" ]; }; then err "порт $p уже занят: $(ss -ltnpH 2>/dev/null | grep -E "[:.]$p " | head -1 | awk '{print $NF}')"; continue; fi
+    break
+  done
+  mkdir -p "$DD/web"; chmod 700 "$DD/web"
+  if [ -f "$DD/web/web.conf" ]; then
+    if grep -q '^WEB_PORT=' "$DD/web/web.conf"; then sed -i "s/^WEB_PORT=.*/WEB_PORT=$p/" "$DD/web/web.conf"; else echo "WEB_PORT=$p" >> "$DD/web/web.conf"; fi
+  else
+    printf '# настройки веб-панели (после изменения: systemctl restart awg-web)\nWEB_PORT=%s\nWEB_BIND=auto\nWEB_TLS=yes\nWEB_ALLOW="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8"\n# WEB_HOSTS="udr.local"   имена, по которым открывается панель (кроме IP)\n' "$p" > "$DD/web/web.conf"
+  fi
+  chmod 600 "$DD/web/web.conf"
+  if [ -s "$DD/web/users.json" ] && [ "$(python3 "$DD/web/panel.py" users 2>/dev/null | wc -l)" -gt 0 ]; then
+    info "пользователи панели: $(python3 "$DD/web/panel.py" users | awk '{print $1}' | tr '\n' ' ')"
+    yn "Сменить пароль?" N && python3 "$DD/web/panel.py" passwd "$(python3 "$DD/web/panel.py" users | awk 'NR==1{print $1}')"
+  else
+    ask u "Имя администратора" "admin"
+    while :; do
+      read -rsp "  Пароль (не короче 10 символов): " pw < /dev/tty; echo
+      read -rsp "  Повторите: " pw2 < /dev/tty; echo
+      [ "$pw" = "$pw2" ] || { err "пароли не совпадают"; continue; }
+      printf '%s\n' "$pw" | python3 "$DD/web/panel.py" passwd "$u" --stdin && break
+    done
+    pw=""; pw2=""
+  fi
+  if [ ! -s "$DD/web/cert.pem" ]; then python3 "$DD/web/panel.py" cert >/dev/null 2>&1 && ok "сертификат HTTPS создан (самоподписанный: браузер предупредит один раз)"; fi
+  unit_on awg-web; sleep 3
+  if svc_active awg-web; then ok "панель запущена: ${B}$(web_url)${N}"; hint "Браузер покажет предупреждение о сертификате: это ваш самоподписанный, нажмите «Дополнительно → Перейти»."
+  else err "awg-web не запустилась: journalctl -u awg-web -n 20"; fi
+}
+
 step_mtu(){
   title "Подбор MTU"
   command -v ping >/dev/null || { err "нет ping"; return 1; }
@@ -1530,7 +1591,7 @@ do_rotate_keys(){
 }
 
 # ============================================================ мастер ======
-ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-motd"
+ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-web awg-motd"
 seed_units(){  # установки до 1.2.0 не вели список служб: заполняем по включённым юнитам
   local u
   [ -s "$DD/.units" ] && return 0
@@ -1541,7 +1602,7 @@ seed_units(){  # установки до 1.2.0 не вели список слу
 }
 disable_service(){
   local a u opts=() x
-  for x in awg-bot awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
+  for x in awg-web awg-bot awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
   [ ${#opts[@]} -gt 0 ] || { info "дополнительных служб не включено"; return 0; }
   choose a "Какую службу выключить?" "${opts[@]}" "Отмена"
   [ "$a" -gt ${#opts[@]} ] && return 0
@@ -1614,6 +1675,7 @@ wizard(){
   yn "Уведомления в Telegram?" N && step_telegram
   [ -s "$DD/telegram.env" ] && yn "Команды и оповещения в Telegram (бот awg-bot)?" N && step_bot
   yn "Экспорт метрик (Prometheus)?" N && step_metrics
+  command -v python3 >/dev/null && yn "Веб-панель управления в браузере (LAN, HTTPS, вход по паролю)?" Y && step_web
   yn "Автовосстановление после обновления прошивки (on_boot.d)?" N && step_boot_hook
   [ -n "$VPS_IP" ] && yn "Запустить аудит VPS?" Y && vps_audit
   [ -n "$VPS_IP" ] && yn "Защитить VPS (автообновления, fail2ban, вход по ключам)?" N && vps_harden
@@ -1627,8 +1689,9 @@ summary(){
   local t u act=""; t=$(env_get TABLE)
   say "  Установлено в ${B}$DD${N}. Таблица PBR ${B}$t${N}, туннели: ${B}$(list_tunnels | tr '\n' ' ')${N}."
   [ -n "$(env_get EXTRA_SUBNETS)" ] && say "  Через туннель идут и клиенты VPN-сервера роутера: ${B}$(env_get EXTRA_SUBNETS)${N} (проверка: $DD/subnets.sh check)."
-  for u in awg-guard awg-self awg-bot awg-metrics awg-notify; do svc_active "$u" && act="$act ${u#awg-}"; done
+  for u in awg-guard awg-self awg-bot awg-metrics awg-notify awg-web; do svc_active "$u" && act="$act ${u#awg-}"; done
   [ -n "$act" ] && say "  Включены службы:${B}$act${N}."
+  svc_active awg-web && say "  Веб-панель: ${C}$(web_url)${N}"
   [ -x "$DD/status.sh" ] && "$DD/status.sh" -s | sed 's/^/  /'
   say "  ${B}Проверьте сами:${N}"
   say "   • устройство под правилом PBR: на 2ip.io виден IP туннеля;"
@@ -1679,14 +1742,14 @@ do_uninstall(){
   yn "Удалить службы, маршруты и правила AWG с роутера?" N || return
   local purge="" v u s; v=$(env_get VPS_IP 2>/dev/null)
   yn "Удалить и папку $DD с конфигами и ключами?" N && purge=--purge
-  for u in awg-bot awg-metrics awg-guard awg-self awg-subnets; do
+  for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets; do
     [ -f "$SYSD/$u.service" ] && { systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; }
   done
   systemctl daemon-reload
   for s in guard self subnets; do [ -x "$DD/$s.sh" ] && "$DD/$s.sh" remove >/dev/null 2>&1; done
   for s in AWG_UI AWG_DOM AWG_DIRECT; do ipset destroy "$s" >/dev/null 2>&1; done
   rm -f "$BOOT_D/10-awg-restore.sh"
-  ok "службы awg-guard/self/subnets/bot/metrics, их правила, ipset-ы и файл on_boot.d убраны"
+  ok "службы awg-web/guard/self/subnets/bot/metrics, их правила, ipset-ы и файл on_boot.d убраны"
   if [ -x "$DD/awg-uninstall.sh" ]; then "$DD/awg-uninstall.sh" $purge | sed 's/^/  /'; else err "нет $DD/awg-uninstall.sh"; fi
   [ -n "$v" ] && info "На VPS $v сервер остался. Удалить там: systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh"
   exit 0
@@ -1752,9 +1815,9 @@ menu_routing(){
 menu_services(){
   local a
   while :; do
-    choose a "Службы и оповещения:" "Панель при входе по SSH" "Аудит" "Telegram: уведомления" "Telegram: команды и оповещения (бот)" "Метрики Prometheus" "Выключить службу (бот, метрики, уведомления…)" "Назад"
+    choose a "Службы и оповещения:" "Панель при входе по SSH" "Аудит" "Telegram: уведомления" "Telegram: команды и оповещения (бот)" "Метрики Prometheus" "Веб-панель (браузер)" "Выключить службу (веб-панель, бот, метрики…)" "Назад"
     case $a in
-      1) step_panel;; 2) step_audit;; 3) step_telegram;; 4) step_bot;; 5) step_metrics;; 6) disable_service;; 7) return;;
+      1) step_panel;; 2) step_audit;; 3) step_telegram;; 4) step_bot;; 5) step_metrics;; 6) step_web;; 7) disable_service;; 8) return;;
     esac
   done
 }

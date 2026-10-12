@@ -9,5 +9,9 @@ for f in "$ROOT"/awg/*.sh "$ROOT"/server/*.sh "$H"/*.sh; do bash -n "$f" || { ec
 for t in t_failover t_guard t_fw t_misc; do echo "== $t"; bash "$H/$t.sh" "$ROOT/awg" || rc=1; done
 echo "== t_installer"; bash "$H/t_installer.sh" "$INST" || rc=1
 echo "== t_update"; bash "$H/t_update.sh" "$INST" || rc=1
+echo "== t_web (веб-панель)"
+python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), feature_version=(3,7))' "$ROOT/awg/web/panel.py" && echo "  panel.py: синтаксис Python 3.7 ok" || rc=1
+command -v node >/dev/null && { node --check "$ROOT/awg/web/static/app.js" && echo "  app.js: ok" || rc=1; }
+python3 "$H/t_web.py" || rc=1
 [ $rc = 0 ] && echo "ВСЕ ТЕСТЫ ПРОЙДЕНЫ" || echo "ЕСТЬ ПРОВАЛЫ"
 exit $rc

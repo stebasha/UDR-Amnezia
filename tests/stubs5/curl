@@ -1,0 +1,6 @@
+#!/bin/bash
+S=${STUB:?}; i=""; u=""
+while [ $# -gt 0 ]; do case "$1" in --interface) i=$2; shift;; http*) u=$1;; esac; shift; done
+[ "$i" = eth3 ] || [ -z "$i" ] && { [ -e "$S/wan_down" ] && exit 7; case "$u" in *ipify*|*ifconfig*) echo 203.0.113.5;; *) printf 200;; esac; exit 0; }
+[ -e "$S/up/$i" ] || { printf 000; exit 28; }
+case "$u" in *dns-query*) [ -e "$S/nodns" ] || echo '{"Status":0,"Answer":[]}';; *ipify*|*ifconfig*) [ -e "$S/leak" ] && echo 203.0.113.5 || echo 198.51.100.20;; *) printf 200;; esac
