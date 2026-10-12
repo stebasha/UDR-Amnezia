@@ -105,7 +105,7 @@ case "${1:-status}" in
   backup)  shift; exec "$DD/backup.sh" "$@";;
   dedup)   exec "$DD/failover.sh" dedup;;
   diagnose|diag) exec "$DD/diagnose.sh";;
-  domain)  exec "$DD/domain-check.sh" "$2";;
+  domain|domain-check) exec "$DD/domain-check.sh" "$2";;
   report)  shift; exec "$DD/report.sh" "$@";;
   drift)   shift; exec "$DD/drift.sh" "$@";;
   web)     shift
