@@ -1452,12 +1452,14 @@ def api_tunnel_switch(h, d):
     t = get_tunnel(str(d.get("name", "")))
     write_secure(FORCEF, t + "\n", 0o644)
     h.act("switch", t)
-    for _ in range(20):
+    for _ in range(60):          # круг сторожа с проверками качества бывает дольше 10 с
         time.sleep(0.5)
         if state().get("ACTIVE") == t:
             return {"ok": True, "msg": "активен %s (выбран вручную). Вернуть автоматику: «Авто»" % t}
+        if not read_file(FORCEF).strip():
+            return {"ok": False, "msg": "сторож отклонил переключение: канал %s не отвечает" % t}
     st = state().get("ACTIVE", "?")
-    return {"ok": False, "msg": "не переключилось за 10 с (сейчас %s): канал %s не отвечает или сторож не запущен" % (st, t)}
+    return {"ok": False, "msg": "не переключилось за 30 с (сейчас %s): канал %s не отвечает или сторож не запущен" % (st, t)}
 
 
 def api_tunnel_auto(h, d):

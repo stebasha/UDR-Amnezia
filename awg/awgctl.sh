@@ -50,10 +50,15 @@ cmd_switch(){
   [ -n "$n" ] || { echo "укажите туннель: $TUNS"; return 1; }
   case " $TUNS " in *" $n "*) ;; *) echo "нет туннеля «$n». Есть: $TUNS"; return 1;; esac
   echo "$n" > "$FORCEF"
-  sleep 7
-  [ -r "$STATEF" ] && . "$STATEF"
-  if [ "$ACTIVE" = "$n" ]; then echo "переключено: активен $n (вручную). Вернуть автомат: awgctl auto"
-  else echo "не переключилось: канал $n не отвечает или сторож не запущен (см. $DD/failover.log)"; return 1; fi
+  # круг сторожа с проверками качества бывает дольше 10 с: ждём до 30 с, отказ сторожа видно по удалённому FORCEF
+  local i
+  for i in $(seq 1 30); do
+    sleep 1
+    [ -r "$STATEF" ] && . "$STATEF"
+    [ "$ACTIVE" = "$n" ] && { echo "переключено: активен $n (вручную). Вернуть автомат: awgctl auto"; return 0; }
+    [ -s "$FORCEF" ] || { echo "отклонено: канал $n не отвечает (см. $DD/failover.log)"; return 1; }
+  done
+  echo "не переключилось за 30 с: сторож не запущен или занят (см. $DD/failover.log)"; return 1
 }
 cmd_auto(){ rm -f "$FORCEF"; sleep 7; [ -r "$STATEF" ] && . "$STATEF"; echo "автоматический режим. Сейчас активен: ${ACTIVE:-?}. Возврат на приоритетный канал — после RECOVER_SEC=${RECOVER_SEC:-600} с стабильной работы."; }
 

@@ -667,6 +667,9 @@ window.AWG_EN = {
     [/^Таблица соединений заполнена на (\d+)%$/, "Connection table $1% full"],
     [/^роутер перезагрузится через (\d+) с; интернет и UniFi вернутся через 2–4 минуты$/, "the router will reboot in $1 s; internet and UniFi will be back in 2–4 minutes"],
     [/^не удалось запланировать перезагрузку: /, "could not schedule the reboot: "],
+    [/^активен (\S+) \(выбран вручную\)\. Вернуть автоматику: «Авто»$/, "$1 is active (selected manually). Back to automatic: Auto"],
+    [/^сторож отклонил переключение: канал (\S+) не отвечает$/, "the watchdog refused to switch: $1 does not respond"],
+    [/^не переключилось за 30 с \(сейчас (\S+)\): канал (\S+) не отвечает или сторож не запущен$/, "did not switch within 30 s (now $1): $2 does not respond or the watchdog is not running"],
     [/^Роутер: /, "Router: "],
     [/^пароль копии .*$/, "backup password must be at least 8 characters"],
     [/^сохранено: (.*)/, "saved: $1"]
