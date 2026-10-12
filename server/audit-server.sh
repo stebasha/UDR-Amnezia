@@ -1,6 +1,7 @@
 #!/bin/bash
 # audit-server.sh — проверка VPS с сервером AmneziaWG. Только чтение.
 [ -d /data/unifi-core ] && { echo "Это роутер UniFi: запускайте на VPS"; exit 1; }
+iptables(){ command iptables -w 10 "$@"; }
 ok=0; warn=0; bad=0
 if [ -t 1 ] && [ -z "$NO_COLOR" ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'; else G=; R=; Y=; B=; N=; fi
 P(){ echo "  ${G}OK${N}    $1"; ok=$((ok+1)); }

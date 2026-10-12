@@ -1,0 +1,4 @@
+#!/bin/bash
+S=${STUB:?}
+i=""; while [ $# -gt 0 ]; do [ "$1" = --interface ] && i=$2; shift; done
+if [ -e "$S/up/$i" ]; then printf 200; else printf 000; exit 28; fi

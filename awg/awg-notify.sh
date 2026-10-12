@@ -12,7 +12,7 @@ ST=$DD/notify.state           # счётчики трафика на момен�
 LASTREP=$DD/notify.lastreport
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 [ -r "$DD/telegram.env" ] && . "$DD/telegram.env"
-TABLE=${TABLE:-0}; MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}"
+TABLE=${TABLE:-0}; MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
 REPORT_TIME=${REPORT_TIME:-0900}   # время суточного отчёта ЧЧММ по часам роутера (можно задать в telegram.env)
 H=$(hostname)
 
@@ -55,7 +55,7 @@ extip() {
 health() {   # $1=active $2=возраст handshake основного $3=запасного
   if ! systemctl is-active --quiet awg-failover; then echo "CRITICAL: сторож awg-failover не работает"
   elif [ "$1" = none ]; then echo "CRITICAL: нет AWG-маршрута в таблице PBR"
-  elif [ -n "$BACKUP" ] && [ "$1" = "$BACKUP" ]; then echo "DEGRADED: работаем на запасном канале"
+  elif [ "$1" != "$MAIN" ]; then echo "DEGRADED: работаем на запасном канале $1"
   elif [ -n "$BACKUP" ] && { [ "$3" -lt 0 ] || [ "$3" -gt 300 ]; }; then echo "DEGRADED: запасной канал не отвечает"
   else echo "HEALTHY"; fi
 }
@@ -132,15 +132,23 @@ on_line() {
   local l="$1" now title extra lastsw
   now=$(date +%s)
   case "$l" in
+    *ДЕГРАДАЦИЯ*)
+      echo "$now|switch" >> "$EV"
+      title="📉 Канал деградировал, переключение на ${l##* }"
+      extra="Потери или задержка выше порога. PBR-трафик идёт через ${l##* }." ;;
+    *"ПЕРЕКЛЮЧЕНИЕ вручную"*)
+      echo "$now|switch" >> "$EV"
+      title="🛠 Ручное переключение на ${l##* }"
+      extra="Вернуть автоматический выбор: awgctl auto (или /auto боту)." ;;
     *ПЕРЕКЛЮЧЕНИЕ*)
       echo "$now|switch" >> "$EV"
-      title="⚠️ Переключение на запасной канал"
-      extra="Основной канал не проходит проверку. PBR-трафик идёт через $BACKUP." ;;
+      title="⚠️ Переключение на запасной канал ${l##* }"
+      extra="Активный канал не проходит проверку. PBR-трафик идёт через ${l##* }." ;;
     *ВОЗВРАТ*|*"возврат на"*)
       lastsw=$(awk -F'|' '$2=="switch"{t=$1} END{print t}' "$EV" 2>/dev/null)
       echo "$now|return" >> "$EV"
-      title="✅ Возврат на основной канал"
-      extra="PBR-трафик снова через $MAIN."
+      title="✅ Возврат на канал ${l##* }"
+      extra="PBR-трафик снова через ${l##* }."
       [ -n "$lastsw" ] && extra="$extra На запасном проработали: $(fd $((now - lastsw)))." ;;
     *"оба канала не отвечают"*|*"единственный канал"*)
       [ $((now - last_both)) -lt 300 ] && return
@@ -148,9 +156,12 @@ on_line() {
       echo "$now|both" >> "$EV"
       title="🛑 Нет рабочего канала"
       extra="PBR-трафик заблокирован (утечки в WAN нет)." ;;
+    *"правило PBR профиля"*)
+      title="⚠️ UniFi сменил правило PBR"
+      extra="Метка или таблица профиля-рельсы изменились: устройства под PBR могут идти не туда. Запустите /data/awg/install.sh → Компоненты → Туннели → Заново определить PBR." ;;
     *ВОССТАНОВЛЕН*)
       title="✅ Канал восстановлен"
-      extra="PBR-трафик снова идёт через $MAIN." ;;
+      extra="PBR-трафик снова идёт через туннель." ;;
     *) return ;;
   esac
   sleep 4   # даём маршрутам устояться

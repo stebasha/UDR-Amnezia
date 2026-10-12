@@ -1,0 +1,4 @@
+#!/bin/bash
+[ "$1" = -w ] && shift 2
+[ "$*" = "-t nat -S POSTROUTING" ] && { echo "-A POSTROUTING -o awgmain -j MASQUERADE"; }
+exit 0

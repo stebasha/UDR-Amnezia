@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+# имитация iptables/ip6tables с состоянием (для тестов): $STUB/ipt-<имя команды>.json
+import sys, os, json
+S = os.environ['STUB']; me = os.path.basename(sys.argv[0])
+F = f"{S}/ipt-{me}.json"
+st = json.load(open(F)) if os.path.exists(F) else {}
+a = sys.argv[1:]
+if a[:1] == ['-w']: a = a[2:]
+if os.path.exists(f"{S}/locked"):   # имитация занятой блокировки xtables
+    print("Another app is currently holding the xtables lock. Stopped waiting after 10s.", file=sys.stderr); sys.exit(4)
+t = 'filter'
+if a[:1] == ['-t']: t = a[1]; a = a[2:]
+def tab(): return st.setdefault(t, {})
+def save(): json.dump(st, open(F, 'w'))
+op = a[0]; rest = a[1:]
+if op == '-S' and not rest:          # вся таблица
+    for ch, c in tab().items():
+        print(f"-N {ch}" if c.get('user') else f"-P {ch} ACCEPT")
+    for ch, c in tab().items():
+        for r in c['rules']: print(f"-A {ch} {r}")
+    sys.exit(0)
+if op == '-E':
+    old, new = rest[0], rest[1]
+    if old not in tab(): sys.exit(1)
+    tab()[new] = tab().pop(old)
+    for c in tab().values():
+        c['rules'] = [(' '.join(new if (w == old and i > 0 and r.split()[i-1] in ('-j', '-g')) else w for i, w in enumerate(r.split()))) for r in c['rules']]
+    save(); sys.exit(0)
+if op == '-N':
+    if rest[0] in tab(): print("Chain already exists.", file=sys.stderr); sys.exit(1)
+    tab()[rest[0]] = {'user': True, 'rules': []}; save(); sys.exit(0)
+if op == '-F':
+    tab().get(rest[0], {'rules': []})['rules'] = []; save(); sys.exit(0) if rest[0] in tab() else sys.exit(1)
+if op == '-X':
+    if rest[0] in tab(): del tab()[rest[0]]; save(); sys.exit(0)
+    sys.exit(1)
+ch = rest[0]
+if ch not in tab():
+    if ch in ('INPUT','OUTPUT','FORWARD','PREROUTING','POSTROUTING'): tab()[ch] = {'user': False, 'rules': []}
+    else: print("No chain/target/match by that name.", file=sys.stderr); sys.exit(1)
+rules = tab()[ch]['rules']
+if op == '-S':
+    if ch in ('INPUT','OUTPUT','FORWARD','PREROUTING','POSTROUTING'): print(f"-P {ch} ACCEPT")
+    else: print(f"-N {ch}")
+    for r in rules: print(f"-A {ch} {r}")
+    save(); sys.exit(0)
+if op == '-A': rules.append(' '.join(rest[1:])); save(); sys.exit(0)
+if op == '-I':
+    pos = 1
+    body = rest[1:]
+    if body and body[0].isdigit(): pos = int(body[0]); body = body[1:]
+    rules.insert(pos-1, ' '.join(body)); save(); sys.exit(0)
+if op == '-D':
+    r = ' '.join(rest[1:])
+    if r in rules: rules.remove(r); save(); sys.exit(0)
+    print("iptables: Bad rule (does a matching rule exist in that chain?).", file=sys.stderr); sys.exit(1)
+if op == '-C':
+    sys.exit(0 if ' '.join(rest[1:]) in rules else 1)
+if op == '-E':
+    sys.exit(0)
+sys.exit(0)

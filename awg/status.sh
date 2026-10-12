@@ -6,7 +6,8 @@ AWG=${AWG:-$DD/awg}
 LOG=$DD/failover.log
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 TABLE=${TABLE:-0}; MARK=${MARK:-0x0/0x0}; RAIL_IF=${RAIL_IF:-wgclt1}; WANIF=${WANIF:-eth3}
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; IFACES="$MAIN${BACKUP:+ $BACKUP}"
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; IFACES="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
+FORCED=""; [ -r /run/awg-state ] && FORCED=$(. /run/awg-state 2>/dev/null; echo "$FORCED")
 MODE=full; WANT_IP=0
 for a in "$@"; do case $a in
   -s) MODE=short;;
@@ -46,11 +47,14 @@ add(){ alerts+=("$2|$1"); [ "$2" -gt "$level" ] && level=$2; }
 [ "$TABLE" = 0 ] && add "Нет $DD/awg.env: запустите awg-detect.sh" 2
 [ "$svc" != active ] && add "Сторож awg-failover не запущен (systemctl start awg-failover)" 2
 [ -z "$active" ] && add "В таблице PBR $TABLE нет маршрута на AWG-туннель: трафик по PBR не проходит" 2
-[ -n "$BACKUP" ] && [ "$active" = "$BACKUP" ] && add "Работает ЗАПАСНОЙ канал, основной: $s_main" 1
+[ -n "$active" ] && [ "$active" != "$MAIN" ] && add "Работает ЗАПАСНОЙ канал $active, основной: $s_main" 1
+[ -n "$FORCED" ] && add "Канал выбран вручную: $FORCED (вернуть автомат: awgctl auto)" 1
 [ "$active" = "$MAIN" ] && [ "$s_main" != UP ] && add "Основной канал: handshake $s_main ($(age_f $a_main))" 1
 [ -n "$BACKUP" ] && [ "$s_bak" != UP ] && add "Запасной канал: $s_bak, защиты от падения основного нет" 1
 [ -e /tmp/awg-sim-down ] && add "Включён флаг имитации падения /tmp/awg-sim-down (rm /tmp/awg-sim-down)" 1
 ip rule show 2>/dev/null | grep -q "fwmark ${MARK%%/*}" || add "Нет PBR-правила fwmark ${MARK%%/*}" 2
+dr=$(ip -4 rule show 2>/dev/null | awk -v r="$RAIL_IF" -v want="$MARK ${TABLE}.$RAIL_IF" '/fwmark/ && $0 ~ ("lookup [0-9]+\\." r "[[:space:]]*$") {for(i=1;i<=NF;i++){ if($i=="fwmark") m=$(i+1); if($i=="lookup") t=$(i+1)} if (m" "t != want) {print m, t; exit}}')
+[ -n "$dr" ] && add "UniFi сменил правило PBR профиля $RAIL_IF («$dr»): $DD/install.sh → Компоненты → Туннели → Заново определить PBR" 2
 for f in main.conf backup.conf client.conf telegram.env awg.env; do
   [ -e "$DD/$f" ] && [ "$(stat -c %a "$DD/$f" 2>/dev/null)" != 600 ] && add "Права $DD/$f не 600 (chmod 600 $DD/$f)" 1
 done
@@ -105,7 +109,9 @@ echo
 hdr "TUNNELS"
 printf "${B}   %-10s %-7s %-7s %-9s %-22s %10s %10s %8s %8s${N}\n" TUNNEL ROLE STATE HANDSHK ENDPOINT RX TX "DN Mb/s" "UP Mb/s"
 for i in $IFACES; do
-  if [ "$i" = "$MAIN" ]; then role=main; a=$a_main; s=$s_main; else role=backup; a=$a_bak; s=$s_bak; fi
+  if [ "$i" = "$MAIN" ]; then role=main; a=$a_main; s=$s_main
+  elif [ "$i" = "$BACKUP" ]; then role=backup; a=$a_bak; s=$s_bak
+  else role=extra; a=$(age_s "$i"); s=$(st_of "$a"); fi
   mark=" "; [ "$i" = "$active" ] && mark="▶"
   if ! ip link show "$i" >/dev/null 2>&1; then
     printf " %s ${B}%-10s${N} %-7s ${R}%-7s${N}\n" "$mark" "$i" "$role" "NO-IFACE"; continue
@@ -128,6 +134,10 @@ wan=$(ip -4 -br addr show "$WANIF" 2>/dev/null | awk '{print $2, $3}')
 echo " Нагрузка : ${load:-?} · RAM ${mem:-?} · /data ${disk:-?}${temp}"
 echo " WAN $WANIF : ${wan:-нет данных}"
 if systemctl is-enabled awg-notify >/dev/null 2>&1; then echo " Telegram : awg-notify $(systemctl is-active awg-notify 2>/dev/null)"; fi
+sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics; do
+  [ -f "/etc/systemd/system/$u.service" ] && sv="$sv ${u#awg-}=$(systemctl is-active $u 2>/dev/null)"
+done
+[ -n "$sv" ] && echo " Службы   :$sv"
 
 echo
 hdr "EVENTS (last 20)"
@@ -155,6 +165,8 @@ f "/etc/systemd/system/awg-*.service" "автозапуск (копии юнит
 echo
 hdr "CHEAT SHEET"
 f "awgs | awgs -s | awgs -i" "панель | кратко | с внешними IP"
+[ -x "$DD/awgctl.sh" ] && f "awgctl status | switch <имя> | auto" "состояние, ручное переключение, автомат"
+[ -x "$DD/selftest.sh" ] && f "awgctl selftest" "самопроверка всей схемы"
 [ -x "$DD/audit.sh" ] && f "awg-audit" "проверка на лишние правила и файлы (только чтение)"
 f "tail -f $DD/failover.log" "события сторожа в реальном времени"
 f "ip route show table $TABLE" "активный канал PBR (metric 5)"
@@ -162,5 +174,5 @@ f "$DD/awg show $MAIN" "детали туннеля"
 f "curl -s --interface $MAIN https://ifconfig.me" "внешний IP через туннель"
 [ -n "$BACKUP" ] && f "touch /tmp/awg-sim-down  /  rm /tmp/awg-sim-down" "имитация падения основного / отмена"
 f "$DD/up.sh $MAIN" "применить новый main.conf"
-f "systemctl restart awg-failover" "перезапуск сторожа (~5 с без PBR-трафика)"
+f "systemctl restart awg-failover" "перезапуск сторожа (несколько секунд без PBR-трафика, утечки нет)"
 echo

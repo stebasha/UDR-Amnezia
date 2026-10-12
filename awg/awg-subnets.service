@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG: route VPN-server subnets (WireGuard Server, Teleport) through the tunnel
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/subnets.sh run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

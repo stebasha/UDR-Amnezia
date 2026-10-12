@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG: leak guard, domain routing and direct exceptions
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/guard.sh run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

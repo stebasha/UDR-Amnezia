@@ -1,0 +1,3 @@
+#!/bin/bash
+[ "$1" = show ] && echo "PUBKEY	$(( $(date +%s) - 30 ))"
+exit 0

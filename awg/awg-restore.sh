@@ -1,28 +1,35 @@
 #!/bin/bash
-# awg-restore.sh — вернуть автозапуск и панель после обновления прошивки
-# (UniFi может очистить /etc/systemd/system и /root/.bashrc; /data при этом сохраняется).
-D=/data/awg
-cp "$D/awg-failover.service" /etc/systemd/system/
-NOTIFY=0; MOTD=0
-[ -f "$D/awg-notify.service" ] && [ -f "$D/telegram.env" ] && { NOTIFY=1; cp "$D/awg-notify.service" /etc/systemd/system/; }
-[ -f "$D/awg-motd.service" ] && [ -f "$D/motd.orig" ] && { MOTD=1; cp "$D/awg-motd.service" /etc/systemd/system/; }
+# awg-restore.sh: вернуть службы и удобства после обновления прошивки UniFi (она может очистить /etc и /root).
+#   awg-restore.sh              восстановить всё
+#   awg-restore.sh --if-needed  только если чего-то не хватает (для автозапуска из on_boot.d)
+D=${DD:-/data/awg}
+SYSD=${SYSD:-/etc/systemd/system}
+BASHRC=${BASHRC:-/root/.bashrc}
+ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics"
+# что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть
+if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] && UNITS="$UNITS $u"; done; fi
+need=0
+for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
+grep -q AWGS_SHOWN $BASHRC 2>/dev/null || { [ -f "$D/.panel" ] && need=1; }
+if [ "$1" = --if-needed ] && [ $need = 0 ]; then exit 0; fi
+
+for u in $UNITS; do [ -f "$D/$u.service" ] && cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
-systemctl enable --now awg-failover
-[ $NOTIFY = 1 ] && systemctl enable --now awg-notify
-[ $MOTD = 1 ] && systemctl enable --now awg-motd
-# панель и команды возвращаются, только если соответствующая часть ставилась
-# установщик отмечает выбранные компоненты файлами .panel/.audit; при ручной установке по гайду
-# признак — наличие самих скриптов
-want(){ [ -f "$D/.$1" ] || { [ -x "$D/$2" ] && [ ! -f "$D/.installer" ]; }; }
-if want panel status.sh && ! grep -q AWGS_SHOWN /root/.bashrc 2>/dev/null; then
-  cat >> /root/.bashrc <<'RC'
+for u in $UNITS; do [ -f "$D/$u.service" ] && systemctl enable --now "$u" >/dev/null 2>&1 && echo "служба $u восстановлена"; done
+if ! grep -q AWGS_SHOWN $BASHRC 2>/dev/null; then
+  cat >> $BASHRC <<'RC'
 alias awgs='/data/awg/status.sh'
+alias awg-audit='/data/awg/audit.sh'
+alias awgctl='/data/awg/awgctl.sh'
+alias awg-selftest='/data/awg/selftest.sh'
+alias awg-setup='/data/awg/install.sh'
 case $- in *i*) [ -n "$SSH_CONNECTION" ] && [ -z "$AWGS_SHOWN" ] && { export AWGS_SHOWN=1; /data/awg/status.sh; } ;; esac
 RC
 fi
-if want audit audit.sh && ! grep -q "alias awg-audit=" /root/.bashrc 2>/dev/null; then
-  echo "alias awg-audit='/data/awg/audit.sh'" >> /root/.bashrc
-fi
-[ -f "$D/motd.orig" ] && touch /root/.hushlogin
-[ -x "$D/install.sh" ] && ! grep -q "alias awg-setup=" /root/.bashrc 2>/dev/null && echo "alias awg-setup='/data/awg/install.sh'" >> /root/.bashrc
-if [ -x "$D/audit.sh" ]; then echo "Готово. Проверьте: $D/audit.sh"; else echo "Готово. Проверьте: systemctl is-active awg-failover"; fi
+for a in awgctl awg-selftest awg-setup; do grep -q "alias $a=" $BASHRC 2>/dev/null || case $a in
+  awgctl) echo "alias awgctl='/data/awg/awgctl.sh'" >> $BASHRC;;
+  awg-selftest) echo "alias awg-selftest='/data/awg/selftest.sh'" >> $BASHRC;;
+  awg-setup) echo "alias awg-setup='/data/awg/install.sh'" >> $BASHRC;;
+esac; done
+[ -f "$D/motd.orig" ] && [ -f "$D/awg-motd.service" ] && : > /etc/motd 2>/dev/null
+echo "готово; проверьте: awgctl selftest"

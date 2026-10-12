@@ -1,0 +1,10 @@
+#!/bin/bash
+S=${STUB:?}
+i=""; c=1; q=0; while [ $# -gt 0 ]; do case "$1" in -I) i=$2; shift;; -c) c=$2; shift;; -q) q=1;; esac; shift; done
+if [ ! -e "$S/up/$i" ]; then [ "$q" = 1 ] && echo "$c packets transmitted, 0 received, 100% packet loss, time 1ms"; exit 1; fi
+if [ "$q" = 1 ]; then
+  l=$(cat "$S/loss/$i" 2>/dev/null || echo 0); r=$(cat "$S/rtt/$i" 2>/dev/null || echo 20)
+  echo "5 packets transmitted, $((5-l*5/100)) received, ${l}% packet loss, time 1200ms"
+  echo "rtt min/avg/max/mdev = 10.000/$r.000/30.000/1.000 ms"
+fi
+exit 0

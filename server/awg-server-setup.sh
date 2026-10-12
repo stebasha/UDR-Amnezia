@@ -71,9 +71,9 @@ awg setconf awg0 $ETC/server.conf
 ip addr add $SUBNET.1/24 dev awg0
 ip link set awg0 up mtu $MTU
 IFACE=\$(ip -4 route show default | awk '{print \$5; exit}')
-iptables -t nat -C POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE
-iptables -C FORWARD -i awg0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i awg0 -j ACCEPT
-iptables -C FORWARD -o awg0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -o awg0 -j ACCEPT
+iptables -w 10 -t nat -C POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE 2>/dev/null || iptables -w 10 -t nat -A POSTROUTING -s $SUBNET.0/24 -o \$IFACE -j MASQUERADE
+iptables -w 10 -C FORWARD -i awg0 -j ACCEPT 2>/dev/null || iptables -w 10 -I FORWARD -i awg0 -j ACCEPT
+iptables -w 10 -C FORWARD -o awg0 -j ACCEPT 2>/dev/null || iptables -w 10 -I FORWARD -o awg0 -j ACCEPT
 UP
 chmod 755 /usr/local/bin/awg-up.sh
 
@@ -98,8 +98,8 @@ sysctl -q -p /etc/sysctl.d/99-awg.conf
 P=$(awk -F'=' '/^ListenPort/{gsub(/ /,"",$2); print $2}' $ETC/server.conf)
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then ufw allow "$P/udp"; fi
 systemctl daemon-reload
-ip link show awg0 >/dev/null 2>&1 && ip link del awg0
-systemctl enable --now awg-server
+systemctl enable awg-server >/dev/null 2>&1
+systemctl restart awg-server        # restart, а не enable --now: у oneshot-службы с RemainAfterExit повторный --now ничего не делает
 echo
 awg show awg0 | head -4 || true
 ss -ulpn | grep ":$P " || echo "ВНИМАНИЕ: UDP $P пока не слушается: journalctl -u awg-server -n 20"

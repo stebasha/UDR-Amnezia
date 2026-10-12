@@ -1,0 +1,12 @@
+#!/bin/bash
+# имитация ip для тестов failover
+S=${STUB:?}
+echo "ip $*" >> $S/ip.log
+case "$1 $2" in
+  "link show") [ -e "$S/links/$3" ] && exit 0 || exit 1;;
+  "rule show") echo "32504:	from all fwmark 0x6a0000/0x7e0000 lookup 178.wgclt1"; exit 0;;
+  "route replace") echo "$*" >> $S/routes.log; exit 0;;
+  "route del") echo "$*" >> $S/routes-del.log; exit 0;;
+  "-4 -o") [ "$3 $4" = "addr show" ] && echo "9: $6    inet 10.9.0.$(( ${#6} % 200 ))/32 scope global $6"; exit 0;;
+esac
+exit 0

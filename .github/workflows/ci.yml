@@ -1,0 +1,27 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Синтаксис bash
+        run: for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
+      - name: shellcheck (ошибки блокируют, предупреждения только показываются)
+        run: |
+          shellcheck --version
+          shellcheck -S error install.sh awg/*.sh server/*.sh
+          shellcheck -S warning install.sh awg/*.sh server/*.sh || true
+      - name: Тесты на заглушках (без роутера)
+        run: bash tests/run.sh
+      - name: Контрольная сумма install.sh для --self-update
+        run: |
+          [ "$(cut -d' ' -f1 install.sh.sha256)" = "$(sha256sum install.sh | cut -d' ' -f1)" ] || {
+            echo "::error::install.sh.sha256 устарел. Обновите: sha256sum install.sh > install.sh.sha256"; exit 1; }
+      - name: Бинарники только из официальных исходников
+        run: |
+          ! grep -R -n -i "djgreez" install.sh awg server
+      - name: Гайд index.html совпадает со скриптами
+        run: python3 tools/sync-guide.py --check

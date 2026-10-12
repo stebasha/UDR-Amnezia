@@ -1,0 +1,8 @@
+#!/bin/bash
+S=${STUB:?}
+case "$*" in
+  "-4 route show table all"|"-6 route show table all")
+    if [ "$1" = -4 ]; then echo "default via 192.0.2.1 dev eth3 table 201.eth3"; echo "default dev wgclt1 table 178.wgclt1 metric 37"; else echo "default via fe80::1 dev eth3 table 201.eth3 metric 1024"; fi;;
+  "-4 route show table all to "*) echo "${7} dev wgsrv1 proto kernel scope link src 192.168.3.1";;
+esac
+exit 0

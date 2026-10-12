@@ -1,0 +1,7 @@
+# конфиги с ключами и токены не коммитить
+*.conf
+telegram.env
+awg.env
+*.tgz
+*.enc
+backups/

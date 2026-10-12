@@ -1,0 +1,12 @@
+#!/bin/bash
+S=${STUB:?}
+case "$*" in
+  "link show "*) [ -e "$S/links/$3" ] && exit 0 || exit 1;;
+  "rule show") echo "32504:	from all fwmark 0x6a0000/0x7e0000 lookup 178.wgclt1";;
+  "route show table 178") echo "default dev awgmain scope link metric 5"; echo "blackhole default metric 200"; echo "default dev wgclt1 scope link metric 37";;
+  "-4 route show table all"|"-6 route show table all") [ "$1" = -4 ] && echo "default via 192.0.2.1 dev eth3 table 201.eth3";;
+  "route get 1.1.1.1 mark 0x6a0000") echo "1.1.1.1 dev wgclt1 table 178.wgclt1 src 10.255.255.2";;
+  "route del"*|"route replace"*) exit 0;;
+  "-6 addr show scope global") exit 0;;
+esac
+exit 0

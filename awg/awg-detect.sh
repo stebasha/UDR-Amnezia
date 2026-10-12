@@ -3,7 +3,7 @@
 # и записывает её в /data/awg/awg.env.
 #   awg-detect.sh            если профиль VPN Client один
 #   awg-detect.sh wgclt2     если профилей несколько: укажите нужный
-# Систему не меняет. Ваши MAIN/BACKUP/VPS_IP/RECOVER_SEC/EXTRA_SUBNETS сохраняются.
+# Систему не меняет. Обновляет в awg.env только TABLE, MARK, PRIO, RAIL_IF (и WANIF, если его не было); остальное сохраняется.
 DD=${DD:-/data/awg}
 mkdir -p "$DD"
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -43,22 +43,28 @@ WAN_D=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="d
 case "$WAN_D" in ""|awg*|wg*) WAN_D=eth3 ;; esac
 
 umask 077
-cat > "$DD/awg.env" <<ENV
-# Параметры AWG failover. После ручной правки: systemctl restart awg-failover
-# --- найдено awg-detect.sh (при повторном запуске перезаписывается) ---
-TABLE=$TABLE_D
-MARK=$MARK_D
-PRIO=$PRIO_D
-RAIL_IF=$RAIL_D
-WANIF=${WANIF:-$WAN_D}
-# --- ваши настройки (при повторном запуске сохраняются) ---
-MAIN=${MAIN:-awgmain}
-BACKUP=${BACKUP-}
-VPS_IP=${VPS_IP-}
-RECOVER_SEC=${RECOVER_SEC:-600}
-EXTRA_SUBNETS="${EXTRA_SUBNETS-}"
-ENV
-chmod 600 "$DD/awg.env"
+# Ключи обновляются на месте: остальные настройки awg.env (туннели, подсети, домены, awg-self, guard, Telegram…) не трогаются.
+F=$DD/awg.env
+[ -f "$F" ] || printf '# Параметры AWG. После ручной правки: systemctl restart awg-failover\n' > "$F"
+setk(){  # setk КЛЮЧ ЗНАЧЕНИЕ [только_если_нет]
+  if grep -q "^$1=" "$F"; then
+    [ -n "$3" ] && return 0
+    awk -v k="$1" -v v="$2" 'index($0, k"=")==1 {print k"="v; next} {print}' "$F" > "$F.t" && mv "$F.t" "$F"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$F"
+  fi
+}
+setk TABLE "$TABLE_D"
+setk MARK "$MARK_D"
+setk PRIO "$PRIO_D"
+setk RAIL_IF "$RAIL_D"
+setk WANIF "${WANIF:-$WAN_D}"
+setk MAIN "${MAIN:-awgmain}" keep
+setk BACKUP "${BACKUP-}" keep
+setk VPS_IP "${VPS_IP-}" keep
+setk RECOVER_SEC "${RECOVER_SEC:-600}" keep
+setk EXTRA_SUBNETS "\"${EXTRA_SUBNETS-}\"" keep
+chmod 600 "$F"
 echo
 echo "Записано в $DD/awg.env:"
 sed 's/^/  /' "$DD/awg.env"

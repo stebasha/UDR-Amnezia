@@ -1,0 +1,4 @@
+#!/bin/bash
+S=${STUB:?}
+i=""; while [ $# -gt 0 ]; do [ "$1" = --interface ] && i=$2; shift; done
+case "$i" in awgmain) echo 203.0.113.7;; eth3|"") echo 198.51.100.9;; *) exit 28;; esac

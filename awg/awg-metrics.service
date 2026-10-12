@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG: Prometheus metrics
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/metrics.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

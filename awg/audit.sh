@@ -1,10 +1,12 @@
 #!/bin/bash
 # awg-audit — проверка установки на роутере: службы, туннели, правила, файлы. Только чтение.
+# iptables с ожиданием блокировки xtables: без -w чтение правил при занятой блокировке падает и даёт ложные WARN
+iptables(){ command iptables -w 10 "$@"; }
 DD=${DD:-/data/awg}
 AWG=${AWG:-$DD/awg}
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 TABLE=${TABLE:-0}; MARK=${MARK:-0x0/0x0}; RAIL_IF=${RAIL_IF:-wgclt1}
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}"
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
 NT=$(echo $TUNS | wc -w)
 ok=0; warn=0; bad=0
 if [ -t 1 ] && [ -z "$NO_COLOR" ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'; else G=; R=; Y=; B=; N=; fi
@@ -23,7 +25,8 @@ sec "Службы и процессы"
 st=$(systemctl is-active awg-failover 2>/dev/null); en=$(systemctl is-enabled awg-failover 2>/dev/null)
 [ "$st" = active ] && P "awg-failover: active" || F "awg-failover: ${st:-нет}" "systemctl start awg-failover"
 [ "$en" = enabled ] && P "awg-failover: автозапуск включён" || W "awg-failover: автозапуск ${en:-нет}" "systemctl enable awg-failover"
-for u in awg-failover awg-notify awg-motd; do
+UL=$(cat "$DD/.units" 2>/dev/null); [ -n "$UL" ] || UL="awg-failover awg-notify awg-motd"
+for u in $UL; do
   [ -f "$DD/$u.service" ] || continue
   [ $u = awg-notify ] && [ ! -f "$DD/telegram.env" ] && continue   # Telegram не настраивался
   [ $u = awg-motd ] && [ ! -f "$DD/motd.orig" ] && continue        # баннер не отключался
@@ -48,6 +51,8 @@ done
 ip link show "$RAIL_IF" >/dev/null 2>&1 && P "$RAIL_IF на месте (рельса PBR)" || W "$RAIL_IF отсутствует: UniFi мог убрать PBR-обвязку" "проверьте профиль VPN Client в UniFi, затем $DD/awg-detect.sh"
 
 sec "Маршрутизация"
+dr=$(ip -4 rule show | awk -v r="$RAIL_IF" -v want="$MARK ${TABLE}.$RAIL_IF" '/fwmark/ && $0 ~ ("lookup [0-9]+\\." r "[[:space:]]*$") {for(i=1;i<=NF;i++){ if($i=="fwmark") m=$(i+1); if($i=="lookup") t=$(i+1)} if (m" "t != want) {print m, t; exit}}')
+[ -n "$dr" ] && F "правило PBR профиля $RAIL_IF теперь «$dr», а в awg.env MARK=$MARK TABLE=$TABLE" "$DD/install.sh → Компоненты → Туннели → Заново определить PBR"
 n=$(ip rule show | grep -c "fwmark ${MARK%%/*}")
 [ "$n" = 1 ] && P "правило PBR fwmark ${MARK%%/*}: одно" || W "правил fwmark ${MARK%%/*}: $n (нужно 1)" "ip rule show"
 t=$(ip route show table "$TABLE" 2>/dev/null)
@@ -56,17 +61,29 @@ c=$(echo "$t" | grep -c 'dev awg')
 [ "$c" = 1 ] && P "в таблице PBR ровно один AWG-маршрут" || { [ "$c" = 0 ] && F "в таблице PBR нет AWG-маршрута" "systemctl restart awg-failover" || W "AWG-маршрутов в таблице: $c (нужен 1)" "systemctl restart awg-failover"; }
 echo "$t" | grep -q blackhole && P "blackhole на месте: при падении туннелей утечки в WAN нет" || W "в таблице нет blackhole" "systemctl restart awg-failover"
 [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" = 1 ] && P "ip_forward = 1" || F "ip_forward не 1" "sysctl -w net.ipv4.ip_forward=1"
-for s in $EXTRA_SUBNETS; do
-  ipset test UBIOS4local_network "$s" >/dev/null 2>&1 && P "подсеть $s в ipset UBIOS4local_network" || W "подсети $s нет в ipset" "сторож добавит её сам через 5 с; если нет — systemctl restart awg-failover"
-done
+if [ -n "${EXTRA_SUBNETS// /}" ]; then
+  if [ -x "$DD/subnets.sh" ]; then
+    while IFS= read -r l; do case "$l" in OK*) P "${l#OK     }";; WARN*) W "${l#WARN   }";; FAIL*) F "${l#FAIL   }" "systemctl restart awg-subnets; $DD/subnets.sh check";; esac; done < <("$DD/subnets.sh" check 2>&1)
+  else W "подсети VPN-сервера заданы ($EXTRA_SUBNETS), но subnets.sh нет" "$DD/install.sh --update"; fi
+fi
+r=$(ip -4 rule show | sort | uniq -d | wc -l)
+[ "$r" = 0 ] && P "дублей ip rule нет" || W "повторяющихся ip rule: $r" "ip rule show | sort | uniq -d"
 
 sec "iptables"
 for i in $TUNS; do
   c=$(iptables -t nat -S POSTROUTING 2>/dev/null | grep -c -- "-o $i -j MASQUERADE")
   [ "$c" = 1 ] && P "NAT MASQUERADE на $i: 1" || W "NAT MASQUERADE на $i: $c (нужно 1)" "iptables -t nat -D POSTROUTING -o $i -j MASQUERADE  (до одного правила)"
 done
-d1=$(iptables -S FORWARD 2>/dev/null | sort | uniq -d); d2=$(iptables -t mangle -S FORWARD 2>/dev/null | sort | uniq -d)
-[ -z "$d1$d2" ] && P "дублей в FORWARD (filter/mangle) нет" || W "дубли в FORWARD: $(echo "$d1$d2" | wc -l) строк" "iptables -S FORWARD | sort | uniq -d; удалите лишнюю копию: iptables -D ..."
+dl=""
+for tb in nat mangle filter; do
+  d=$(iptables -t $tb -S 2>/dev/null | grep '^-A ' | sort | uniq -d)
+  [ -n "$d" ] && dl="$dl$(printf '%s\n' "$d" | sed "s/^/$tb: /")"$'\n'
+done
+if [ -z "${dl//$'\n'/}" ]; then P "дублей правил iptables нет (nat, mangle, filter)"
+else
+  W "повторяющихся правил iptables: $(printf '%s' "$dl" | grep -c .)" "awgctl dedup — уберёт лишние копии правил туннелей (awg*, AWG_*); чужие правила удаляйте вручную"
+  printf '%s' "$dl" | head -n 10 | sed 's/^/          /'
+fi
 iptables -S OUTPUT 2>/dev/null | grep -q -E 'icmp.*(DROP|REJECT)' && W "в OUTPUT есть DROP для icmp (остаток теста?)" "iptables -S OUTPUT"
 
 sec "Файлы"

@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "conntrack $*" >> "${STUB:?}/conntrack.log"
+exit 0

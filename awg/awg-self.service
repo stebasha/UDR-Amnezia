@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG: own router traffic follows UniFi PBR into the tunnel; DNS domains via AWG
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/data/awg/self.sh run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

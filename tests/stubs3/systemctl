@@ -1,0 +1,2 @@
+#!/bin/bash
+case "$1" in is-active) shift; [ "$1" = --quiet ] && shift; case "$1" in awg-failover|awg-guard) exit 0;; *) echo inactive; exit 3;; esac;; is-enabled) exit 0;; esac; exit 0

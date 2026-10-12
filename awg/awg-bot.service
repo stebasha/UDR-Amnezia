@@ -1,0 +1,11 @@
+[Unit]
+Description=AWG: Telegram commands and alerts
+After=awg-failover.service network-online.target awg-notify.service
+
+[Service]
+ExecStart=/data/awg/bot.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

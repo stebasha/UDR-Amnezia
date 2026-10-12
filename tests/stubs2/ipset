@@ -1,0 +1,8 @@
+#!/bin/bash
+S=${STUB:?}; touch $S/ipsets
+case "$1" in
+  create) n=$2; grep -qx "$n" $S/ipsets || echo "$n" >> $S/ipsets;;
+  destroy) sed -i "/^$2\$/d" $S/ipsets;;
+  list) if [ "$2" = -n ]; then cat $S/ipsets; else echo "Name: $2"; echo "Members:"; fi;;
+esac
+exit 0
