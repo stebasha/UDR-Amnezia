@@ -1317,7 +1317,7 @@ step_self(){
   if yn "Включить исправление unifi.ui.com?" Y; then
     env_set UI_FIX yes
     ask d "Домены через DNS туннеля" "$(env_get UI_DOMAINS)"
-    local x good=""; for x in $d; do valid_domain "$x" && good="$good $x" || warn "«$x» не домен, пропускаю"; done; d=${good# }; [ -n "$d" ] || d=ui.com
+    local x okd=""; for x in $d; do valid_domain "$x" && okd="$okd $x" || warn "«$x» не домен, пропускаю"; done; d=${okd# }; [ -n "$d" ] || d=ui.com
     ask dns "DNS-сервер для этих доменов (запросы к нему идут через туннель)" "$(env_get UI_DNS)"; is_ipv4 "$dns" || dns=9.9.9.9
     env_set UI_DOMAINS "\"$d\""; env_set UI_DNS "$dns"
   else env_set UI_FIX no; fi

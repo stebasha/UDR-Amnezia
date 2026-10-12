@@ -40,7 +40,7 @@ apply_body(){
   local s i
   for s in $EXTRA_SUBNETS; do
     has_rule "$P_LOCAL" "$s" main || ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2>/dev/null
-    has_rule "$P_PBR" "$s" "$TABLE[^ ]*" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2>/dev/null
+    has_rule "$P_PBR" "$s" "${TABLE}[^ ]*" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2>/dev/null
     i=$(sub_iface "$s")
     [ -n "$i" ] && ip -4 route replace "$s" dev "$i" table "$TABLE" 2>/dev/null
   done
@@ -59,7 +59,7 @@ check(){
     if [ "$n" -ge 1 ]; then echo "OK     $s: локальные адреса остаются локальными (правило $P_LOCAL)"
     else echo "FAIL   $s: нет правила $P_LOCAL (служба awg-subnets запущена?)"; rc=1; fi
     [ "$n" -gt 1 ] && echo "WARN   $s: правил $P_LOCAL — $n (служба уберёт лишние)"
-    if has_rule "$P_PBR" "$s" "$TABLE[^ ]*"; then echo "OK     $s: интернет-трафик отправляется в таблицу PBR $TABLE (правило $P_PBR)"
+    if has_rule "$P_PBR" "$s" "${TABLE}[^ ]*"; then echo "OK     $s: интернет-трафик отправляется в таблицу PBR $TABLE (правило $P_PBR)"
     else echo "FAIL   $s: нет правила $P_PBR в таблицу $TABLE"; rc=1; fi
     i=$(sub_iface "$s")
     [ -n "$i" ] || echo "WARN   $s: сейчас нет интерфейса с этой подсетью (VPN-сервер выключен?)"
