@@ -1,6 +1,7 @@
 #!/bin/bash
 COMP=${1:-comp}; HERE=$(cd "$(dirname "$0")" && pwd); COMP=$(cd "$COMP" && pwd)
 T=$(mktemp -d); export STUB=$T/stub DD=$T/dd; mkdir -p $STUB $DD
+export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"
 export PATH=$HERE/stubs2:$PATH
 fails=0
 ck(){ if eval "$2"; then echo "  OK   $1"; else echo "  FAIL $1"; fails=$((fails+1)); fi; }

@@ -64,7 +64,7 @@ log(){ logger -t awg-self "$*" 2>/dev/null; }
 
 # адреса серверов туннелей — их никогда не заворачиваем в туннель (иначе handshake туннеля уйдёт в другой туннель).
 # Берём и из работающих интерфейсов, и из всех конфигов: туннель, который сейчас пересоздаётся, тоже нужно исключить.
-EPF=/run/awg-self.endpoints
+EPF=${AWG_RUN:-/run}/awg-self.endpoints
 endpoints(){
   local f ep h c
   {
@@ -265,7 +265,7 @@ build(){  # собрать цепочку целиком в ${CH}_NEW и под�
 }
 
 apply(){  # один проход за раз (служба, ручной apply, установщик); блокировка снимается по выходу из подоболочки
-  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>/run/awg-self.lock; else apply_body; fi
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>"${AWG_RUN:-/run}/awg-self.lock"; else apply_body; fi
   return 0
 }
 

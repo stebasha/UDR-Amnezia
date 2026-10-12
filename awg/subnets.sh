@@ -47,7 +47,7 @@ apply_body(){
   return 0
 }
 apply(){  # один проход за раз (служба и ручной запуск не мешают друг другу)
-  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>/run/awg-subnets.lock; else apply_body; fi
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>"${AWG_RUN:-/run}/awg-subnets.lock"; else apply_body; fi
   return 0
 }
 check(){

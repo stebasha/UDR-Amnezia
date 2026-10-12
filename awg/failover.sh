@@ -38,7 +38,7 @@ fw_rules(){  # fw_rules ИНТЕРФЕЙС → строки «таблица|п�
 dedup(){
   local t line n k removed=0 lines
   # пока чистим, awg-guard и awg-self не пересобирают свои цепочки (общие замки); после — пусть сверятся заново
-  if command -v flock >/dev/null && { exec 7>/run/awg-guard.lock 8>/run/awg-self.lock; } 2>/dev/null; then flock -w 30 7; flock -w 30 8; fi
+  if command -v flock >/dev/null && { exec 7>"${AWG_RUN:-/run}/awg-guard.lock" 8>"${AWG_RUN:-/run}/awg-self.lock"; } 2>/dev/null; then flock -w 30 7; flock -w 30 8; fi
   for t in nat mangle filter; do
     lines=$(iptables -t "$t" -S 2>/dev/null) || continue          # нет ответа (блокировка) — пропускаем таблицу
     while IFS= read -r line; do

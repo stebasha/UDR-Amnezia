@@ -3,6 +3,7 @@
 H=$(cd "$(dirname "$0")" && pwd)
 COMP=$(cd "${1:?укажите папку с выложенными скриптами}" && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"
 export STUB=$T/stub; mkdir -p "$STUB"
 export PATH="$H/stubs2:$H/stubs3:$PATH"
 fails=0

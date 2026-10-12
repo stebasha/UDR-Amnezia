@@ -4,6 +4,7 @@
 H=$(cd "$(dirname "$0")" && pwd)
 COMP=$(cd "${1:?укажите папку awg}" && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"
 export STUB=$T/stub DD=$T/dd; mkdir -p "$STUB" "$DD"
 export PATH="$H/stubs2:$PATH"
 fails=0

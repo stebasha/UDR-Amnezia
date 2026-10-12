@@ -30,7 +30,7 @@ load(){
   [ -r "$DD/awg.env" ] && . "$DD/awg.env"
   MASK=${MARK#*/}; [ "$MASK" = "$MARK" ] && MASK=0xffffffff
 }
-WANF=/run/awg-guard.wans
+WANF=${AWG_RUN:-/run}/awg-guard.wans
 wans(){  # интерфейсы WAN: default-маршруты в любых таблицах, кроме туннелей/рельсы.
   # Список только растёт (с загрузки роутера): если WAN на минуту пропал (PPPoE переподключается, резервный WAN),
   # защита для него остаётся, а не пересобирается без него.
@@ -118,7 +118,7 @@ build_direct(){
 }
 
 apply(){  # один проход за раз (служба и ручной запуск не мешают друг другу: иначе две сборки цепочки дают дубликаты)
-  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>/run/awg-guard.lock; else apply_body; fi
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>"${AWG_RUN:-/run}/awg-guard.lock"; else apply_body; fi
   return 0
 }
 apply_body(){

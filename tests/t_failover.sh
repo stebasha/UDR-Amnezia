@@ -2,6 +2,7 @@
 # тест failover v2 на заглушках. Запуск: bash tests/t_failover.sh <путь к comp>
 COMP=${1:-comp}; HERE=$(cd "$(dirname "$0")" && pwd); COMP=$(cd "$COMP" && pwd)
 T=$(mktemp -d); export STUB=$T/stub DD=$T/dd
+export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"
 mkdir -p $STUB/{up,links,loss,rtt} $DD
 export PATH=$HERE/stubs:$PATH
 export BOOT_WAIT=0 FORCEF=$T/force STATEF=$T/state SIM=$T/sim INTERVAL=1 FAIL_MAX=3 RECOVER_SEC=6 QUALITY_INTERVAL=2 MIN_DWELL=0 QUALITY_FAILS=2
