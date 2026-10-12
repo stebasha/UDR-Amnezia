@@ -1,0 +1,2 @@
+#!/bin/bash
+S=${STUB:?}; [ -e "$S/nodns_router" ] && exit 2; echo "198.51.100.20   STREAM $3"

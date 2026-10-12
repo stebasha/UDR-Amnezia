@@ -98,6 +98,24 @@ t "бинарники: отказ при неверной сумме" '! bins_in
 t "в установщике нет сторонних источников бинарников" '! grep -q -i "djgreez\|AmneziaWG-Unifi-DreamMachine/raw" "$INST"'
 t "ссылки на исходники только amnezia-vpn" '[ -z "$(grep -o "github.com/[A-Za-z0-9_-]*/amneziawg-[a-z]*" "$INST" "$KIT"/server/*.sh | grep -v "github.com/amnezia-vpn/")" ]'
 
+# --- 1.4: веб-панель, канал обновлений, откат
+t "веб-панель скопирована" '[ -x "$DD/web/panel.py" ] && [ -f "$DD/web/static/app.js" ] && [ -f "$DD/web/static/index.html" ] && [ "$(stat -c %a "$DD/web")" = 700 ]'
+t "канал обновлений записан" 'grep -qx "AWG_BRANCH=$AWG_BRANCH" "$DD/.channel" && grep -qx "AWG_REPO=$AWG_REPO" "$DD/.channel"'
+t "манифест включает панель" 'grep -q " web/panel.py$" "$DD/.manifest" && grep -q " web/static/app.js$" "$DD/.manifest"'
+echo "свои пользователи" > "$DD/web/users.json"
+install_files >/dev/null 2>&1
+t "обновление не трогает пользователей панели" 'grep -q "свои пользователи" "$DD/web/users.json"'
+( cd "$DD" && tar czf "$T/bk.tgz" --exclude=backups . )
+echo "# сломано" >> "$DD/failover.sh"; echo "сломано" > "$DD/web/static/app.js"; echo 9.9.9 > "$DD/VERSION"
+echo 'MAIN=awgmain' > "$DD/awg.env.keep"; echo 'MAIN=изменено' > "$DD/awg.env"
+update_rollback "$T/bk.tgz" >/dev/null 2>&1
+t "откат: скрипты и панель возвращены" '! grep -q "# сломано" "$DD/failover.sh" && ! grep -q "^сломано" "$DD/web/static/app.js" && [ "$(cat "$DD/VERSION")" != 9.9.9 ]'
+t "откат: настройки не трогаются" 'grep -q "MAIN=изменено" "$DD/awg.env"'
+echo 'MAIN=awgmain' > "$DD/awg.env"
+t "проверка после обновления: сторож работает → ок" 'TABLE= update_healthy 0 0 >/dev/null 2>&1'
+t "проверка после обновления: панель не встала → откат" '! (sleep(){ :; }; update_healthy 0 1 >/dev/null 2>&1)'
+t "неинтерактивный режим не ждёт ввода" '! ( AWG_YES=1; open_tty; ask x "вопрос" "" ) >/dev/null 2>&1'
+
 # --- удаление
 ipset(){ :; }
 printf 'д\n' >/dev/null

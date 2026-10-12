@@ -33,7 +33,7 @@ ensure nat -I POSTROUTING -o awgx -j MASQUERADE; ensure nat -I POSTROUTING -o aw
 ck "ensure добавляет ровно одно правило" '[ "$(cnt nat "-A POSTROUTING -o awgx -j MASQUERADE")" = 1 ]'
 
 # --- forget: все правила удалённого туннеля
-for r in "nat|POSTROUTING -o awgbackup -j MASQUERADE" "mangle|FORWARD -o awgbackup -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" "filter|FORWARD -i awgbackup -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"; do
+for r in "nat|POSTROUTING -o awgbackup -j MASQUERADE" "mangle|FORWARD -o awgbackup -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" "filter|FORWARD -i awgbackup -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"; do
   iptables -t "${r%%|*}" -A ${r#*|}; iptables -t "${r%%|*}" -A ${r#*|}
 done
 bash "$COMP/failover.sh" forget awgbackup

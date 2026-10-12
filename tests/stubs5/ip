@@ -1,0 +1,17 @@
+#!/bin/bash
+# имитация ip для diagnose/drift/domain-check: состояние в $STUB
+S=${STUB:?}
+case "$*" in
+  "-4 rule show"|"rule show") cat "$S/rules" 2>/dev/null;;
+  "-4 route show table all") echo "default via 192.0.2.1 dev eth3 table 201.eth3";;
+  "-6 route show default") [ -e "$S/v6" ] && echo "default via fe80::1 dev eth3";;
+  "-6 addr show scope global") [ -e "$S/v6" ] && echo "    inet6 2001:db8::5/64 scope global";;
+  "-4 -o addr show dev eth3") [ -e "$S/wan_down" ] || echo "9: eth3    inet 203.0.113.5/24 scope global eth3";;
+  "-4 -o addr show dev "*) echo "9: $6    inet 10.9.0.2/32 scope global $6";;
+  "-4 route show table "*) cat "$S/table" 2>/dev/null;;
+  "-4 route get "*) [ -e "$S/loop" ] && echo "$3 dev awgmain src 10.9.0.2" || echo "$3 via 203.0.113.1 dev eth3 src 203.0.113.5";;
+  "route get "*) cat "$S/routeget" 2>/dev/null || echo "$3 via 203.0.113.1 dev eth3";;
+  "link show "*) [ -e "$S/links/$3" ]; exit $?;;
+  -br*) ls "$S/links" 2>/dev/null | sed 's/$/  UNKNOWN/';;
+esac
+exit 0

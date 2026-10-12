@@ -1,0 +1,6 @@
+#!/bin/bash
+S=${STUB:?}; i=""; df=0; while [ $# -gt 0 ]; do case "$1" in -I) i=$2; shift;; -M) df=1;; esac; shift; done
+[ "$i" = eth3 ] && exit 0
+[ -e "$S/up/$i" ] || exit 1
+[ $df = 1 ] && [ -e "$S/bigdrop" ] && exit 1
+exit 0

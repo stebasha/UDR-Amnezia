@@ -1,0 +1,12 @@
+#!/bin/bash
+S=${STUB:?}
+case "$1" in
+  --version) echo "amneziawg-tools v3.1.20260812 - https://amnezia.org";;
+  genkey) echo k;;
+  show) case "$3" in
+    latest-handshakes) [ -e "$S/hs/$2" ] && echo "PUB	$(( $(date +%s) - $(cat $S/hs/$2) ))" || echo "PUB	0";;
+    endpoints) echo "PUB	198.51.100.20:51820";;
+    transfer) echo "PUB	1234	5678";;
+  esac;;
+esac
+exit 0

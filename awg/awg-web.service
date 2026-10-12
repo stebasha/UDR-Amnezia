@@ -1,0 +1,13 @@
+[Unit]
+Description=AWG: веб-панель управления (LAN, HTTPS)
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /data/awg/web/panel.py serve
+Restart=always
+RestartSec=5
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

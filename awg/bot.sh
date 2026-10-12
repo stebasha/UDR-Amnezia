@@ -6,6 +6,11 @@
 # пропавший интерфейс VPN-сервера, неверное время; раз в неделю (понедельник, после REPORT_TIME) сводка.
 #   bot.sh              демон (systemd)
 #   bot.sh --once-from ФАЙЛ   обработать готовый ответ getUpdates из файла (для тестов)
+# С 1.4.1 бот написан на Python (кнопки, несколько чатов): если python3 есть — запускаем его,
+# иначе работает прежний вариант ниже (только текстовые команды).
+if [ "${1:-}" != --once-from ] && [ "${AWG_BOT_LEGACY:-}" != 1 ] && command -v python3 >/dev/null 2>&1 && [ -f "${DD:-/data/awg}/bot.py" ]; then
+  exec python3 "${DD:-/data/awg}/bot.py" "$@"
+fi
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -37,13 +42,30 @@ api(){  # api МЕТОД?параметры [curl-аргументы] — ток
   return 1
 }
 
-parse(){  # JSON getUpdates → строки update_id|chat_id|текст
+parse(){  # JSON getUpdates → строки update_id|chat_id|текст|тип
+  # Разбор через python3 (надёжно при любом форматировании JSON); без него — запасной разбор по одной строке
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(0)
+for u in d.get("result", []):
+    kind = next((k for k in u if k != "update_id"), "?")
+    m = u.get("message") or u.get("edited_message") or {}
+    c = (m.get("chat") or {}).get("id", "")
+    t = (m.get("text") or "").replace("|", " ").replace("\n", " ")
+    print("%s|%s|%s|%s" % (u.get("update_id", ""), c, t, kind))
+'
+    return
+  fi
   local u id chat text
-  sed 's/{"update_id"/\n{"update_id"/g' | grep '^{"update_id"' | while IFS= read -r u; do
-    id=$(printf '%s' "$u" | grep -o '^{"update_id":[0-9]*' | grep -o '[0-9]*$')
-    chat=$(printf '%s' "$u" | grep -o '"chat":{"id":-\?[0-9]*' | head -n1 | grep -o -- '-\?[0-9]*$')
-    text=$(printf '%s' "$u" | grep -o '"text":"[^"]*"' | head -n1 | sed 's/^"text":"//; s/"$//')
-    echo "$id|$chat|$text"
+  tr -d '\r\n' | sed 's/{"update_id"/\n{"update_id"/g' | grep '^{"update_id"' | while IFS= read -r u; do
+    id=$(printf '%s' "$u" | grep -o '^{"update_id": *[0-9]*' | grep -o '[0-9]*$')
+    chat=$(printf '%s' "$u" | grep -o '"chat": *{ *"id": *-\?[0-9]*' | head -n1 | grep -o -- '-\?[0-9]*$')
+    text=$(printf '%s' "$u" | grep -o '"text": *"[^"]*"' | head -n1 | sed 's/^"text": *"//; s/"$//')
+    echo "$id|$chat|$text|message"
   done
 }
 
@@ -67,11 +89,13 @@ handle(){  # handle "/команда аргументы"
 }
 
 process(){  # process ФАЙЛ_С_JSON → обработать, сохранить offset
-  local u cid txt last=""
-  while IFS='|' read -r u cid txt; do
+  local u cid txt kind last="" want
+  want=" $(printf '%s %s' "$TG_CHAT" "${TG_VIEWERS:-}" | tr ',;' '  ' | tr -cd '0-9- ') "   # список чатов, без \r
+  while IFS='|' read -r u cid txt kind; do
     [ -n "$u" ] || continue
     last=$u
-    if [ "$cid" != "$TG_CHAT" ]; then log "игнорирую чужой чат $cid"; continue; fi
+    if [ -z "$cid" ]; then log "пропускаю обновление без чата (тип ${kind:-?})"; continue; fi
+    case "$want" in *" $cid "*) ;; *) log "игнорирую чужой чат $cid (разрешены:$want)"; continue;; esac
     case "$txt" in /*) log "команда: ${txt%% *}"; handle "$txt";; esac
   done < <(parse < "$1")
   [ -n "$last" ] && echo $((last+1)) > "$OFFF"

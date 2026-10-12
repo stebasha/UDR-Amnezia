@@ -5,3 +5,4 @@ awg.env
 *.tgz
 *.enc
 backups/
+__pycache__/

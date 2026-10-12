@@ -47,4 +47,10 @@ ck "uninstall: без --purge папка осталась" '[ -f "$T/dd/awg.env"
 ck "uninstall: алиасы убраны, чужие строки целы" '! grep -q awgs "$BASHRC" && grep -q foo "$BASHRC"'
 out=$(DD=$T/dd SYSD=$T/sys BOOT_D=$T/boot bash "$T/dd/awg-uninstall.sh" --purge 2>&1)
 ck "uninstall --purge: папка удалена" '[ ! -d "$T/dd" ]'
+# бот: chat id из ответа getUpdates при любом форматировании JSON (в т. ч. с переводами строк)
+BJ=$(mktemp)
+printf '{"ok":true,"result":[{"update_id":7,\n"message":{"message_id":5,"from":{"id":130181984},\n"chat": {"id": 130181984,"type":"private"},"text":"/status"}}]}' > "$BJ"
+ck "бот: chat id разбирается (python3)" '[ "$(bash -c "source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
+ck "бот: chat id разбирается без python3" '[ "$(bash -c "command(){ [ \"\$2\" = python3 ] && return 1; builtin command \"\$@\"; }; source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
+rm -f "$BJ"
 echo "misc: провалов $fails"; [ $fails = 0 ]

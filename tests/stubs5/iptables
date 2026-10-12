@@ -1,0 +1,5 @@
+#!/bin/bash
+S=${STUB:?}; [ "$1" = -w ] && shift 2
+t=filter; [ "$1" = -t ] && { t=$2; shift 2; }
+case "$1" in -S) [ -n "$2" ] && grep -- "^-A $2 " "$S/ipt.$t" 2>/dev/null || cat "$S/ipt.$t" 2>/dev/null;; esac
+exit 0
