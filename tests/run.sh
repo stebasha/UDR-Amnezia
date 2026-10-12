@@ -4,6 +4,8 @@ H=$(cd "$(dirname "$0")" && pwd); ROOT=$(dirname "$H")
 INST=${INST:-$ROOT/install.sh}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 rc=0
+# ссылки awgctl и т. п. — во временную папку, а не в настоящий /usr/local/bin
+export AWG_BINDIR=$T/bin; mkdir -p "$AWG_BINDIR"
 echo "== синтаксис"; bash -n "$INST" && echo "  install.sh: ok" || rc=1
 for f in "$ROOT"/awg/*.sh "$ROOT"/server/*.sh "$H"/*.sh; do bash -n "$f" || { echo "  синтаксическая ошибка: $f"; rc=1; }; done
 for t in t_failover t_guard t_fw t_misc; do echo "== $t"; bash "$H/$t.sh" "$ROOT/awg" || rc=1; done

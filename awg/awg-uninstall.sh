@@ -46,6 +46,10 @@ ip -4 rule show 2>/dev/null | awk '/ proto 99/ {sub(":","",$1); print $1}' | whi
 for p in 6100 6101; do for _ in 1 2 3 4 5 6 7 8; do ip rule del priority $p 2>/dev/null || break; done; done
 
 # 6. панель, команды, баннер, автовосстановление
+BD=${AWG_BINDIR:-/usr/local/bin}
+for a in awgctl awg-selftest awgs; do
+  [ -L "$BD/$a" ] && case "$(readlink "$BD/$a")" in /data/awg/*|"$D"/*) rm -f "$BD/$a";; esac
+done
 if [ -f $BASHRC ]; then
   sed -i -e '/AWGS_SHOWN/d' -e '/alias awgs=/d' -e '/alias awg-audit=/d' -e '/alias awgctl=/d' -e '/alias awg-selftest=/d' -e '/alias awg-setup=/d' $BASHRC
 fi

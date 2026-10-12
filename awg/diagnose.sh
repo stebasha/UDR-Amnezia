@@ -168,7 +168,7 @@ done
 echo
 if [ ${#CAUSES[@]} -eq 0 ]; then
   echo "${G}${B}Итог: причин неисправности не найдено.${N}"
-  echo "${D}Если конкретный сайт не работает: awgctl domain-check ИМЯ_САЙТА. Полная проверка: awgctl selftest${N}"
+  echo "${D}Если конкретный сайт не работает: awgctl domain ИМЯ_САЙТА. Полная проверка: awgctl selftest${N}"
   exit 0
 fi
 c=${CAUSES[0]}

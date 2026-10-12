@@ -22,6 +22,7 @@ import collections
 import getpass
 import hashlib
 import hmac
+import html
 import http.server
 import ipaddress
 import json
@@ -40,7 +41,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -942,11 +943,14 @@ def stats_from_events(days=7):
     frm = now() - days * 86400
     cnt = collections.Counter(e["type"] for e in ev if e["t"] >= frm)
     off, on, st = 0, False, 0
+    main = env().get("MAIN", "awgmain")
     for e in ev:
-        if e["type"] in ("switch", "degrade", "force"):
+        # «auto» канал не меняет (сторож остаётся на запасном до возврата); ручной выбор основного — это возврат
+        to_main = e["type"] == "force" and e["text"].split()[-1:] == [main]
+        if e["type"] in ("switch", "degrade", "force") and not to_main:
             if not on:
                 on, st = True, e["t"]
-        elif e["type"] in ("return", "auto", "start"):
+        elif e["type"] in ("return", "start") or to_main:
             if on:
                 off += max(0, e["t"] - max(st, frm)) if e["t"] > frm else 0
                 on = False
@@ -1451,12 +1455,14 @@ def api_tunnel_switch(h, d):
     t = get_tunnel(str(d.get("name", "")))
     write_secure(FORCEF, t + "\n", 0o644)
     h.act("switch", t)
-    for _ in range(20):
+    for _ in range(60):          # круг сторожа с проверками качества бывает дольше 10 с
         time.sleep(0.5)
         if state().get("ACTIVE") == t:
             return {"ok": True, "msg": "активен %s (выбран вручную). Вернуть автоматику: «Авто»" % t}
+        if not read_file(FORCEF).strip():
+            return {"ok": False, "msg": "сторож отклонил переключение: канал %s не отвечает" % t}
     st = state().get("ACTIVE", "?")
-    return {"ok": False, "msg": "не переключилось за 10 с (сейчас %s): канал %s не отвечает или сторож не запущен" % (st, t)}
+    return {"ok": False, "msg": "не переключилось за 30 с (сейчас %s): канал %s не отвечает или сторож не запущен" % (st, t)}
 
 
 def api_tunnel_auto(h, d):
@@ -1606,6 +1612,8 @@ def api_service(h, d):
             rc, out = unit_on(u)
         else:
             unit_off(u)
+            if u == "awg-guard":    # как в установщике: иначе следующее сохранение настроек включит защиту обратно
+                env_set({"LEAK_GUARD": "no"})
             rc, out = 0, ""
     h.act("service-" + a, u)
     return {"ok": rc == 0, "msg": "%s: %s %s" % (u, {"restart": "перезапущена", "enable": "включена", "disable": "выключена"}[a], out.strip()[:300])}
@@ -2399,8 +2407,12 @@ def api_tunnel_revisions(h, q):
     t = get_tunnel((q.get("name") or [""])[0])
     cur = read_file(conf_path(t))
     lst = rev_list(t)
-    for r in lst:
-        r["current"] = read_file(os.path.join(rev_dir(t), r["id"])).strip() == cur.strip()
+    seen = False
+    for r in lst:   # новые сверху: «текущая» — только самая свежая совпадающая, остальные совпадения — «как текущая»
+        same = read_file(os.path.join(rev_dir(t), r["id"])).strip() == cur.strip()
+        r["current"] = same and not seen
+        r["same"] = same and seen
+        seen = seen or same
     return {"name": t, "revisions": lst}
 
 
@@ -2848,6 +2860,34 @@ def api_update_run(h, d):
     return {"ok": True, "msg": "обновление запущено; панель перезапустится, страница переподключится сама"}
 
 
+REBOOT_DELAY = 5
+
+
+def api_system_reboot(h, d):
+    """Перезагрузка роутера целиком (UniFi тоже). Только с паролем текущего пользователя; не во время обновления."""
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act("reboot-denied")
+        raise ApiError(403, "текущий пароль неверен")
+    if update_running():
+        raise ValueError("идёт обновление набора: дождитесь его окончания, потом перезагружайте")
+    rb = shutil.which("reboot") or "/sbin/reboot"
+    rc, out = run(["systemd-run", "--unit=awg-reboot", "--collect", "--quiet", "--on-active=%d" % REBOOT_DELAY, rb], timeout=15)
+    if rc != 0:
+        raise ValueError("не удалось запланировать перезагрузку: " + out.strip()[:300])
+    h.act("reboot", "через %d с" % REBOOT_DELAY)
+    try:
+        with open(os.path.join(DD, "events.log"), "a", encoding="utf-8") as f:
+            f.write("%d|reboot|перезагрузка роутера из панели (%s)\n" % (now(), h.user))
+    except OSError:
+        pass
+    if os.path.exists(os.path.join(DD, "telegram.env")) and os.access(os.path.join(DD, "notify.sh"), os.X_OK):
+        run([os.path.join(DD, "notify.sh"), "--html", "🔁 <b>Перезагрузка роутера</b> · %s\nиз веб-панели, пользователь %s"
+             % (html.escape(socket.gethostname()), html.escape(h.user))], timeout=8)
+    return {"ok": True, "delay": REBOOT_DELAY,
+            "msg": "роутер перезагрузится через %d с; интернет и UniFi вернутся через 2–4 минуты" % REBOOT_DELAY}
+
+
 def api_update_log(h, q):
     t = read_file(UPD_LOG)
     return {"text": t[-60000:], "running": update_running(), "version": read_file(os.path.join(DD, "VERSION")).strip()}
@@ -2979,6 +3019,7 @@ ROUTES = {
     ("POST", "/api/totp/disable"): api_totp_disable,
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
+    ("POST", "/api/system/reboot"): api_system_reboot,
 }
 def get_log_file(h, rest, q):
     k = (q.get("kind") or [""])[0]

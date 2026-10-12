@@ -50,10 +50,15 @@ cmd_switch(){
   [ -n "$n" ] || { echo "укажите туннель: $TUNS"; return 1; }
   case " $TUNS " in *" $n "*) ;; *) echo "нет туннеля «$n». Есть: $TUNS"; return 1;; esac
   echo "$n" > "$FORCEF"
-  sleep 7
-  [ -r "$STATEF" ] && . "$STATEF"
-  if [ "$ACTIVE" = "$n" ]; then echo "переключено: активен $n (вручную). Вернуть автомат: awgctl auto"
-  else echo "не переключилось: канал $n не отвечает или сторож не запущен (см. $DD/failover.log)"; return 1; fi
+  # круг сторожа с проверками качества бывает дольше 10 с: ждём до 30 с, отказ сторожа видно по удалённому FORCEF
+  local i
+  for i in $(seq 1 30); do
+    sleep 1
+    [ -r "$STATEF" ] && . "$STATEF"
+    [ "$ACTIVE" = "$n" ] && { echo "переключено: активен $n (вручную). Вернуть автомат: awgctl auto"; return 0; }
+    [ -s "$FORCEF" ] || { echo "отклонено: канал $n не отвечает (см. $DD/failover.log)"; return 1; }
+  done
+  echo "не переключилось за 30 с: сторож не запущен или занят (см. $DD/failover.log)"; return 1
 }
 cmd_auto(){ rm -f "$FORCEF"; sleep 7; [ -r "$STATEF" ] && . "$STATEF"; echo "автоматический режим. Сейчас активен: ${ACTIVE:-?}. Возврат на приоритетный канал — после RECOVER_SEC=${RECOVER_SEC:-600} с стабильной работы."; }
 
@@ -68,12 +73,13 @@ cmd_stats(){
   local days=${1:-7} now from
   now=$(date +%s); from=$((now - days*86400))
   [ -s "$EVF" ] || { echo "событий пока нет"; return 0; }
-  awk -F'|' -v from="$from" -v now="$now" -v days="$days" '
+  awk -F'|' -v from="$from" -v now="$now" -v days="$days" -v main="$MAIN" '
     function fmt(s){ if(s>=86400) return sprintf("%dд %02dч", s/86400, (s%86400)/3600); if(s>=3600) return sprintf("%dч %02dм", s/3600, (s%3600)/60); return sprintf("%dм %02dс", s/60, s%60) }
     function ov(a,b){ if(b<=from) return 0; return b-(a<from?from:a) }
     { if($1>=from) c[$2]++
-      if($2=="switch"||$2=="degrade"||$2=="force"){ if(!on){ on=1; st=$1 } }
-      else if($2=="return"||$2=="auto"){ if(on){ off+=ov(st,$1); on=0 } } }
+      tomain=($2=="force" && $3 ~ (" " main "$"))   # auto канал не меняет; ручной выбор основного — возврат
+      if(($2=="switch"||$2=="degrade"||$2=="force") && !tomain){ if(!on){ on=1; st=$1 } }
+      else if($2=="return"||$2=="start"||tomain){ if(on){ off+=ov(st,$1); on=0 } } }
     END{
       if(on) off+=ov(st,now)
       printf "Период                      : %d дн.\n", days
@@ -105,7 +111,7 @@ case "${1:-status}" in
   backup)  shift; exec "$DD/backup.sh" "$@";;
   dedup)   exec "$DD/failover.sh" dedup;;
   diagnose|diag) exec "$DD/diagnose.sh";;
-  domain)  exec "$DD/domain-check.sh" "$2";;
+  domain|domain-check) exec "$DD/domain-check.sh" "$2";;
   report)  shift; exec "$DD/report.sh" "$@";;
   drift)   shift; exec "$DD/drift.sh" "$@";;
   web)     shift

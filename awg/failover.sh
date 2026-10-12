@@ -197,7 +197,8 @@ ensure_tunnels(){
 
 set_active(){
   local a=${TUNS[$1]} j
-  ip route replace default dev "$a" metric $METRIC table "$TABLE"
+  # интерфейса ещё нет (старт до up.sh): маршрут не ставим, остаётся blackhole; цикл поставит его, когда туннель поднимется
+  ip link show "$a" >/dev/null 2>&1 && ip route replace default dev "$a" metric $METRIC table "$TABLE"
   for j in "${TUNS[@]}"; do [ "$j" != "$a" ] && ip route del default dev "$j" table "$TABLE" 2>/dev/null; done
   ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
 }
@@ -236,6 +237,8 @@ n=$(dedup); [ "${n:-0}" -gt 0 ] && log "убрано дубликатов пра
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
 declare -A OKS QOK
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
+# сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)
+ensure_tunnels
 # сторож начинает с основного канала: записи conntrack, заNATенные на другие туннели (например, на запасной до перезапуска), сбросить
 set_active 0
 if command -v conntrack >/dev/null; then

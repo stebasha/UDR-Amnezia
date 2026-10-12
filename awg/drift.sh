@@ -26,7 +26,8 @@ snap(){
   echo "# iptables"
   local t
   for t in nat mangle filter; do
-    iptables -t "$t" -S 2>/dev/null | grep -E -i -- "awg${MV:+|$MV}${MD:+|mark $MD}" | sed "s/^/ipt $t /"
+    # --set-mss считается из MTU туннеля (MTU−40) и меняется вместе с ним — сравниваем само правило, не число
+    iptables -t "$t" -S 2>/dev/null | grep -E -i -- "awg${MV:+|$MV}${MD:+|mark $MD}" | sed -E 's/--set-mss [0-9]+/--set-mss <MTU-40>/' | sed "s/^/ipt $t /"
   done
   ip6tables -t filter -S 2>/dev/null | grep -E -- 'AWG|awg' | sed 's/^/ip6 filter /'
   echo "# службы"
