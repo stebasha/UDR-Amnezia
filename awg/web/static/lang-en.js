@@ -643,7 +643,10 @@ window.AWG_EN = {
  "Роутер снова на связи — открываю панель…": "Router is back — opening the panel…",
  "Роутер так и не ушёл в перезагрузку. Посмотрите «Журналы → Действия в панели» и журнал systemd.": "The router did not reboot. See Logs → Panel actions and the systemd journal.",
  "Перезагрузить роутер целиком": "Reboot the whole router",
- "идёт обновление набора: дождитесь его окончания, потом перезагружайте": "an update is running: wait for it to finish, then reboot"
+ "идёт обновление набора: дождитесь его окончания, потом перезагружайте": "an update is running: wait for it to finish, then reboot",
+ "Не принято: ": "Not accepted: ",
+ " — подробности под формой": " — details below the form",
+ "как текущая": "same as current"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],

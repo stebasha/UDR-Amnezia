@@ -73,12 +73,13 @@ cmd_stats(){
   local days=${1:-7} now from
   now=$(date +%s); from=$((now - days*86400))
   [ -s "$EVF" ] || { echo "событий пока нет"; return 0; }
-  awk -F'|' -v from="$from" -v now="$now" -v days="$days" '
+  awk -F'|' -v from="$from" -v now="$now" -v days="$days" -v main="$MAIN" '
     function fmt(s){ if(s>=86400) return sprintf("%dд %02dч", s/86400, (s%86400)/3600); if(s>=3600) return sprintf("%dч %02dм", s/3600, (s%3600)/60); return sprintf("%dм %02dс", s/60, s%60) }
     function ov(a,b){ if(b<=from) return 0; return b-(a<from?from:a) }
     { if($1>=from) c[$2]++
-      if($2=="switch"||$2=="degrade"||$2=="force"){ if(!on){ on=1; st=$1 } }
-      else if($2=="return"||$2=="auto"){ if(on){ off+=ov(st,$1); on=0 } } }
+      tomain=($2=="force" && $3 ~ (" " main "$"))   # auto канал не меняет; ручной выбор основного — возврат
+      if(($2=="switch"||$2=="degrade"||$2=="force") && !tomain){ if(!on){ on=1; st=$1 } }
+      else if($2=="return"||$2=="start"||tomain){ if(on){ off+=ov(st,$1); on=0 } } }
     END{
       if(on) off+=ov(st,now)
       printf "Период                      : %d дн.\n", days

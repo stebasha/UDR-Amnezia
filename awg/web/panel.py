@@ -943,11 +943,14 @@ def stats_from_events(days=7):
     frm = now() - days * 86400
     cnt = collections.Counter(e["type"] for e in ev if e["t"] >= frm)
     off, on, st = 0, False, 0
+    main = env().get("MAIN", "awgmain")
     for e in ev:
-        if e["type"] in ("switch", "degrade", "force"):
+        # «auto» канал не меняет (сторож остаётся на запасном до возврата); ручной выбор основного — это возврат
+        to_main = e["type"] == "force" and e["text"].split()[-1:] == [main]
+        if e["type"] in ("switch", "degrade", "force") and not to_main:
             if not on:
                 on, st = True, e["t"]
-        elif e["type"] in ("return", "auto", "start"):
+        elif e["type"] in ("return", "start") or to_main:
             if on:
                 off += max(0, e["t"] - max(st, frm)) if e["t"] > frm else 0
                 on = False
@@ -2404,8 +2407,12 @@ def api_tunnel_revisions(h, q):
     t = get_tunnel((q.get("name") or [""])[0])
     cur = read_file(conf_path(t))
     lst = rev_list(t)
-    for r in lst:
-        r["current"] = read_file(os.path.join(rev_dir(t), r["id"])).strip() == cur.strip()
+    seen = False
+    for r in lst:   # новые сверху: «текущая» — только самая свежая совпадающая, остальные совпадения — «как текущая»
+        same = read_file(os.path.join(rev_dir(t), r["id"])).strip() == cur.strip()
+        r["current"] = same and not seen
+        r["same"] = same and seen
+        seen = seen or same
     return {"name": t, "revisions": lst}
 
 

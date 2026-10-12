@@ -180,7 +180,7 @@
   }
 
   // ===================================================================== состояние и API
-  const S = { csrf: '', user: '', version: '', page: '', ov: null, live: {}, hist: null, timers: [], reveal: {}, histMode: 'live', chartTun: '' };
+  const S = { csrf: '', user: '', version: '', page: '', ov: null, live: {}, hist: null, timers: [], ticks: [], reveal: {}, histMode: 'live', chartTun: '' };
   const NAV = [
     ['overview', T('Обзор'), 'home'],
     ['tunnels', T('Туннели'), 'tunnel'],
@@ -217,9 +217,12 @@
       try { await fn(); } catch (e) { if (!(e instanceof ApiErr)) console.debug('poll', e); } finally { busy = false; }
     };
     S.timers.push(setInterval(tick, ms));
+    S.ticks.push(tick);
     if (now !== false) tick();
   }
-  function stopTimers() { S.timers.forEach(clearInterval); S.timers = []; }
+  function stopTimers() { S.timers.forEach(clearInterval); S.timers = []; S.ticks = []; }
+  // в фоновой вкладке опрос стоит; вернулись на вкладку — обновить сразу, не дожидаясь интервала (до 60 с)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) S.ticks.slice().forEach((t) => t()); });
 
   // ===================================================================== тема
   function themeGet() { try { return localStorage.getItem('awg-theme') || 'auto'; } catch (e) { return 'auto'; } }
@@ -246,7 +249,8 @@
     opts = opts || {};
     const bg = el('div', { class: 'modal-bg' });
     const close = () => { bg.remove(); document.removeEventListener('keydown', esc); if (opts.onclose) opts.onclose(); };
-    const esc = (e) => { if (e.key === 'Escape') close(); };
+    // Esc закрывает только верхнее окно (раньше закрывались все открытые разом — например, редактор вместе со сравнением)
+    const esc = (e) => { if (e.key === 'Escape' && Array.from(document.querySelectorAll('.modal-bg')).pop() === bg) close(); };
     const ft = el('div', { class: 'ft' });
     const m = el('div', { class: 'modal' + (opts.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true' },
       el('div', { class: 'hd' }, el('h2', null, title), el('button', { class: 'btn ghost icon', 'aria-label': T('Закрыть'), onclick: close }, icon('x'))),
@@ -951,6 +955,8 @@
         try { p = await api('/api/tunnel/preview', Object.assign({ name: t.name }, payload)); } catch (e) { err(e); return; }
         if (p.errors.length) {
           replace(res, T('Не принято:\n• ') + p.errors.join('\n• ')); res.classList.remove('hidden'); res.classList.add('bad');
+          res.scrollIntoView({ block: 'nearest', behavior: 'smooth' });   // форма длинная: без прокрутки ошибку внизу не видно
+          err(T('Не принято: ') + p.errors.length + T(' — подробности под формой'));
           return;
         }
         if (!p.changed) { toast(T('Изменений нет')); return; }
@@ -1040,13 +1046,13 @@
         replace(box, r.revisions.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
           el('thead', null, el('tr', null, el('th', null, T('Версия')), el('th', null, T('Что')), el('th', null, T('Сервер')), el('th', null, ''), el('th', null, ''))),
           el('tbody', null, r.revisions.map((v) => el('tr', null,
-            el('td', { class: 'nowrap' }, fmtTime(v.time, true), v.current ? el('span', { class: 'badge ok' }, T('текущая')) : null),
+            el('td', { class: 'nowrap' }, fmtTime(v.time, true), v.current ? el('span', { class: 'badge ok' }, T('текущая')) : v.same ? el('span', { class: 'badge outline' }, T('как текущая')) : null),
             el('td', { class: 'muted' }, v.why || '—'),
             el('td', null, el('span', { class: 'mono small' }, v.summary.endpoint || '—'), ' ', el('span', { class: 'badge outline' }, v.summary.proto)),
             el('td', { class: 'r nowrap' }, el('button', { class: 'btn sm', onclick: async () => {
               try { const x = await api('/api/tunnel/revision?name=' + encodeURIComponent(t.name) + '&id=' + encodeURIComponent(v.id)); modal(T('Версия ') + fmtTime(v.time, true) + T(' → текущая'), diffView(x.text, x.current), [], { wide: true }); } catch (e) { err(e); }
             } }, T('Сравнить'))),
-            el('td', { class: 'r nowrap' }, v.current ? null : el('button', { class: 'btn sm primary', onclick: async (e) => {
+            el('td', { class: 'r nowrap' }, v.current || v.same ? null : el('button', { class: 'btn sm primary', onclick: async (e) => {
               if (!await confirmBox(T('Вернуть версию?'), T('Конфиг ') + t.name + T(' станет таким, как ') + fmtTime(v.time, true) + T('. Текущий сохранится в истории.'), T('Вернуть'))) return;
               try { const x = await api('/api/tunnel/revision/restore', { name: t.name, id: v.id }); (x.ok ? ok : err)(x.msg.split('\n')[0]); reload(); show('hist'); } catch (ex) { err(ex); }
             } }, T('Вернуть')))))))) : el('div', { class: 'empty' }, T('Версий пока нет: они появятся после первого изменения.')));

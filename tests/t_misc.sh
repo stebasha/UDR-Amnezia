@@ -45,6 +45,13 @@ echo 'LEAK_GUARD=yes' >> "$S/dd/awg.env"
 out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
 ck "selftest: LEAK_GUARD=yes без службы → WARN с подсказкой" 'echo "$out" | grep -q "WARN  LEAK_GUARD=yes, но служба awg-guard не включена"'
 
+# --- статистика: «auto» не заканчивает время на запасном, ручной выбор основного — заканчивает
+S2=$T/stats; mkdir -p "$S2"; n=$(date +%s)
+printf '%s|force|ручное переключение на awgbackup\n%s|auto|возврат к автоматическому выбору\n%s|return|возврат на awgmain\n%s|force|ручное переключение на awgbackup\n%s|force|ручное переключение на awgmain\n' \
+  $((n-3600)) $((n-3590)) $((n-3000)) $((n-1000)) $((n-940)) > "$S2/events.log"
+out=$(DD=$S2 MAIN=awgmain bash "$COMP/awgctl.sh" stats 1)
+ck "stats: auto не обрывает время на запасном, выбор основного — обрывает (10м + 1м)" 'echo "$out" | grep -q "не на основном канале : 11м 00с"'
+
 # --- деинсталлятор
 mkdir -p "$T/dd" "$T/sys" "$T/boot"
 cp "$COMP"/*.sh "$COMP"/*.service "$T/dd/" 2>/dev/null
