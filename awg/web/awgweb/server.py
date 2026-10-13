@@ -423,8 +423,18 @@ def cli():
         rc, out = make_cert()
         print(out.strip() or ("сертификат: %s" % CERT_F))
         sys.exit(rc)
+    if cmd == "tunnel-add" and len(a) > 2:      # panel.py tunnel-add ИМЯ ФАЙЛ [НАЗВАНИЕ] — для vps.sh setup (#28)
+        try:
+            rc, out = tunnel_add(a[1], read_file(a[2]), a[3] if len(a) > 3 else "")
+        except ValueError as ex:
+            print("ОШИБКА: %s" % ex)
+            sys.exit(2)
+        audit("cli", "127.0.0.1", "tunnel-add", a[1])
+        print(out.strip())
+        sys.exit(0 if rc == 0 else 1)
     if cmd == "check":
         c = conf()
         print("порт %s, адрес %s, TLS %s, пользователей %d" % (c["WEB_PORT"], c["WEB_BIND"], c["WEB_TLS"], len(load_users())))
         return
-    print(__doc__)
+    import __main__                     # справка — докстрока точки входа panel.py, а не этого модуля
+    print(getattr(__main__, "__doc__", None) or __doc__)

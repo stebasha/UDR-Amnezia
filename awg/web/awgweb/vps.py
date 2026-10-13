@@ -5,7 +5,7 @@ from .webconf import *  # noqa: F401,F403  (всё из предыдущих м�
 # ======================================================================= свой VPS (#13)
 VPS_F = os.path.join(DD, "vps.env")
 VPS_LOG = os.path.join(DD, "vps-job.log")
-VPS_ACTIONS = {"update": "обновление AmneziaWG на VPS", "router-bins": "обновление AmneziaWG на роутере", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
+VPS_ACTIONS = {"setup": "подключение своего VPS", "update": "обновление AmneziaWG на VPS", "router-bins": "обновление AmneziaWG на роутере", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
 
 
 def vps_job_running():
@@ -60,7 +60,7 @@ def api_vps_run(h, d):
     """Изменения на VPS — отдельной службой (сборка идёт минуты), только с паролем текущего пользователя."""
     a = str(d.get("action", ""))
     if a not in VPS_ACTIONS:
-        raise ValueError("действие: update, router-bins, rotate-keys или obfs")
+        raise ValueError("действие: setup, update, router-bins, rotate-keys или obfs")
     need_pw(h, d, "vps-" + a)
     if vps_job_running():
         raise ValueError("на VPS уже выполняется действие: дождитесь окончания")
@@ -72,11 +72,33 @@ def api_vps_run(h, d):
         if not NAME_RE.match(t):
             raise ValueError("недопустимое имя туннеля")
         args.append(t)
+    env_ = []
+    if a == "setup":          # мастер (#28): адрес VPS сохраняется, пароль VPS — только во временный файл 600 до первого входа
+        api_vps_set(h, d)
+        t = str(d.get("name", "awgvps")).strip() or "awgvps"
+        if not NAME_RE.match(t) or t in tunnels(env()):
+            raise ValueError("имя туннеля: awg и 1–10 строчных букв или цифр, не занятое (например awgvps)")
+        ap = str(d.get("awg_port", "51823")).strip()
+        if not re.match(r"^\d{4,5}$", ap) or not 1024 <= int(ap) <= 65535:
+            raise ValueError("порт AmneziaWG: 1024–65535")
+        args += [t, ap]
+        vp = str(d.get("vps_password", ""))
+        if vp:
+            if len(vp) > 256 or re.search(r"[\x00-\x1f]", vp):
+                raise ValueError("пароль VPS: до 256 символов, без управляющих")
+            pf = os.path.join(DD, ".vpspass-%s" % secrets.token_hex(6))
+            write_secure(pf, vp, 0o600)
+            env_ = ["--setenv=VPS_PASS_FILE=" + pf]
     write_secure(VPS_LOG, "%s %s — запущено из панели (%s)\n" % (time.strftime("%F %T"), VPS_ACTIONS[a], h.user), 0o600)
-    rc, out = run(["systemd-run", "--unit=awg-vps-job", "--collect", "--quiet", "--setenv=DD=" + DD, "-p", "StandardOutput=append:" + VPS_LOG,
+    rc, out = run(["systemd-run", "--unit=awg-vps-job", "--collect", "--quiet", "--setenv=DD=" + DD] + env_ + ["-p", "StandardOutput=append:" + VPS_LOG,
                    "-p", "StandardError=append:" + VPS_LOG, "/bin/bash", "-c", '"$0" "$@"; rc=$?; echo "[код $rc]"; exit $rc',
                    os.path.join(DD, "vps.sh")] + args, timeout=20)
     if rc != 0:
+        for x in env_:
+            try:
+                os.remove(x.split("=", 2)[2])
+            except OSError:
+                pass
         raise ValueError("не удалось запустить: " + out.strip()[:300])
     h.act("vps-" + a, t)
     return {"ok": True, "msg": VPS_ACTIONS[a] + ": запущено"}

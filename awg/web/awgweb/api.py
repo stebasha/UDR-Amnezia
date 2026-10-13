@@ -130,16 +130,21 @@ def api_tunnel_conf_get(h, q):
     return {"name": t, "text": mask_conf(read_file(conf_path(t))), "path": conf_path(t)}
 
 
-def api_tunnel_add(h, d):
-    name = str(d.get("name", "")).strip()
+def tunnel_add(name, text, label=""):
+    """Добавить дополнительный туннель: проверка конфига, ревизия, awg.env, подъём, перезапуск сторожа.
+    Общая для API, мастера своего VPS (vps.sh setup → panel.py tunnel-add) и 3x-ui. → (код up.sh, вывод)."""
+    name = str(name).strip()
     if not NAME_RE.match(name):
         raise ValueError("имя: awg и 1–10 строчных латинских букв или цифр, например awgalt1")
     e = env()
     if name in tunnels(e) or link_exists(name):
         raise ValueError("туннель %s уже есть" % name)
+    lab = str(label or "").strip()[:40]
+    if re.search(r"[<>\"'&\x00-\x1f]", lab):
+        raise ValueError("недопустимые символы в названии")
     cp = os.path.join(DD, name + ".conf")
     with LOCK:
-        text = str(d.get("text", "")).replace("\r", "")
+        text = str(text).replace("\r", "")
         errs = conf_validate(text)
         if errs:
             raise ValueError("конфиг не принят: " + "; ".join(errs))
@@ -147,12 +152,19 @@ def api_tunnel_add(h, d):
         rev_save(name, text, "добавлен")
         extra = (e.get("TUNNELS_EXTRA", "") + " " + name).split()
         env_set({"TUNNELS_EXTRA": " ".join(extra)})
+        if lab:
+            ls = labels()
+            ls[name] = lab
+            write_secure(LABELS_F, json.dumps(ls, ensure_ascii=False))
         rc, out = run([os.path.join(DD, "up.sh"), name], timeout=60)
         if svc_active("awg-failover"):
             run(["systemctl", "restart", "awg-failover"], timeout=60)
-    if d.get("label"):
-        api_tunnel_label(h, {"name": name, "label": d.get("label")})
-    h.act("tunnel-add", name)
+    return rc, out
+
+
+def api_tunnel_add(h, d):
+    rc, out = tunnel_add(d.get("name", ""), d.get("text", ""), d.get("label", ""))
+    h.act("tunnel-add", str(d.get("name", "")).strip())
     return {"ok": rc == 0, "msg": out.strip()}
 
 

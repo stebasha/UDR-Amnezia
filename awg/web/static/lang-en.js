@@ -2,6 +2,21 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "не нужен, если ключ роутера уже на VPS": "not needed if the router key is already on the VPS",
+ "пароль root на VPS — один раз": "VPS root password — used once",
+ "Подключить и настроить": "Connect and set up",
+ "укажите адрес VPS": "enter the VPS address",
+ "Подключить VPS?": "Connect the VPS?",
+ "Роутер войдёт на VPS (пароль VPS — только для первого входа, не сохраняется), положит туда свой ключ, соберёт AmneziaWG из исходников amnezia-vpn (3–7 минут), создаст сервер и добавит туннель. Нужны Ubuntu или Debian и root. Существующие туннели не трогаются.": "The router logs in to the VPS (the VPS password is used only for the first login and is not stored), installs its key there, builds AmneziaWG from amnezia-vpn sources (3–7 minutes), creates the server and adds a tunnel. Requires Ubuntu or Debian and root. Existing tunnels are not touched.",
+ "Роутер входит на ваш VPS по SSH своим ключом, без пароля. Новый VPS: укажите адрес и пароль root один раз и нажмите «Подключить и настроить» — роутер сам добавит ключ, соберёт AmneziaWG, создаст сервер и туннель.": "The router logs in to your VPS over SSH with its own key, no password. New VPS: enter the address and root password once and press “Connect and set up” — the router adds its key, builds AmneziaWG, creates the server and the tunnel.",
+ "Пароль VPS": "VPS password",
+ "Имя нового туннеля": "New tunnel name",
+ "Порт AmneziaWG (UDP)": "AmneziaWG port (UDP)",
+ "Откройте его в файрволе хостера": "Open it in the hosting provider's firewall",
+ "Обновить на роутере": "Update on the router",
+ "Обновить AmneziaWG на роутере?": "Update AmneziaWG on the router?",
+ "Последние релизы amnezia-vpn собираются на вашем VPS (3–7 минут), затем туннели пересоздаются на новых файлах (несколько секунд без трафика PBR). Если handshake не появится — вернутся прежние файлы.": "The latest amnezia-vpn releases are built on your VPS (3–7 minutes), then tunnels are recreated on the new binaries (a few seconds without PBR traffic). If there is no handshake, the previous binaries are restored.",
+ "Для обновления из панели подключите свой VPS: «Настройки → Свой VPS».": "To update from the panel, connect your VPS: “Settings → Your VPS”.",
  "Без перезагрузки": "Uptime",
  "Канал": "Channel",
  "За 7 дней": "Last 7 days",

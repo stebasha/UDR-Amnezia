@@ -35,6 +35,14 @@ cat > "$T/bin/ssh" <<'S'
 #!/bin/bash
 echo "ssh $*" >> "$STUB/ssh.log"
 [ -e "$STUB/sshfail" ] && { echo "root@vps: Permission denied (publickey)." >&2; exit 255; }
+if [[ " $* " == *" PubkeyAuthentication=no "* ]]; then      # вход по паролю: пароль — через SSH_ASKPASS, как у настоящего ssh
+  [ "$SSH_ASKPASS_REQUIRE" = force ] && [ -x "$SSH_ASKPASS" ] || exit 255
+  [ "$("$SSH_ASKPASS")" = "$(cat "$STUB/vpspass")" ] || { echo "Permission denied (password)." >&2; exit 255; }
+  HOME=$VROOT exec bash -c "${@: -1}"
+fi
+if [ -e "$STUB/needkey" ] && ! grep -qF "$(cat "$DD/ssh/id_ed25519.pub" 2>/dev/null)" "$VROOT/.ssh/authorized_keys" 2>/dev/null; then
+  echo "Permission denied (publickey)." >&2; exit 255
+fi
 c="${@: -1}"; c=${c//\/root\//$VROOT/}; c=${c//\/usr\/local\/share\//$VSHARE/}
 case "$c" in
   *ROLLBACK_BINS=1*) rm -f "$STUB/broken"; echo ROLLED_BACK; exit 0;;
@@ -42,6 +50,14 @@ case "$c" in
      mkdir -p "$VROOT/awgbuild/router"; cd "$VROOT/awgbuild/router" || exit 1
      printf '#!/bin/bash\necho "amneziawg-go v0.2.16"\n' > amneziawg-go; printf '#!/bin/bash\necho "awg v1.0.20250901"\n' > awg
      sha256sum amneziawg-go awg > SHA256SUMS; echo "built $c" > BUILDINFO; echo собрано; exit 0;;
+  *"bash $VROOT/awg-server-setup.sh"*)    # новый сервер: свой ключ клиента, сервер принимает его
+     eval "$(echo "$c" | grep -o 'VPS_IP=[^ ]* PORT=[^ ]*')"; mkdir -p "$VROOT/awgbuild"
+     CONF=$SRVCONF; awg(){ "$VBIN/awg" "$@"; }
+     ck_=$(awg genkey); cp_=$(printf '%s' "$ck_" | awg pubkey); sp_=$(awk -F' = ' '$1=="PrivateKey"{print $2; exit}' "$CONF" | tr -d '\n' | awg pubkey)
+     sed -i "/^\[Peer\]/,\$ s|^PublicKey = .*|PublicKey = $cp_|" "$CONF"
+     { printf '[Interface]\nPrivateKey = %s\nAddress = 10.0.1.2/32\nMTU = 1380\n' "$ck_"; grep -E '^(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4) =' "$CONF"
+       printf '\n[Peer]\nPublicKey = %s\nAllowedIPs = 0.0.0.0/0\nEndpoint = %s:%s\nPersistentKeepalive = 25\n' "$sp_" "$VPS_IP" "$PORT"; } > "$VROOT/awgbuild/client.conf"
+     echo "Созданы server.conf и client.conf"; exit 0;;
   *"bash $VROOT/awg-server-build.sh"*) eval "$(echo "$c" | grep -o 'AWG_GO_REF=[^ ]* AWG_TOOLS_REF=[^ ]*')"
      printf 'amneziawg-go %s\namneziawg-tools %s\n' "$AWG_GO_REF" "$AWG_TOOLS_REF" > "$VSHARE/amnezia-build.txt"
      [ -e "$STUB/buildbreak" ] && touch "$STUB/broken"; [ -e "$STUB/buildfail" ] && { echo "go: build failed"; exit 1; }
@@ -86,6 +102,7 @@ fails=0
 ck(){ if eval "$2"; then echo "  OK   $1"; else echo "  FAIL $1"; fails=$((fails+1)); fi; }
 V="$DD/vps.sh"
 hs(){ [ "$("$DD/awg" show awgbackup latest-handshakes | awk '{print $2}')" != 0 ]; }
+hs_t(){ [ "$("$DD/awg" show "$1" latest-handshakes | awk '{print $2}')" != 0 ]; }
 ck "исходно handshake есть" 'hs'
 ck "туннель к VPS найден, туннель провайдера — нет" '[ "$("$V" tunnels)" = awgbackup ]'
 printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"
@@ -163,5 +180,36 @@ printf 'VPS_HOST="vps;reboot"\n' > "$DD/vps.env"; : > "$STUB/ssh.log"
 ck "адрес VPS с ; отклонён до ssh" '! "$V" test >/dev/null && [ ! -s "$STUB/ssh.log" ]'
 rm -f "$DD/vps.env" "$DD/ssh/id_ed25519"
 ck "нет ключа роутера → понятная ошибка" '"$V" test | grep -q "нет ключа роутера"'
+# --- мастер своего VPS (#28): пароль один раз → ключ → сервер → туннель
+cp "$SSRC/awg-server-setup.sh" "$DD/server/"; mkdir -p "$DD/web"
+cat > "$T/bin/ssh-keygen" <<'K'
+#!/bin/bash
+f=""; while [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done
+head -c 32 /dev/urandom | base64 > "$f"; echo "ssh-ed25519 AAAA$(head -c 16 /dev/urandom | base64 | tr -d '=+/') udr-awg@test" > "$f.pub"
+K
+chmod 755 "$T/bin/ssh-keygen"
+cat > "$DD/web/panel.py" <<'P'
+import os, sys
+dd = os.environ["DD"]; name, src = sys.argv[2], sys.argv[3]
+open(os.path.join(dd, name + ".conf"), "w").write(open(src).read())
+e = open(os.path.join(dd, "awg.env")).read()
+open(os.path.join(dd, "awg.env"), "a").write('TUNNELS_EXTRA="%s"\n' % name)
+os.system(os.path.join(dd, "up.sh") + " " + name)
+print("%s поднят" % name)
+P
+printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"; printf 'VPS_HOST="198.51.100.7"\nVPS_PORT="22"\nVPS_USER="root"\n' > "$DD/vps.env"
+rm -f "$DD/ssh/id_ed25519" "$DD/ssh/id_ed25519.pub" "$VROOT/awgbuild/client.conf"; touch "$STUB/needkey"; echo 'Vps-Root-Pass' > "$STUB/vpspass"
+ck "мастер: без пароля и без ключа на VPS — понятный отказ" '! "$V" setup > "$T/w0" 2>&1 && grep -q "пароль не указан" "$T/w0"'
+printf 'wrong' > "$DD/.vpspass-x"; chmod 600 "$DD/.vpspass-x"
+ck "мастер: неверный пароль — отказ, файл пароля удалён" '! VPS_PASS_FILE="$DD/.vpspass-x" "$V" setup > "$T/w1" 2>&1 && grep -q "вход по паролю не удался" "$T/w1" && [ ! -e "$DD/.vpspass-x" ]'
+printf 'Vps-Root-Pass' > "$DD/.vpspass-y"; chmod 600 "$DD/.vpspass-y"; : > "$STUB/ssh.log"
+VPS_PASS_FILE="$DD/.vpspass-y" "$V" setup awgvps 51888 > "$T/w2" 2>&1; rc=$?
+ck "мастер: туннель awgvps работает (handshake, интернет)" '[ $rc = 0 ] && grep -q "свой VPS подключён: туннель awgvps работает" "$T/w2" && hs_t awgvps' ; [ $rc = 0 ] || cat "$T/w2"
+ck "мастер: ключ роутера создан и лежит на VPS, файл пароля удалён" '[ -f "$DD/ssh/id_ed25519" ] && grep -qF "$(cat "$DD/ssh/id_ed25519.pub")" "$VROOT/.ssh/authorized_keys" && [ ! -e "$DD/.vpspass-y" ]'
+ck "мастер: пароль не попал в аргументы ssh, файлы и журнал" '! grep -rq "Vps-Root-Pass" "$STUB/ssh.log" "$T/w2" "$DD"/*.env "$DD"/*.log 2>/dev/null'
+ck "мастер: сервер создан на нужном порту и адресе, конфиг клиента на VPS удалён" 'grep -q "Endpoint = 198.51.100.7:51888" "$DD/awgvps.conf" && [ ! -e "$VROOT/awgbuild/client.conf" ] && [ ! -e "$VROOT/awg-server-setup.sh" ]'
+ck "мастер: VPS_IP записан, событие" 'grep -qx "VPS_IP=198.51.100.7" "$DD/awg.env" && grep -q "|vps|свой VPS 198.51.100.7 подключён: туннель awgvps" "$DD/events.log"'
+ck "мастер: занятое имя туннеля — отказ" '! "$V" setup awgvps > "$T/w3" 2>&1 && grep -q "уже есть" "$T/w3"'
+rm -f "$STUB/needkey"
 echo "== vps: ошибок $fails"
 [ $fails = 0 ]

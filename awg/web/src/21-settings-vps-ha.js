@@ -51,6 +51,24 @@
       btns.push(b);
       return b;
     };
+    // мастер (#28): от пароля VPS до работающего туннеля
+    const vpw = el('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: r.key ? T('не нужен, если ключ роутера уже на VPS') : T('пароль root на VPS — один раз') });
+    const tname = el('input', { class: 'input mono', value: 'awgvps', spellcheck: 'false' });
+    const aport = el('input', { class: 'input mono', value: '51823', inputmode: 'numeric' });
+    const wiz = el('button', { class: 'btn primary' }, icon('server', 'sm'), T('Подключить и настроить'));
+    wiz.addEventListener('click', async () => {
+      if (!host.value.trim() && !r.host_default) { err(T('укажите адрес VPS')); host.focus(); return; }
+      const pw = await promptPw(T('Подключить VPS?'), T('Роутер войдёт на VPS (пароль VPS — только для первого входа, не сохраняется), положит туда свой ключ, соберёт AmneziaWG из исходников amnezia-vpn (3–7 минут), создаст сервер и добавит туннель. Нужны Ubuntu или Debian и root. Существующие туннели не трогаются.'));
+      if (pw == null) return;
+      try {
+        ok((await api('/api/vps/run', { action: 'setup', host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), vps_password: vpw.value,
+          name: tname.value.trim(), awg_port: aport.value.trim(), current: pw })).msg);
+        vpw.value = '';
+        await follow();
+        r = await api('/api/vps');
+      } catch (e) { err(e); }
+    });
+    btns.push(wiz);
     const upd = job('update', T('Обновить AmneziaWG на VPS'), T('Последние релизы amnezia-vpn собираются на VPS из исходников (3–7 минут), сервер перезапускается. Если туннели к VPS не получат handshake — вернутся прежние файлы.'));
     const rk = job('rotate-keys', T('Сменить ключи'), T('Новые ключи сервера и роутера одновременно. Туннель будет недоступен 10–30 секунд (kill switch держит трафик). Не заработает — обе стороны откатятся.'));
     const ob = job('obfs', T('Новые параметры обфускации'), T('Новые Jc, Jmin, Jmax, S1, S2, H1–H4 на VPS и роутере одновременно — если провайдер начал узнавать трафик. Туннель будет недоступен 10–30 секунд; не заработает — откат.'));
@@ -59,22 +77,24 @@
     add(body, [
       el('div', { class: 'grid g-2e' },
         card(T('Подключение к VPS'), el('div', null,
-          el('p', { class: 'muted small' }, T('Роутер входит на ваш VPS по SSH своим ключом, без пароля. Ключ создаёт установщик при настройке VPS.')),
+          el('p', { class: 'muted small' }, T('Роутер входит на ваш VPS по SSH своим ключом, без пароля. Новый VPS: укажите адрес и пароль root один раз и нажмите «Подключить и настроить» — роутер сам добавит ключ, соберёт AmneziaWG, создаст сервер и туннель.')),
           el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.key ? 'ok' : 'warn') }, r.key ? T('ключ роутера есть') : T('ключа роутера нет'))),
           el('div', { class: 'form-grid' },
             el('div', { class: 'field' }, el('label', null, T('Адрес VPS')), host, el('span', { class: 'hint' }, r.host_default ? T('Пусто — ваш VPS из настройки: ') + r.host_default : T('IP или имя сервера'))),
             el('div', { class: 'field' }, el('label', null, T('Порт SSH')), port),
-            el('div', { class: 'field' }, el('label', null, T('Пользователь')), user)),
+            el('div', { class: 'field' }, el('label', null, T('Пользователь')), user),
+            el('div', { class: 'field' }, el('label', null, T('Пароль VPS')), vpw),
+            el('div', { class: 'field' }, el('label', null, T('Имя нового туннеля')), tname),
+            el('div', { class: 'field' }, el('label', null, T('Порт AmneziaWG (UDP)')), aport, el('span', { class: 'hint' }, T('Откройте его в файрволе хостера')))),
           r.pub ? el('details', { class: 'fgroup' }, el('summary', null, T('Открытый ключ роутера (для ~/.ssh/authorized_keys на VPS)')), el('pre', { class: 'res' }, r.pub)) : null,
-          out), { icon: 'server', foot: [test, save] }),
+          out, log), { icon: 'server', foot: [test, save, wiz] }),
         card(T('Сервер и AmneziaWG'), el('div', null,
           el('p', { class: 'muted small' }, T('Состояние — только чтение: служба awg-server, handshake роутера, NAT, файрвол, права на ключи, нагрузка и место. Обновление — только из официальных исходников amnezia-vpn.'))),
         { icon: 'activity', foot: [st, ver, upd] })),
       card(T('Ключи и обфускация'), el('div', null,
         el('p', { class: 'muted small' }, noTun ? T('Нет туннеля, у которого Endpoint — этот VPS: менять можно только свой сервер, не сервер провайдера.')
           : T('Меняется туннель к вашему VPS одновременно на обеих сторонах; перед изменением делаются копии, при неудаче всё откатывается само.')),
-        noTun ? null : el('div', { class: 'field' }, el('label', null, T('Туннель')), tun),
-        log), { icon: 'key', foot: [rk, ob] })]);
+        noTun ? null : el('div', { class: 'field' }, el('label', null, T('Туннель')), tun)), { icon: 'key', foot: [rk, ob] })]);
     if (r.running) follow();
   }
   // Home Assistant (#5): MQTT discovery — HA сам находит устройство, датчики, выбор канала и кнопки

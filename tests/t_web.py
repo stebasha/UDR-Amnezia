@@ -423,7 +423,7 @@ def main():
         it = {x["name"]: x for x in j.get("items", [])}
         check("бинарники: amneziawg-go устарел, awg актуален (тег из списка без мусора)", s == 200 and j["update"]
               and it["amneziawg-go"]["state"] == "update" and it["amneziawg-go"]["latest"] == "v3.1.20260901"
-              and it["awg"]["state"] == "ok" and it["awg"]["installed"] == "v3.1.20260812" and "--bins-update" in j["cmd"], j)
+              and it["awg"]["state"] == "ok" and it["awg"]["installed"] == "v3.1.20260812" and "vps.sh router-bins" in j["cmd"] and j["vps_ready"] is False, j)
         go = os.path.join(dd, "amneziawg-go")
         keep = open(go).read()
         open(go, "w").write('#!/bin/bash\nprintf "amneziawg-go 0.0.20250522\\n\\nUserspace AmneziaWG daemon for linux-arm64.\\n"\n')
@@ -566,6 +566,34 @@ def main():
         check("VPS: действие запускается отдельной службой", s == 200 and "--unit=awg-vps-job" in srl and "vps.sh update" in srl, (j, srl[-300:]))
         s, j = a.get("/api/vps/job")
         check("VPS: журнал действия", s == 200 and "обновление AmneziaWG на VPS — запущено из панели" in j["text"], j)
+        # мастер своего VPS (#28): пароль VPS — только во временный файл 600, не в аргументы и не в журнал
+        s, j = a.post("/api/vps/run", {"action": "setup", "host": "198.51.100.7", "port": "22", "user": "root", "vps_password": "Vps-Pass-1",
+                                       "name": "awgmain", "awg_port": "51823", "current": "Test-pass-123"})
+        check("VPS-мастер: занятое имя туннеля отклонено", s == 400, j)
+        s, j = a.post("/api/vps/run", {"action": "setup", "host": "198.51.100.7", "port": "22", "user": "root", "vps_password": "Vps-Pass-1",
+                                       "name": "awgvps", "awg_port": "51823", "current": "Test-pass-123"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read().splitlines()[-1]
+        pfs = [f for f in os.listdir(dd) if f.startswith(".vpspass-")]
+        pf = os.path.join(dd, pfs[0]) if pfs else ""
+        check("VPS-мастер: запуск с файлом пароля 600, пароля нет в аргументах и журналах",
+              s == 200 and "vps.sh setup awgvps 51823" in srl and "VPS_PASS_FILE=" + pf in srl and "Vps-Pass-1" not in srl
+              and pf and open(pf).read() == "Vps-Pass-1" and oct(os.stat(pf).st_mode & 0o777) == "0o600"
+              and "Vps-Pass-1" not in open(os.path.join(dd, "web", "audit.log")).read()
+              and 'VPS_HOST="198.51.100.7"' in open(os.path.join(dd, "vps.env")).read(), (j, srl))
+        if pf:
+            os.remove(pf)
+        # общий tunnel_add из командной строки (им пользуется мастер)
+        cf = os.path.join(LAB, "cli.conf")
+        open(cf, "w").write(open(os.path.join(dd, "main.conf")).read())
+        p_ = subprocess.run([sys.executable, os.path.join(dd, "web", "panel.py"), "tunnel-add", "awgcli", cf, "Свой VPS"],
+                            capture_output=True, text=True, env=dict(os.environ, **{k: v for k, v in (x.split("=", 1) for x in open("/proc/%s/environ" % pid).read().split("\0") if "=" in x)}))
+        ev = open(os.path.join(dd, "awg.env")).read()
+        check("panel.py tunnel-add: туннель, название, ревизия", p_.returncode == 0 and "awgcli" in ev and os.path.exists(os.path.join(dd, "awgcli.conf"))
+              and json.load(open(os.path.join(dd, "web", "labels.json"))).get("awgcli") == "Свой VPS", p_.stdout + p_.stderr)
+        p_ = subprocess.run([sys.executable, os.path.join(dd, "web", "panel.py"), "tunnel-add", "awgcli", cf], capture_output=True, text=True,
+                            env=dict(os.environ, DD=dd, AWG_WEBD=os.path.join(dd, "web")))
+        check("panel.py tunnel-add: повтор — отказ с кодом 2", p_.returncode == 2 and "уже есть" in p_.stdout, p_.stdout)
+        a.post("/api/tunnel/remove", {"name": "awgcli", "current": "Test-pass-123"})
 
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
