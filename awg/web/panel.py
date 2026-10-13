@@ -548,38 +548,90 @@ def totp_ok(secret, code):
 
 
 class Sessions:
+    """Сеансы панели. Хранятся в файле (600), чтобы перезапуск или обновление панели не выкидывали всех.
+    В файле только SHA-256 от токена: утечка файла не даёт войти; сам токен живёт лишь в куке браузера."""
     IDLE = 2 * 3600
     ABS = 12 * 3600
+    SAVE_EVERY = 60          # отметку «последняя активность» сбрасываем на диск не чаще раза в минуту
 
-    def __init__(self):
-        self.s = {}
+    def __init__(self, path=None):
+        self.s = {}          # sha256(токен) → сведения о сеансе
         self.lock = threading.Lock()
+        self.path = path
+        self.saved = 0
+        self.load()
+
+    @staticmethod
+    def key(tok):
+        return hashlib.sha256((tok or "").encode()).hexdigest()
+
+    def alive(self, x, t=None):
+        t = t or now()
+        return t - x["seen"] <= self.IDLE and t - x["born"] <= self.ABS
+
+    def load(self):
+        if not self.path:
+            return
+        try:
+            data = json.loads(read_file(self.path) or "{}")
+        except ValueError:
+            data = {}
+        users = load_users()
+        with self.lock:
+            self.s = {k: v for k, v in (data.get("sessions") or {}).items()
+                      if isinstance(v, dict) and re.match(r"^[0-9a-f]{64}$", k) and v.get("user") in users and self.alive(v)}
+
+    def save(self, force=True):
+        """Вызывать под self.lock."""
+        if not self.path or (not force and now() - self.saved < self.SAVE_EVERY):
+            return
+        try:
+            write_secure(self.path, json.dumps({"format": 1, "sessions": self.s}), 0o600)
+            self.saved = now()
+        except OSError as ex:
+            sys.stderr.write("сеансы не сохранены: %r\n" % ex)
 
     def new(self, user, ip, ua=""):
         tok = secrets.token_urlsafe(32)
         with self.lock:
-            self.s[tok] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160]}
+            self.s = {k: v for k, v in self.s.items() if self.alive(v)}
+            self.s[self.key(tok)] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160]}
+            self.save()
         return tok
 
     def get(self, tok):
+        k = self.key(tok)
         with self.lock:
-            x = self.s.get(tok or "")
+            x = self.s.get(k) if tok else None
             if not x:
                 return None
-            if now() - x["seen"] > self.IDLE or now() - x["born"] > self.ABS:
-                del self.s[tok]
+            if not self.alive(x):
+                del self.s[k]
+                self.save()
                 return None
             x["seen"] = now()
+            self.save(force=False)
             return x
 
-    def drop(self, tok=None, user=None):
+    def drop(self, tok=None, user=None, keep=None, sid_=None):
+        """tok — один сеанс; user — все сеансы пользователя; sid_ — по короткому id; keep — кроме этого токена."""
+        kt = self.key(tok) if tok else None
+        kk = self.key(keep) if keep else None
         with self.lock:
             for k in list(self.s):
-                if k == tok or (user and self.s[k]["user"] == user):
+                if k == kt or (user and self.s[k]["user"] == user) or (sid_ and k[:12] == sid_ and k != kk) \
+                        or (sid_ == "others" and k != kk):
                     del self.s[k]
+            self.save()
+
+    def listing(self, cur):
+        kc = self.key(cur) if cur else None
+        with self.lock:
+            return [{"id": k[:12], "user": v["user"], "ip": v["ip"], "born": v["born"], "seen": v["seen"], "ua": v.get("ua", ""), "me": k == kc}
+                    for k, v in self.s.items() if self.alive(v)]
 
 
-SESS = Sessions()
+SESS = Sessions(os.path.join(WEBD, "sessions.json"))
 
 
 class Throttle:
@@ -2623,23 +2675,18 @@ def api_clients(h, q):
 
 # ======================================================================= сеансы
 def sid(tok):
-    return hashlib.sha256(tok.encode()).hexdigest()[:12]
+    return Sessions.key(tok)[:12]
 
 
 def api_sessions(h, q):
-    cur = h.cookie("awgsid")
-    with SESS.lock:
-        lst = [{"id": sid(k), "user": v["user"], "ip": v["ip"], "born": v["born"], "seen": v["seen"], "ua": v.get("ua", ""), "me": k == cur}
-               for k, v in SESS.s.items()]
-    return {"sessions": sorted(lst, key=lambda x: -x["seen"])}
+    return {"sessions": sorted(SESS.listing(h.cookie("awgsid")), key=lambda x: -x["seen"])}
 
 
 def api_session_revoke(h, d):
     x = str(d.get("id", ""))
-    with SESS.lock:
-        for k in list(SESS.s):
-            if sid(k) == x or (x == "others" and k != h.cookie("awgsid")):
-                del SESS.s[k]
+    if x != "others" and not re.match(r"^[0-9a-f]{12}$", x):
+        raise ValueError("нет такого сеанса")
+    SESS.drop(sid_=x, keep=h.cookie("awgsid"))
     h.act("session-revoke", x)
     return {"ok": True}
 

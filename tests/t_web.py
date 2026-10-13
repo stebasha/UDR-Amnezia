@@ -89,6 +89,27 @@ def job(c, payload, timeout=60):
     return 0, {"out": "timeout"}
 
 
+def restart_panel(pid):
+    """Перезапуск панели стенда с тем же окружением (как systemctl restart awg-web). Возвращает новый PID."""
+    env = dict(x.split("=", 1) for x in open("/proc/%s/environ" % pid).read().split("\0") if "=" in x)
+    cmd = [x for x in open("/proc/%s/cmdline" % pid).read().split("\0") if x]
+    cwd = os.readlink("/proc/%s/cwd" % pid)
+    subprocess.call(["kill", pid])
+    for _ in range(50):
+        if not os.path.exists("/proc/%s" % pid):
+            break
+        time.sleep(0.1)
+    p = subprocess.Popen(cmd, env=env, cwd=cwd, stdout=open(os.path.join(LAB, "panel.log"), "a"), stderr=subprocess.STDOUT)
+    for _ in range(100):
+        try:
+            http.client.HTTPConnection("127.0.0.1", PORT, timeout=1).request("GET", "/")
+            break
+        except OSError:
+            time.sleep(0.1)
+    time.sleep(0.3)
+    return str(p.pid)
+
+
 def main():
     pid = subprocess.check_output([os.path.join(R, "tests/web_lab.sh"), LAB, str(PORT)]).decode().strip().splitlines()[-1]
     dd = os.path.join(LAB, "dd")
@@ -303,6 +324,23 @@ def main():
         s2, j2 = c3.get("/api/overview")
         s3, j3 = a.get("/api/overview")
         check("завершить другие сеансы", s == 200 and s2 == 401 and s3 == 200, (s2, s3))
+        # ---------- 1.5 (#7): сеансы переживают перезапуск панели; в файле только хэши
+        sj = open(os.path.join(dd, "web", "sessions.json")).read()
+        tok = a.cookie.split("=", 1)[1]
+        check("сеансы: файл 600, токена в нём нет, есть хэш", oct(os.stat(os.path.join(dd, "web", "sessions.json")).st_mode & 0o777) == "0o600"
+              and tok not in sj and hashlib.sha256(tok.encode()).hexdigest() in sj, sj[:200])
+        pid = restart_panel(pid)
+        s, j = a.get("/api/overview")
+        check("сеансы: после перезапуска панели вход не нужен", s == 200, s)
+        s, j = a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        check("сеансы: CSRF после перезапуска тот же", s == 200, j)
+        s, j = a.post("/api/session/revoke", {"id": "../../x"})
+        check("сеансы: мусорный id отклонён", s == 400, j)
+        c5 = C(); c5.login()
+        s, j = a.get("/api/sessions")
+        other = [x["id"] for x in j["sessions"] if not x["me"]]
+        s, j = a.post("/api/session/revoke", {"id": other[0]})
+        check("сеансы: завершение по id", s == 200 and c5.get("/api/overview")[0] == 401 and a.get("/api/overview")[0] == 200, other)
         s, j = a.get("/api/settings/export")
         check("экспорт настроек без секретов", s == 200 and j["format"] == "udr-amnezia-settings" and "PrivateKey" not in json.dumps(j)
               and j["settings"]["RECOVER_SEC"] == "900", j)
