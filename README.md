@@ -23,7 +23,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/in
 /data/awg/install.sh --uninstall
 ```
 
-**Обновление с версий 1.0 и 1.1.** Старые установщики при `--update` перезаписывали сами себя во время работы. Обновляйтесь так, чтобы работал уже новый установщик:
+**Обновление с версий 1.0 и 1.1.** Начиная с 1.5 их встроенный `--update` не поддерживается: старые установщики перезаписывали сами себя во время работы. Обновляйтесь командой, которая запускает уже новый установщик:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/stebasha/UDR-Amnezia/main/install.sh) --update
