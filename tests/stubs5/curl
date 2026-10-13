@@ -1,6 +1,7 @@
 #!/bin/bash
 S=${STUB:?}; i=""; u=""
 while [ $# -gt 0 ]; do case "$1" in --interface) i=$2; shift;; http*) u=$1;; esac; shift; done
+case "$u" in */VERSION) [ -z "$i" ] && [ -f "$S/ver" ] && { cat "$S/ver"; exit 0; };; esac   # версия в канале (тест «не предлагать откат»)
 if [ -z "$i" ] && [ -e "$S/gh" ]; then case "$u" in   # официальные релизы amnezia-vpn (#11)
   */amnezia-vpn/amneziawg-go/releases/latest) echo '{"tag_name": "v3.1.20260901"}'; exit 0;;
   */amnezia-vpn/amneziawg-tools/releases/latest) exit 22;;

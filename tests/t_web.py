@@ -430,6 +430,12 @@ def main():
         s, j = a.post("/api/bins/check", {})
         check("бинарники: тег сборки из .binsver (сумма совпала)", s == 200 and not j["update"] and j["items"][0]["installed"] == "v3.1.20260901", j)
         os.remove(os.path.join(LAB, "stub", "gh")); os.remove(os.path.join(dd, ".binsver"))
+        for v, upd, older in (("1.4.3", False, True), ("99.0.0", True, False), (PANEL_VERSION, False, False)):
+            open(os.path.join(LAB, "stub", "ver"), "w").write(v + "\n")
+            s, j = a.post("/api/update/check", {})
+            check("проверка обновлений: в канале %s — %s" % (v, "обновление" if upd else "старее, не предлагать" if older else "актуально"),
+                  s == 200 and j["update"] is upd and j["older"] is older, j)
+        os.remove(os.path.join(LAB, "stub", "ver"))
         s, j = a.post("/api/update/run", {})
         check("обновление запускается отдельной службой", s == 200 and "awg-update" in open(os.path.join(LAB, "systemd-run.log")).read(), j)
         s, j = a.get("/api/update/log")

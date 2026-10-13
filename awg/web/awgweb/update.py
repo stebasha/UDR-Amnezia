@@ -55,7 +55,9 @@ def api_update_check(h, d):
         notes = (m.group(1).strip() if m else "")[:6000]
     env_ = "AWG_CHANNEL=%s" % ch + (" AWG_BRANCH=%s" % br if ch == "branch" else "")
     return {"current": cur, "latest": new, "repo": repo, "channel": ch, "branch": br, "ref": ref, "kind": kind,
-            "update": bool(new) and new != cur, "notes": notes, "running": update_running(),
+            # только новее установленной: канал stable до первого релиза или своя ветка могут быть старее (не предлагать откат)
+            "update": bool(new) and vkey(new) > vkey(cur), "older": bool(new) and vkey(new) < vkey(cur),
+            "notes": notes, "running": update_running(),
             "cmd": "%s bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update" % (env_, repo, ref)}
 
 

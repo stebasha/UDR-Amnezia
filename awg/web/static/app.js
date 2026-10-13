@@ -2160,6 +2160,7 @@
         replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Доступна версия '), el('b', null, u.latest), T(' (у вас ') + u.current + ', ' + chanLabel(u) + ').')),
           u.notes ? el('details', { class: 'fgroup' }, el('summary', null, T('Что нового')), el('pre', { class: 'res' }, u.notes)) : null,
           el('div', { class: 'spacer' }), go, el('div', { class: 'small muted' }, T('Или по SSH: '), el('code', null, u.cmd)))
+          : u.older ? el('div', null, el('div', { class: 'alert info' }, icon('info'), el('div', null, T('У вас ') + u.current + T(' — новее, чем в выбранном канале (') + chanLabel(u) + ', ' + u.latest + T('). Обновлять нечего; откат на старую версию — только вручную по SSH: '), el('code', null, u.cmd))))
           : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Установлена последняя версия ') + u.current + ' (' + chanLabel(u) + ').')))
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
       } catch (e) { err(e); }
