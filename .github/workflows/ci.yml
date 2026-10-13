@@ -59,23 +59,24 @@ jobs:
       - name: Тесты панели в Chromium
         run: python3 tests/t_ui.py
 
-  # Весь набор на aarch64, как на UDR7: Debian 11 и Python 3.9 (#16). Нативный ARM-раннер GitHub — быстрее эмуляции qemu.
+  # Весь набор на aarch64, как на UDR7 (#16): нативный ARM-раннер GitHub (быстрее эмуляции qemu);
+  # панель, бот и HA — ещё и на Python 3.9, как на роутере
   arm64:
     runs-on: ubuntu-24.04-arm
-    container: debian:bullseye
     timeout-minutes: 40
-    env:
-      DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: 'Пакеты как на роутере — bash, python3, openssl, curl'
-        run: |
-          # Debian 11 после окончания LTS переезжает в archive.debian.org — тогда берём пакеты оттуда
-          if ! apt-get update -qq; then
-            sed -i -e 's|deb.debian.org|archive.debian.org|g' -e 's|security.debian.org|archive.debian.org|g' -e '/bullseye-updates/d' /etc/apt/sources.list
-            apt-get -o Acquire::Check-Valid-Until=false update -qq
-          fi
-          apt-get install -y -qq --no-install-recommends ca-certificates git python3 openssl curl procps iproute2 iptables hostname util-linux
-          uname -m; python3 --version
       - uses: actions/checkout@v4
-      - name: Тесты на заглушках (aarch64)
-        run: bash tests/run.sh
+      - name: Тесты на заглушках (aarch64, системный Python)
+        run: |
+          uname -m; python3 --version
+          bash tests/run.sh
+      - uses: astral-sh/setup-uv@v6
+      - name: Панель, бот и HA на Python 3.9 (aarch64)
+        run: |
+          uv python install 3.9
+          mkdir -p "$RUNNER_TEMP/py39" && ln -sf "$(uv python find 3.9)" "$RUNNER_TEMP/py39/python3"
+          export PATH="$RUNNER_TEMP/py39:$PATH"
+          python3 --version
+          python3 tests/t_web.py
+          python3 tests/t_bot.py
+          python3 tests/t_ha.py
