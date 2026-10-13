@@ -1,4 +1,5 @@
-/* UDR-Amnezia — веб-панель. Без внешних библиотек; совместимо с CSP (без inline-скриптов и стилей). */
+/* UDR-Amnezia — веб-панель. Без внешних библиотек; совместимо с CSP (без inline-скриптов и стилей).
+   Файл собран из awg/web/src/*.js командой python3 tools/build-app.py: правьте части там, не этот файл. */
 'use strict';
 (function () {
   // ===================================================================== язык (ru по умолчанию, en — словарь lang-en.js)
@@ -1972,6 +1973,33 @@
     return card(T('Токены API'), el('div', null, tokHint(el('p', { class: 'muted small' }, T('Для Home Assistant, скриптов и мониторинга: заголовок Authorization: Bearer <токен>. Доступ только из локальной сети.'))),
       el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: add });
   }
+  async function sessionsCard() {
+    const tb = el('tbody');
+    const idle = el('input', { class: 'input mono', inputmode: 'numeric' });
+    const mx = el('input', { class: 'input mono', inputmode: 'numeric' });
+    const load = async () => {
+      const r = await api('/api/sessions');
+      if (document.activeElement !== idle && document.activeElement !== mx) { idle.value = r.idle; mx.value = r.max; }
+      replace(tb, r.sessions.map((x) => el('tr', null,
+        el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, T('этот')) : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
+        el('td', null, el('span', { class: 'mono' }, x.ip)),
+        el('td', { class: 'nowrap' }, T('вход ') + fmtTime(x.born), el('div', { class: 'small muted' }, T('активность ') + fmtAge(Math.floor(Date.now() / 1000) - x.seen))),
+        el('td', { class: 'r' }, x.me ? null : el('button', { class: 'btn sm danger', onclick: async () => { try { await api('/api/session/revoke', { id: x.id }); load(); } catch (e) { err(e); } } }, T('Завершить'))))));
+    };
+    load().catch(err);
+    const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok(T('Остальные сеансы завершены')); load(); } catch (e) { err(e); } } }, T('Завершить остальные'));
+    // время жизни сеансов (#21)
+    const lsave = el('button', { class: 'btn sm' }, T('Сохранить'));
+    lsave.addEventListener('click', async () => {
+      const pw = await promptPw(T('Время жизни сеансов'), T('Сеансы, вышедшие за новые пределы, закроются (и этот тоже, если он старше).'));
+      if (pw == null) return;
+      try { ok((await api('/api/sessions/config', { idle: idle.value.trim(), max: mx.value.trim(), current: pw })).msg); load(); } catch (e) { err(e); }
+    });
+    idle.style.width = mx.style.width = '6em';
+    const lim = el('div', { class: 'row wrap small' }, T('Выход без активности через'), idle, T('мин; не дольше'), mx, T('ч с момента входа'), lsave);
+    lim.style.padding = '8px 16px';
+    return card(T('Активные сеансы'), el('div', null, lim, el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: all });
+  }
   async function setBackups(body) {
     const tb = el('tbody');
     const load = async () => {
@@ -2218,33 +2246,6 @@
           r.cert_warn ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, r.cert_warn)) : null,
           certKv, el('div', { class: 'spacer' }), found), { icon: 'shield' })),
       el('div', { class: 'row end' }, save)]);
-  }
-  async function sessionsCard() {
-    const tb = el('tbody');
-    const idle = el('input', { class: 'input mono', inputmode: 'numeric' });
-    const mx = el('input', { class: 'input mono', inputmode: 'numeric' });
-    const load = async () => {
-      const r = await api('/api/sessions');
-      if (document.activeElement !== idle && document.activeElement !== mx) { idle.value = r.idle; mx.value = r.max; }
-      replace(tb, r.sessions.map((x) => el('tr', null,
-        el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, T('этот')) : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
-        el('td', null, el('span', { class: 'mono' }, x.ip)),
-        el('td', { class: 'nowrap' }, T('вход ') + fmtTime(x.born), el('div', { class: 'small muted' }, T('активность ') + fmtAge(Math.floor(Date.now() / 1000) - x.seen))),
-        el('td', { class: 'r' }, x.me ? null : el('button', { class: 'btn sm danger', onclick: async () => { try { await api('/api/session/revoke', { id: x.id }); load(); } catch (e) { err(e); } } }, T('Завершить'))))));
-    };
-    load().catch(err);
-    const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok(T('Остальные сеансы завершены')); load(); } catch (e) { err(e); } } }, T('Завершить остальные'));
-    // время жизни сеансов (#21)
-    const lsave = el('button', { class: 'btn sm' }, T('Сохранить'));
-    lsave.addEventListener('click', async () => {
-      const pw = await promptPw(T('Время жизни сеансов'), T('Сеансы, вышедшие за новые пределы, закроются (и этот тоже, если он старше).'));
-      if (pw == null) return;
-      try { ok((await api('/api/sessions/config', { idle: idle.value.trim(), max: mx.value.trim(), current: pw })).msg); load(); } catch (e) { err(e); }
-    });
-    idle.style.width = mx.style.width = '6em';
-    const lim = el('div', { class: 'row wrap small' }, T('Выход без активности через'), idle, T('мин; не дольше'), mx, T('ч с момента входа'), lsave);
-    lim.style.padding = '8px 16px';
-    return card(T('Активные сеансы'), el('div', null, lim, el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: all });
   }
 
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)

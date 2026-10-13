@@ -104,9 +104,9 @@ t "в установщике нет сторонних источников би
 t "ссылки на исходники только amnezia-vpn" '[ -z "$(grep -o "github.com/[A-Za-z0-9_-]*/amneziawg-[a-z]*" "$INST" "$KIT"/server/*.sh | grep -v "github.com/amnezia-vpn/")" ]'
 
 # --- 1.4: веб-панель, канал обновлений, откат
-t "веб-панель скопирована" '[ -x "$DD/web/panel.py" ] && [ -f "$DD/web/static/app.js" ] && [ -f "$DD/web/static/index.html" ] && [ "$(stat -c %a "$DD/web")" = 700 ]'
+t "веб-панель скопирована" '[ -x "$DD/web/panel.py" ] && [ -f "$DD/web/awgweb/server.py" ] && [ "$(stat -c %a "$DD/web/awgweb")" = 700 ] && [ -f "$DD/web/static/app.js" ] && [ -f "$DD/web/static/index.html" ] && [ "$(stat -c %a "$DD/web")" = 700 ]'
 t "канал обновлений записан" 'grep -qx "AWG_BRANCH=$AWG_BRANCH" "$DD/.channel" && grep -qx "AWG_REPO=$AWG_REPO" "$DD/.channel"'
-t "манифест включает панель" 'grep -q " web/panel.py$" "$DD/.manifest" && grep -q " web/static/app.js$" "$DD/.manifest"'
+t "манифест включает панель" 'grep -q " web/panel.py$" "$DD/.manifest" && grep -q " web/awgweb/core.py$" "$DD/.manifest" && grep -q " web/static/app.js$" "$DD/.manifest"'
 echo "свои пользователи" > "$DD/web/users.json"
 install_files >/dev/null 2>&1
 t "обновление не трогает пользователей панели" 'grep -q "свои пользователи" "$DD/web/users.json"'

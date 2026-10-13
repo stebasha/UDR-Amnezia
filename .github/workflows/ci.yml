@@ -24,6 +24,10 @@ jobs:
           ! grep -R -n -i "djgreez" install.sh awg server
       - name: Гайд index.html совпадает со скриптами
         run: python3 tools/sync-guide.py --check
+      - name: Панель по модулям (#18) — app.js собран из частей, у модулей Python нет ссылок вперёд
+        run: |
+          python3 tools/build-app.py --check
+          python3 tools/check-modules.py
 
   # Панель, бот и Home Assistant на всех поддерживаемых Python (#16): на роутерах UniFi бывает 3.7–3.11
   python:

@@ -16,7 +16,8 @@
 |---|---|
 | `install.sh` | установщик, обновление с откатом, каналы, бинарники |
 | `awg/*.sh` | службы и команды на роутере: сторож `failover.sh`, `guard.sh`, `self.sh`, `subnets.sh`, `notify.sh`, `backup.sh`, `vps.sh`, `awgctl.sh`… |
-| `awg/web/panel.py`, `awg/web/static/` | веб-панель: Python (только стандартная библиотека), один `app.js` без сборки, `lang-en.js` — английский |
+| `awg/web/panel.py`, `awg/web/awgweb/` | веб-панель, Python (только стандартная библиотека): `panel.py` — точка входа, код — по модулям в `awgweb/` (core → data → configs → … → server; каждый импортирует предыдущий, ссылок вперёд нет — `tools/check-modules.py`) |
+| `awg/web/src/*.js`, `awg/web/static/` | интерфейс: части `src/*.js` склеиваются в один `static/app.js` (`python3 tools/build-app.py`, CI проверяет совпадение); `lang-en.js` — английский |
 | `awg/bot.py`, `awg/ha.py` | Telegram-бот, Home Assistant (MQTT) |
 | `server/` | скрипты для своего VPS: сборка, сервер AmneziaWG, аудит, смена ключей и обфускации |
 | `tests/` | тесты на заглушках, без роутера и root |
@@ -39,6 +40,8 @@ bash tests/run.sh                                               # все тес�
 shellcheck -S warning install.sh awg/*.sh server/*.sh tests/*.sh   # предупреждения блокируют CI
 sha256sum install.sh > install.sh.sha256                        # после любой правки install.sh
 python3 tools/sync-guide.py                                     # обновить гайд, если менялась справка скриптов
+python3 tools/build-app.py                                      # после правки awg/web/src/*.js: собрать static/app.js
+python3 tools/check-modules.py                                  # модули панели: нет ссылок вперёд
 python3 tools/i18n-check.py                                     # строки панели без перевода
 ```
 
@@ -54,4 +57,4 @@ CI повторяет это, а также гоняет панель на Pytho
 
 ## Релиз
 
-Версия в `VERSION`, `INSTALLER_VERSION` в `install.sh`, `VERSION` в `awg/web/panel.py`, раздел `## X.Y.Z` в `CHANGELOG.md`. Тег `vX.Y.Z` запускает workflow `release`: тесты, архив `udr-amnezia-vX.Y.Z.tar.gz` и `SHA256SUMS` в GitHub Release; канал stable ставит его со сверкой суммы.
+Версия в `VERSION`, `INSTALLER_VERSION` в `install.sh`, `VERSION` в `awg/web/awgweb/core.py`, раздел `## X.Y.Z` в `CHANGELOG.md`. Тег `vX.Y.Z` запускает workflow `release`: тесты, архив `udr-amnezia-vX.Y.Z.tar.gz` и `SHA256SUMS` в GitHub Release; канал stable ставит его со сверкой суммы.

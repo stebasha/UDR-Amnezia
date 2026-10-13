@@ -14,7 +14,7 @@ import tempfile
 import time
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PANEL_VERSION = re.search(r'^VERSION = "([^"]+)"', open(os.path.join(R, "awg/web/panel.py")).read(), re.M).group(1)
+PANEL_VERSION = re.search(r'^VERSION = "([^"]+)"', open(os.path.join(R, "awg/web/awgweb/core.py")).read(), re.M).group(1)
 PORT = int(os.environ.get("WEB_TEST_PORT", "18471"))
 LAB = tempfile.mkdtemp(prefix="awgweb-")
 FAILS = []

@@ -286,7 +286,8 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/vps.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/vps.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/awgweb/__init__.py awg/web/awgweb/account.py awg/web/awgweb/api.py awg/web/awgweb/backups.py awg/web/awgweb/clients.py awg/web/awgweb/configs.py awg/web/awgweb/core.py awg/web/awgweb/data.py awg/web/awgweb/importer.py awg/web/awgweb/server.py awg/web/awgweb/settings.py awg/web/awgweb/speed.py awg/web/awgweb/tools.py awg/web/awgweb/tunnels.py awg/web/awgweb/update.py awg/web/awgweb/vps.py awg/web/awgweb/webconf.py
+ awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -354,7 +355,10 @@ kit_verify(){
   local f bad=0
   for f in "$KIT"/awg/*.sh "$KIT"/server/*.sh; do bash -n "$f" 2>/dev/null || { err "синтаксическая ошибка в $f"; bad=1; }; done
   if command -v python3 >/dev/null && [ -f "$KIT/awg/web/panel.py" ]; then
-    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$KIT/awg/web/panel.py" 2>/dev/null || { err "синтаксическая ошибка в awg/web/panel.py"; bad=1; }
+    for f in "$KIT/awg/web/panel.py" "$KIT"/awg/web/awgweb/*.py; do
+      [ -f "$f" ] || continue
+      python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$f" 2>/dev/null || { err "синтаксическая ошибка в ${f#"$KIT"/}"; bad=1; }
+    done
   fi
   [ $bad = 0 ] && ok "скрипты прошли проверку синтаксиса" || die "скрипты повреждены, скачайте заново."
   [ -f "$KIT/VERSION" ] && info "версия набора: $(cat "$KIT/VERSION")"
@@ -371,6 +375,12 @@ install_files(){
   if [ -d "$KIT/awg/web" ]; then
     mkdir -p "$DD/web/static"; chmod 700 "$DD/web"
     put "$KIT/awg/web/panel.py" "$DD/web/panel.py"; chmod 700 "$DD/web/panel.py"
+    # код панели по модулям (#18): web/awgweb/*.py
+    if [ -d "$KIT/awg/web/awgweb" ]; then
+      mkdir -p "$DD/web/awgweb"; chmod 700 "$DD/web/awgweb"
+      for f in "$KIT"/awg/web/awgweb/*.py; do [ -f "$f" ] && put "$f" "$DD/web/awgweb/$(basename "$f")"; done
+      chmod 600 "$DD"/web/awgweb/*.py; rm -rf "$DD/web/awgweb/__pycache__"
+    fi
     for f in "$KIT"/awg/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
     chmod 644 "$DD"/web/static/*
   fi
@@ -1219,7 +1229,7 @@ valid_domain(){ [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([
 list_tunnels(){ echo "$MAIN $(env_get BACKUP) $(env_get TUNNELS_EXTRA)" | tr -s ' ' '\n' | grep -v '^$'; }
 
 write_manifest(){
-  ( cd "$DD" && sha256sum ./*.sh ./*.service ./server/*.sh ./web/panel.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
+  ( cd "$DD" && sha256sum ./*.sh ./*.service ./server/*.sh ./web/panel.py ./web/awgweb/*.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
 }
 do_verify(){
   title "Проверка файлов установки"
@@ -1827,6 +1837,8 @@ update_rollback(){  # вернуть код и службы из копии, с�
   for f in "$tmp"/*.sh "$tmp"/*.service "$tmp"/VERSION; do [ -f "$f" ] && put "$f" "$DD/$(basename "$f")"; done
   if [ -d "$tmp/web" ]; then
     [ -f "$tmp/web/panel.py" ] && put "$tmp/web/panel.py" "$DD/web/panel.py"
+    for f in "$tmp"/web/awgweb/*.py; do [ -f "$f" ] && put "$f" "$DD/web/awgweb/$(basename "$f")"; done
+    rm -rf "$DD/web/awgweb/__pycache__"
     for f in "$tmp"/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
   fi
   chmod 755 "$DD"/*.sh 2>/dev/null

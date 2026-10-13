@@ -19,6 +19,7 @@ jobs:
           [ "$(cat VERSION)" = "$ver" ] || { echo "::error::VERSION=$(cat VERSION), тег $tag"; exit 1; }
           grep -qx "INSTALLER_VERSION=$ver" install.sh || { echo "::error::INSTALLER_VERSION в install.sh не $ver"; exit 1; }
           grep -q "^## $ver\b" CHANGELOG.md || { echo "::error::в CHANGELOG.md нет раздела «## $ver»"; exit 1; }
+          grep -qx "VERSION = \"$ver\"" awg/web/awgweb/core.py || { echo "::error::VERSION панели (awg/web/awgweb/core.py) не $ver"; exit 1; }
       - name: Тесты
         run: |
           for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
