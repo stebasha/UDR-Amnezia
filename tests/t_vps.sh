@@ -30,6 +30,7 @@ esac
 A
 chmod 755 "$T/awg"; cp "$T/awg" "$DD/awg"; cp "$T/awg" "$VBIN/awg"
 printf '#!/bin/bash\necho "$*" >> "%s/vps-systemctl.log"\n' "$STUB" > "$VBIN/systemctl"
+printf '#!/bin/bash\n[ "$1" = -u ] && { echo 0; exit 0; }; exec /usr/bin/id "$@"\n' > "$VBIN/id"   # на «VPS» мы root (CI идёт не от root)
 printf '#!/bin/bash\ncp "$DD/$( [ "$1" = awgbackup ] && echo backup.conf || echo "$1.conf")" "%s/applied.$1" 2>/dev/null\n' "$STUB" > "$DD/up.sh"
 cat > "$T/bin/ssh" <<'S'
 #!/bin/bash
