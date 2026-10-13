@@ -5,6 +5,7 @@
 #   vps.sh status                состояние сервера (audit-server.sh, только чтение), версии AmneziaWG, нагрузка, место
 #   vps.sh versions              версии amneziawg-go и awg на VPS и последние релизы amnezia-vpn (код 10 — есть новее)
 #   vps.sh update                собрать последние релизы на VPS и перезапустить сервер; нет handshake — откат на *.prev
+#   vps.sh router-bins           собрать последние amneziawg-go и awg для роутера на VPS и поставить (откат по handshake)
 #   vps.sh rotate-keys [ТУННЕЛЬ] новые ключи сервера и роутера одновременно; нет handshake — откат на обеих сторонах
 #   vps.sh obfs [ТУННЕЛЬ]        новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
 # Адрес — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env. Ключ роутера — ssh/id_ed25519
@@ -40,6 +41,7 @@ valid(){
 }
 vrun(){ ssh "${SSHO[@]}" "$VPS_USER@$VPS_HOST" "$@" < /dev/null; }
 vput(){ scp "${SCPO[@]}" "$@" "$VPS_USER@$VPS_HOST:/root/"; }
+vget(){ scp "${SCPO[@]}" "$VPS_USER@$VPS_HOST:$1" "$2"; }
 need_script(){ [ -f "$SRV/$1" ] || die "нет $SRV/$1: обновите набор (install.sh --update)"; }
 
 conf_of(){
@@ -203,6 +205,27 @@ case "$cmd" in
     say "✔ на VPS amneziawg-go $lg и awg $lt"
     event "AmneziaWG на VPS обновлён: amneziawg-go $lg, awg $lt"; notify "⬆️ AmneziaWG на VPS обновлён · $(hostname): amneziawg-go $lg, awg $lt"
     exit 0;;
+  router-bins)   # #29: бинарники роутера из официальных исходников, собранные на своём VPS; установка — install.sh с откатом
+    valid; need_script awg-build-router.sh
+    [ -x "$DD/install.sh" ] || die "нет $DD/install.sh"
+    lg=$(latest amneziawg-go); lt=$(latest amneziawg-tools)
+    [ -n "$lg" ] && [ -n "$lt" ] || die "не удалось узнать последние релизы на github.com/amnezia-vpn"
+    say "· сборка amneziawg-go $lg и awg $lt для роутера (linux/arm64) на VPS из исходников amnezia-vpn (3–7 минут)…"
+    vput "$SRV/awg-build-router.sh" || die "не удалось передать awg-build-router.sh"
+    out=$(vrun "AWG_GO_REF=$lg AWG_TOOLS_REF=$lt bash /root/awg-build-router.sh" 2>&1); rc=$?
+    echo "$out" | tail -n 8 | sed 's/^/    │ /'
+    vrun 'rm -f /root/awg-build-router.sh' >/dev/null 2>&1
+    [ $rc = 0 ] || die "сборка на VPS не удалась (код $rc): роутер не тронут"
+    tmpd=$(mktemp -d "$DD/.bins.XXXXXX")
+    for f in amneziawg-go awg SHA256SUMS BUILDINFO; do
+      vget "/root/awgbuild/router/$f" "$tmpd/$f" >/dev/null 2>&1 || { rm -rf "$tmpd"; die "не удалось забрать $f с VPS"; }
+    done
+    say "· файлы на роутере, ставлю (сверка SHA256SUMS, проверка handshake, откат при неудаче)…"
+    AWG_YES=1 "$DD/install.sh" --bins-update "$tmpd" 2>&1 | sed 's/^/    /'; rc=${PIPESTATUS[0]}
+    rm -rf "$tmpd"
+    if [ "$rc" = 0 ]; then event "бинарники роутера обновлены: amneziawg-go $lg, awg $lt"; notify "⬆️ AmneziaWG на роутере обновлён · $(hostname): amneziawg-go $lg, awg $lt"
+    else event "обновление бинарников роутера не удалось, работают прежние"; fi
+    exit "$rc";;
   rotate-keys)
     valid; need_script vps-rotate.sh; pick "${1:-}"
     addr=$(conf_get "$CF" Address | tr ',' '\n' | tr -d ' \t\r' | grep -m1 '\.')

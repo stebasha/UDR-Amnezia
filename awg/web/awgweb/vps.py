@@ -5,7 +5,7 @@ from .webconf import *  # noqa: F401,F403  (всё из предыдущих м�
 # ======================================================================= свой VPS (#13)
 VPS_F = os.path.join(DD, "vps.env")
 VPS_LOG = os.path.join(DD, "vps-job.log")
-VPS_ACTIONS = {"update": "обновление AmneziaWG на VPS", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
+VPS_ACTIONS = {"update": "обновление AmneziaWG на VPS", "router-bins": "обновление AmneziaWG на роутере", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
 
 
 def vps_job_running():
@@ -60,7 +60,7 @@ def api_vps_run(h, d):
     """Изменения на VPS — отдельной службой (сборка идёт минуты), только с паролем текущего пользователя."""
     a = str(d.get("action", ""))
     if a not in VPS_ACTIONS:
-        raise ValueError("действие: update, rotate-keys или obfs")
+        raise ValueError("действие: update, router-bins, rotate-keys или obfs")
     need_pw(h, d, "vps-" + a)
     if vps_job_running():
         raise ValueError("на VPS уже выполняется действие: дождитесь окончания")
@@ -68,7 +68,7 @@ def api_vps_run(h, d):
         raise ValueError("идёт обновление набора: дождитесь его окончания")
     args = [a]
     t = str(d.get("tunnel", "")).strip()
-    if a != "update" and t:
+    if a in ("rotate-keys", "obfs") and t:
         if not NAME_RE.match(t):
             raise ValueError("недопустимое имя туннеля")
         args.append(t)

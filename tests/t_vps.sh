@@ -38,6 +38,10 @@ echo "ssh $*" >> "$STUB/ssh.log"
 c="${@: -1}"; c=${c//\/root\//$VROOT/}; c=${c//\/usr\/local\/share\//$VSHARE/}
 case "$c" in
   *ROLLBACK_BINS=1*) rm -f "$STUB/broken"; echo ROLLED_BACK; exit 0;;
+  *"bash $VROOT/awg-build-router.sh"*) [ -e "$STUB/rbfail" ] && { echo "go: build failed"; exit 1; }
+     mkdir -p "$VROOT/awgbuild/router"; cd "$VROOT/awgbuild/router" || exit 1
+     printf '#!/bin/bash\necho "amneziawg-go v0.2.16"\n' > amneziawg-go; printf '#!/bin/bash\necho "awg v1.0.20250901"\n' > awg
+     sha256sum amneziawg-go awg > SHA256SUMS; echo "built $c" > BUILDINFO; echo собрано; exit 0;;
   *"bash $VROOT/awg-server-build.sh"*) eval "$(echo "$c" | grep -o 'AWG_GO_REF=[^ ]* AWG_TOOLS_REF=[^ ]*')"
      printf 'amneziawg-go %s\namneziawg-tools %s\n' "$AWG_GO_REF" "$AWG_TOOLS_REF" > "$VSHARE/amnezia-build.txt"
      [ -e "$STUB/buildbreak" ] && touch "$STUB/broken"; [ -e "$STUB/buildfail" ] && { echo "go: build failed"; exit 1; }
@@ -49,8 +53,13 @@ cat > "$T/bin/scp" <<'S'
 #!/bin/bash
 echo "scp $*" >> "$STUB/ssh.log"
 [ -e "$STUB/sshfail" ] && exit 1
-d=${@: -1}; d=${d#*:}; d=${d//\/root\//$VROOT/}; d=${d/#\/root/$VROOT}
-n=$#; for ((i=1; i<n; i++)); do a=${!i}; case "$a" in -*|"") continue;; esac; [ -f "$a" ] && cp "$a" "$d"; done
+d=${@: -1}
+if [[ $d == *:* ]]; then   # на «VPS»
+  d=${d#*:}; d=${d//\/root\//$VROOT/}; d=${d/#\/root/$VROOT}
+  n=$#; for ((i=1; i<n; i++)); do a=${!i}; case "$a" in -*|"") continue;; esac; [ -f "$a" ] && cp "$a" "$d"; done
+else                        # с «VPS»
+  s=${@: -2:1}; s=${s#*:}; s=${s//\/root\//$VROOT/}; cp "$s" "$d"
+fi
 S
 cat > "$T/bin/curl" <<'S'
 #!/bin/bash
@@ -136,6 +145,18 @@ ck "update: нет handshake → откат на прежние файлы" '[ $
 touch "$STUB/buildfail"
 ck "update: сборка упала → сервер не трогается" '! "$V" update > "$T/o10" 2>&1 && grep -q "работает на прежних файлах" "$T/o10"'
 rm -f "$STUB/buildfail"
+
+# --- бинарники роутера, собранные на VPS (#29)
+cp "$SSRC/awg-build-router.sh" "$DD/server/"
+printf '#!/bin/bash\necho "install.sh $*" >> "%s/install.log"; d=$2; ( cd "$d" && sha256sum -c SHA256SUMS >/dev/null ) || { echo "сумма не совпала"; exit 1; }; [ -e "%s/bfail" ] && exit 1; echo "установлены"; exit 0\n' "$STUB" "$STUB" > "$DD/install.sh"; chmod 755 "$DD/install.sh"
+"$V" router-bins > "$T/o11" 2>&1; rc=$?
+ck "router-bins: сборка на VPS последних релизов, файлы с суммами → install.sh --bins-update" '[ $rc = 0 ] && grep -q "AWG_GO_REF=v0.2.16 AWG_TOOLS_REF=v1.0.20250901 bash" "$STUB/ssh.log" && grep -q "install.sh --bins-update $DD/.bins." "$STUB/install.log" && ! ls -d "$DD"/.bins.* >/dev/null 2>&1 && [ ! -e "$VROOT/awg-build-router.sh" ]'
+ck "router-bins: событие" 'grep -q "|vps|бинарники роутера обновлены: amneziawg-go v0.2.16" "$DD/events.log"'
+touch "$STUB/rbfail"; : > "$STUB/install.log"
+ck "router-bins: сборка упала → роутер не тронут" '! "$V" router-bins > "$T/o12" 2>&1 && grep -q "роутер не тронут" "$T/o12" && [ ! -s "$STUB/install.log" ]'
+rm -f "$STUB/rbfail"; touch "$STUB/bfail"
+ck "router-bins: установка не удалась → код ошибки и событие" '! "$V" router-bins >/dev/null 2>&1 && grep -q "не удалось, работают прежние" "$DD/events.log"'
+rm -f "$STUB/bfail"
 
 # --- проверки ввода
 printf 'VPS_HOST="vps;reboot"\n' > "$DD/vps.env"; : > "$STUB/ssh.log"

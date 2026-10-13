@@ -55,8 +55,18 @@
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
       } catch (e) { err(e); }
     }));
-    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11)
+    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11); обновление из панели (#29)
     const bup = el('div');
+    const blog = el('div', { class: 'out hidden' });
+    const binsUpdateBtn = () => {
+      const go = el('button', { class: 'btn primary' }, icon('download', 'sm'), T('Обновить на роутере'));
+      go.addEventListener('click', async () => {
+        const pw = await promptPw(T('Обновить AmneziaWG на роутере?'), T('Последние релизы amnezia-vpn собираются на вашем VPS (3–7 минут), затем туннели пересоздаются на новых файлах (несколько секунд без трафика PBR). Если handshake не появится — вернутся прежние файлы.'));
+        if (pw == null) return;
+        try { ok((await api('/api/vps/run', { action: 'router-bins', current: pw })).msg); go.disabled = true; await followVpsJob(blog); go.disabled = false; } catch (e) { err(e); }
+      });
+      return el('div', { class: 'row' }, go);
+    };
     const bchk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить AmneziaWG'));
     bchk.addEventListener('click', () => busy(bchk, async () => {
       try {
@@ -69,7 +79,8 @@
           ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последние релизы на github.com/amnezia-vpn (GitHub недоступен с роутера?)'), list))
           : b.update
             ? el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Есть новые официальные релизы AmneziaWG.'), list,
-              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd))))
+              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd)),
+              b.vps_ready ? binsUpdateBtn() : el('div', { class: 'small' }, T('Для обновления из панели подключите свой VPS: «Настройки → Свой VPS».'))))
             : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Бинарники AmneziaWG актуальны.'), list)));
       } catch (e) { err(e); }
     }));
@@ -96,7 +107,7 @@
     add(body, [
       el('div', { class: 'grid g-2e' },
         card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')], [T('Канал обновлений'), chSel]]),
-          el('div', { class: 'spacer' }), upd, bup, log), { icon: 'info', foot: [chk, bchk] }),
+          el('div', { class: 'spacer' }), upd, bup, blog, log), { icon: 'info', foot: [chk, bchk] }),
         card(T('Перенос настроек'), el('div', null, el('p', { class: 'muted small' }, T('Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.'))),
           { icon: 'archive', foot: [exp, imp] }))]);
   }

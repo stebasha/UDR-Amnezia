@@ -387,7 +387,7 @@ install_files(){
   # скрипты для своего VPS: панель и vps.sh передают их на сервер (#13)
   if [ -d "$KIT/server" ]; then
     mkdir -p "$DD/server"; chmod 700 "$DD/server"
-    for f in vps-rotate.sh audit-server.sh awg-server-build.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
+    for f in vps-rotate.sh audit-server.sh awg-server-build.sh awg-server-setup.sh awg-build-router.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
   fi
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh" "$DD/bot.sh"
   chmod 644 "$DD"/*.service

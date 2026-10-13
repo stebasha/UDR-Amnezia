@@ -117,8 +117,10 @@ def api_bins_check(h, d):
         st = "unknown" if not new else "nover" if not cur else "ok" if vkey(cur) >= vkey(new) else "update"
         upd = upd or st == "update"
         items.append({"name": name, "repo": "amnezia-vpn/" + src, "installed": cur, "latest": new, "state": st})
-    return {"items": items, "update": upd, "checked": int(BINS_CACHE["t"]),
-            "cmd": "%s/install.sh --bins-update" % DD}
+    vc = parse_env_text(read_file(os.path.join(DD, "vps.env")))
+    vps_ready = os.path.exists(os.path.join(DD, "ssh", "id_ed25519")) and bool(vc.get("VPS_HOST") or env().get("VPS_IP"))
+    return {"items": items, "update": upd, "checked": int(BINS_CACHE["t"]), "vps_ready": vps_ready,
+            "cmd": "%s/vps.sh router-bins" % DD}
 
 
 def api_update_channel(h, d):

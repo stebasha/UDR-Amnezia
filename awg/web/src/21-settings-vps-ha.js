@@ -1,3 +1,19 @@
+  // журнал действия на VPS (awg-vps-job): обновлять, пока идёт; итог — по «[код N]» в конце
+  async function followVpsJob(box) {
+    box.classList.remove('hidden');
+    for (let i = 0; i < 400; i++) {
+      let x;
+      try { x = await api('/api/vps/job'); } catch (e) { await new Promise((ok2) => setTimeout(ok2, 3000)); continue; }
+      paint(box, x.text); box.scrollTop = box.scrollHeight;
+      if (!x.running) {
+        const good = /\[код 0\]/.test(x.text);
+        (good ? ok : err)(good ? T('Готово') : T('Не удалось — подробности в журнале ниже'));
+        return good;
+      }
+      await new Promise((ok2) => setTimeout(ok2, 3000));
+    }
+    return false;
+  }
   // свой VPS (#13): состояние сервера, обновление AmneziaWG, смена ключей и обфускации на обеих сторонах с откатом
   async function setVps(body) {
     let r;
@@ -20,18 +36,7 @@
     const btns = [];
     async function follow() {
       btns.forEach((b) => { b.disabled = true; });
-      log.classList.remove('hidden');
-      for (let i = 0; i < 300; i++) {
-        let x;
-        try { x = await api('/api/vps/job'); } catch (e) { await new Promise((ok2) => setTimeout(ok2, 3000)); continue; }
-        paint(log, x.text); log.scrollTop = log.scrollHeight;
-        if (!x.running) {
-          const good = /\[код 0\]/.test(x.text);
-          (good ? ok : err)(good ? T('Готово') : T('Не удалось — подробности в журнале ниже'));
-          break;
-        }
-        await new Promise((ok2) => setTimeout(ok2, 3000));
-      }
+      await followVpsJob(log);
       btns.forEach((b) => { b.disabled = false; });
     }
     const lab = (n) => { const t = S.ov && S.ov.tunnels.find((x) => x.name === n); return t && t.label ? t.label + ' (' + n + ')' : n; };
