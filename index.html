@@ -2397,6 +2397,7 @@ awgctl ping auto awgmain 1.1.1.1<span class="c"> # задержка через �
 awgctl report<span class="c">                 # обезличенный отчёт для issue (ключи и IP скрыты)</span>
 awgctl web<span class="c">                    # адрес веб-панели</span>
 awgctl drift<span class="c">                  # сверка правил и служб с эталоном (repair — вернуть правила набора)</span></code></pre></figure>
+  <p><b>Каналы обновлений (с 1.5).</b> По умолчанию <code>--update</code> и кнопка в панели ставят последний <b>релиз</b> (канал stable) и проверяют SHA256 архива. Канал <b>beta</b> — ветка <code>main</code>, можно указать и свою ветку: <code>/data/awg/install.sh --channel beta</code>, <code>--channel stable</code>, <code>--channel имя-ветки</code>. Выбор есть в панели: «Настройки → Система и обновление».</p>
   <p>С версии 1.4.2 <code>awgctl</code>, <code>awg-selftest</code> и <code>awgs</code> работают и без интерактивной оболочки — например, <code>ssh root@192.168.1.1 awgctl status</code> или из PuTTY/plink: установщик кладёт ссылки в <code>/usr/local/bin</code> (чужие файлы с теми же именами не трогает), после обновления прошивки их возвращает <code>awg-restore.sh</code>.</p>
 
   <h3>Веб-панель управления</h3>

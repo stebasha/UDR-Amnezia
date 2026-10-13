@@ -119,6 +119,44 @@ t "проверка после обновления: сторож работае
 t "проверка после обновления: панель не встала → откат" '! (sleep(){ :; }; update_healthy 0 1 >/dev/null 2>&1)'
 t "неинтерактивный режим не ждёт ввода" '! ( AWG_YES=1; open_tty; ask x "вопрос" "" ) >/dev/null 2>&1'
 
+# --- 1.5 (#8): каналы обновлений
+chan(){  # chan [ПЕРЕМЕННЫЕ…] -- содержимое .channel → «канал ветка»
+  local d; d=$(mktemp -d "$T/ch.XXXX"); printf '%b' "$1" > "$d/.channel"; shift
+  env -i PATH="$PATH" HOME="$HOME" DD="$d" AWG_LIB=1 NO_COLOR=1 "$@" bash -c '. "$0"; echo "$AWG_CHANNEL $AWG_BRANCH"' "$INST"
+}
+t "канал: без .channel — stable" '[ "$(chan "")" = "stable main" ]'
+t "канал: старый .channel с main — stable" '[ "$(chan "AWG_REPO=a/b\nAWG_BRANCH=main\n")" = "stable main" ]'
+t "канал: старый .channel со своей веткой — branch" '[ "$(chan "AWG_REPO=a/b\nAWG_BRANCH=release/1.5\n")" = "branch release/1.5" ]'
+t "канал: записанный beta" '[ "$(chan "AWG_CHANNEL=beta\nAWG_BRANCH=main\n")" = "beta main" ]'
+t "канал: AWG_BRANCH=main в окружении — beta" '[ "$(chan "AWG_CHANNEL=stable\n" AWG_BRANCH=main)" = "beta main" ]'
+t "канал: AWG_CHANNEL в окружении важнее файла" '[ "$(chan "AWG_CHANNEL=beta\n" AWG_CHANNEL=stable)" = "stable main" ]'
+t "канал: мусор → stable" '[ "$(chan "AWG_CHANNEL=evil\n")" = "stable main" ]'
+# stable: тег из GitHub API, архив релиза со сверкой SHA256SUMS
+CS=$T/curlstub; mkdir -p "$CS/srv"
+printf 'архив релиза' > "$CS/srv/udr-amnezia-v1.5.0.tar.gz"
+( cd "$CS/srv" && sha256sum udr-amnezia-v1.5.0.tar.gz > SHA256SUMS )
+cat > "$CS/curl" <<'C'
+#!/bin/bash
+out=""; url=""; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift;; http*) url=$1;; esac; shift; done
+case "$url" in
+  *api.github.com/repos/*/releases/latest) [ -e "$CSRV/norelease" ] && exit 22; printf '{\n  "tag_name": "v1.5.0",\n  "name": "1.5.0"\n}\n';;
+  */releases/download/v1.5.0/*) f=$CSRV/${url##*/}; [ -f "$f" ] || exit 22; if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi;;
+  */archive/refs/heads/*) [ -n "$out" ] && printf 'ветка' > "$out";;
+  *) exit 22;;
+esac
+C
+chmod +x "$CS/curl"
+rel(){ ( PATH="$CS:$PATH"; export CSRV=$CS/srv; AWG_REF=""; AWG_CHANNEL=$1; AWG_BRANCH=main; resolve_ref >/dev/null 2>&1; echo "$AWG_REF $AWG_REF_KIND"; fetch_kit_archive "$T/k.tgz" >/dev/null 2>&1 && cat "$T/k.tgz" ); }
+t "stable: последний релиз, сумма совпала" '[ "$(rel stable)" = "$(printf "v1.5.0 tag\nархив релиза")" ]'
+printf 'подменён' > "$CS/srv/udr-amnezia-v1.5.0.tar.gz"
+t "stable: подменённый архив отклонён" '[ "$(rel stable)" = "v1.5.0 tag" ] && [ ! -e "$T/k.tgz" ]'
+touch "$CS/srv/norelease"
+t "stable: релизов нет — ветка main" '[ "$(rel stable)" = "$(printf "main branch\nветка")" ]'
+t "beta: ветка main" '[ "$(rel beta | head -1)" = "main branch" ]'
+t "недопустимая ветка отклонена" '( AWG_REF=""; AWG_CHANNEL=branch; AWG_BRANCH="../x"; ! resolve_ref >/dev/null 2>&1 )'
+AWG_CHANNEL=beta; AWG_BRANCH=main; write_channel
+t "канал записывается с AWG_CHANNEL" 'grep -qx "AWG_CHANNEL=beta" "$DD/.channel" && grep -qx "AWG_BRANCH=main" "$DD/.channel"'
+
 # --- удаление
 ipset(){ :; }
 printf 'д\n' >/dev/null

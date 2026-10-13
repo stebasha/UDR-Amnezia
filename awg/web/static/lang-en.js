@@ -687,7 +687,17 @@ window.AWG_EN = {
  "токен с таким названием уже есть": "a token with this name already exists",
  "роль: read или admin": "role: read or admin",
  "срок: 0 (бессрочно) – 3650 дней": "expiry: 0 (none) – 3650 days",
- "название: 1–40 символов (буквы, цифры, пробел, . : - _)": "name: 1–40 characters (letters, digits, space, . : - _)"
+ "название: 1–40 символов (буквы, цифры, пробел, . : - _)": "name: 1–40 characters (letters, digits, space, . : - _)",
+ "канал stable": "stable channel",
+ "релиз ": "release ",
+ "релизов нет — ветка main": "no releases — branch main",
+ "канал beta, ветка main": "beta channel, branch main",
+ "ветка ": "branch ",
+ "Канал обновлений": "Update channel",
+ "stable — проверенные релизы": "stable — tested releases",
+ "beta — ветка main": "beta — branch main",
+ "канал: stable, beta или своя ветка": "channel: stable, beta or a branch",
+ "недопустимое имя ветки": "invalid branch name"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -716,6 +726,7 @@ window.AWG_EN = {
     [/^не переключилось за 30 с \(сейчас (\S+)\): канал (\S+) не отвечает или сторож не запущен$/, "did not switch within 30 s (now $1): $2 does not respond or the watchdog is not running"],
     [/^способ: auto, icmp или tcp$/, "method: auto, icmp or tcp"],
     [/^не больше (\d+) токенов: отзовите ненужные$/, "at most $1 tokens: revoke unused ones"],
+    [/^канал обновлений: (.*)$/, "update channel: $1"],
     [/^Роутер: /, "Router: "],
     [/^пароль копии .*$/, "backup password must be at least 8 characters"],
     [/^сохранено: (.*)/, "saved: $1"]

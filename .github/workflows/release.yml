@@ -1,0 +1,42 @@
+name: release
+# Релиз по тегу vX.Y.Z (#8): тесты, архив udr-amnezia-vX.Y.Z.tar.gz и SHA256SUMS в GitHub Release.
+# Канал stable (install.sh, панель) ставит последний релиз и сверяет сумму архива.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Тег совпадает с VERSION и install.sh
+        run: |
+          tag=${GITHUB_REF_NAME}; ver=${tag#v}
+          [ "$(cat VERSION)" = "$ver" ] || { echo "::error::VERSION=$(cat VERSION), тег $tag"; exit 1; }
+          grep -qx "INSTALLER_VERSION=$ver" install.sh || { echo "::error::INSTALLER_VERSION в install.sh не $ver"; exit 1; }
+          grep -q "^## $ver\b" CHANGELOG.md || { echo "::error::в CHANGELOG.md нет раздела «## $ver»"; exit 1; }
+      - name: Тесты
+        run: |
+          for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
+          shellcheck -S error install.sh awg/*.sh server/*.sh
+          bash tests/run.sh
+          [ "$(cut -d' ' -f1 install.sh.sha256)" = "$(sha256sum install.sh | cut -d' ' -f1)" ]
+          python3 tools/sync-guide.py --check
+      - name: Архив и контрольные суммы
+        run: |
+          tag=${GITHUB_REF_NAME}; mkdir -p dist
+          git archive --format=tar.gz --prefix="udr-amnezia-$tag/" -o "dist/udr-amnezia-$tag.tar.gz" "$tag"
+          ( cd dist && sha256sum "udr-amnezia-$tag.tar.gz" > SHA256SUMS && cat SHA256SUMS )
+          ver=${tag#v}
+          awk -v v="$ver" '$0 ~ "^## "v"([^0-9.]|$)" {on=1; next} on && /^## / {exit} on' CHANGELOG.md > dist/notes.md
+          printf '\n---\nУстановка и обновление: канал stable ставит этот релиз и проверяет SHA256 архива.\n```bash\nbash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update\n```\n' "$GITHUB_REPOSITORY" "$tag" >> dist/notes.md
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=${GITHUB_REF_NAME}
+          gh release create "$tag" "dist/udr-amnezia-$tag.tar.gz" dist/SHA256SUMS --title "UDR-Amnezia ${tag#v}" --notes-file dist/notes.md --verify-tag

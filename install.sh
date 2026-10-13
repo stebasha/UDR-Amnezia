@@ -15,6 +15,8 @@
 #         --dry-run         показать, что есть на роутере и что сделает мастер (ничего не меняет)
 #         --verify          сверить файлы установки с манифестом
 #         --self-update     обновить сам install.sh (проверка sha256)
+#         --channel stable|beta|ВЕТКА   сменить канал обновлений и обновиться: stable — релизы (по умолчанию),
+#                           beta — ветка main, ВЕТКА — своя ветка (можно вместе с --update)
 #         --record ФАЙЛ     записать ответы мастера (секреты и конфиги не записываются)
 #         --answers ФАЙЛ    повторить мастер по записанным ответам
 #         --rotate-keys [туннель]   сменить ключи туннеля до своего VPS
@@ -23,13 +25,27 @@
 #         --help
 # ============================================================================
 INSTALLER_VERSION=1.4.3
-# ветка и репозиторий, с которых ставились (install.sh --update и панель обновляются оттуда же)
-if [ -r "${DD:-/data/awg}/.channel" ]; then
-  [ -n "${AWG_REPO:-}" ] || AWG_REPO=$(sed -n 's/^AWG_REPO=//p' "${DD:-/data/awg}/.channel" | head -n1)
-  [ -n "${AWG_BRANCH:-}" ] || AWG_BRANCH=$(sed -n 's/^AWG_BRANCH=//p' "${DD:-/data/awg}/.channel" | head -n1)
+# Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
+#   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
+#   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
+#   branch — своя ветка AWG_BRANCH (для проверки изменений до слияния).
+# Явные AWG_CHANNEL / AWG_BRANCH в окружении важнее файла; AWG_BRANCH=main без AWG_CHANNEL — это beta.
+_ch_f="${DD:-/data/awg}/.channel"; _ch_repo=""; _ch_chan=""; _ch_br=""
+if [ -r "$_ch_f" ]; then
+  _ch_repo=$(sed -n 's/^AWG_REPO=//p' "$_ch_f" | head -n1)
+  _ch_chan=$(sed -n 's/^AWG_CHANNEL=//p' "$_ch_f" | head -n1)
+  _ch_br=$(sed -n 's/^AWG_BRANCH=//p' "$_ch_f" | head -n1)
 fi
-AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}      # GitHub: владелец/репозиторий со скриптами (awg/, server/)
-AWG_BRANCH=${AWG_BRANCH:-main}
+AWG_REPO=${AWG_REPO:-${_ch_repo:-stebasha/UDR-Amnezia}}      # GitHub: владелец/репозиторий со скриптами (awg/, server/)
+if [ -n "${AWG_CHANNEL:-}" ]; then :
+elif [ -n "${AWG_BRANCH:-}" ]; then [ "$AWG_BRANCH" = main ] && AWG_CHANNEL=beta || AWG_CHANNEL=branch
+elif [ -n "$_ch_chan" ]; then AWG_CHANNEL=$_ch_chan
+elif [ -n "$_ch_br" ] && [ "$_ch_br" != main ]; then AWG_CHANNEL=branch      # .channel до 1.5: своя ветка
+else AWG_CHANNEL=stable; fi
+case "$AWG_CHANNEL" in stable|beta|branch) ;; *) AWG_CHANNEL=stable;; esac
+AWG_BRANCH=${AWG_BRANCH:-${_ch_br:-main}}
+[ "$AWG_CHANNEL" = beta ] && AWG_BRANCH=main
+AWG_REF=${AWG_REF:-}; AWG_REF_KIND=${AWG_REF_KIND:-}   # тег релиза или ветка: вычисляет resolve_ref
 # Бинарники AmneziaWG собираются только из официальных исходников AmneziaVPN (теги можно поменять здесь):
 #   https://github.com/amnezia-vpn/amneziawg-go  и  https://github.com/amnezia-vpn/amneziawg-tools
 AWG_GO_REF=${AWG_GO_REF:-v3.1.20260828}
@@ -280,8 +296,9 @@ get_kit(){
   local a p
   while :; do
     mkdir -p "$WORK"; rm -rf "$WORK/kit"; mkdir -p "$WORK/kit"
-    info "скачиваю $AWG_REPO ($AWG_BRANCH)…"
-    if curl -fsSL -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_BRANCH.tar.gz" -o "$WORK/kit.tgz" && tar xzf "$WORK/kit.tgz" -C "$WORK/kit" 2>/dev/null; then
+    resolve_ref || { err "не удалось определить версию для скачивания"; AWG_REF=""; }
+    info "скачиваю $AWG_REPO: $(ref_label)…"
+    if [ -n "$AWG_REF" ] && fetch_kit_archive "$WORK/kit.tgz" && tar xzf "$WORK/kit.tgz" -C "$WORK/kit" 2>/dev/null; then
       p=$(find "$WORK/kit" -path '*/awg/failover.sh' | head -1)
       if [ -n "$p" ] && kit_ok "$(dirname "$(dirname "$p")")"; then KIT=$(dirname "$(dirname "$p")"); ok "скрипты скачаны"; kit_verify; return; fi
       err "в архиве нет нужных файлов: $(kit_missing "$(dirname "$(dirname "${p:-$WORK/kit/x/awg/x}")")")"
@@ -292,10 +309,44 @@ get_kit(){
     choose a "Что делать?" "Повторить" "Указать папку с репозиторием на роутере" "Указать другой репозиторий (владелец/имя)" "Выйти"
     case $a in
       2) ask p "Путь к папке (в ней должны быть awg/ и server/)" ""; kit_ok "$p" && { KIT=$p; ok "беру скрипты из $KIT"; kit_verify; return; }; err "в $p нет нужных файлов";;
-      3) ask AWG_REPO "Репозиторий" "$AWG_REPO"; ask AWG_BRANCH "Ветка" "$AWG_BRANCH";;
+      3) ask AWG_REPO "Репозиторий" "$AWG_REPO"; ask AWG_BRANCH "Ветка" "$AWG_BRANCH"; AWG_CHANNEL=branch; AWG_REF="";;
       4) exit 1;;
     esac
   done
+}
+# ---- канал обновлений: тег релиза (stable) или ветка (beta/branch)
+valid_ref(){ [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_./-]{0,99}$ ]] && [[ $1 != *..* ]]; }
+resolve_ref(){
+  [ -n "$AWG_REF" ] && return 0
+  case "$AWG_CHANNEL" in
+    stable)
+      AWG_REF=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$AWG_REPO/releases/latest" 2>/dev/null \
+        | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+      if [ -n "$AWG_REF" ] && valid_ref "$AWG_REF"; then AWG_REF_KIND=tag
+      else warn "релиз в $AWG_REPO не найден (или GitHub API недоступен) — беру ветку main"; AWG_REF=main; AWG_REF_KIND=branch; fi;;
+    beta)   AWG_REF=main; AWG_REF_KIND=branch;;
+    branch) AWG_REF=$AWG_BRANCH; AWG_REF_KIND=branch;;
+  esac
+  valid_ref "$AWG_REF" || { err "недопустимое имя ветки или тега: $AWG_REF"; AWG_REF=""; return 1; }
+}
+ref_label(){ case "$AWG_REF_KIND" in tag) echo "релиз $AWG_REF (канал stable)";; *) echo "ветка $AWG_REF (канал $AWG_CHANNEL)";; esac; }
+fetch_kit_archive(){  # fetch_kit_archive ФАЙЛ — релиз: архив + SHA256SUMS со сверкой; ветка: архив GitHub
+  local out=$1 base name want have
+  if [ "$AWG_REF_KIND" = tag ]; then
+    base="https://github.com/$AWG_REPO/releases/download/$AWG_REF"; name="udr-amnezia-$AWG_REF.tar.gz"
+    curl -fsSL -m 120 "$base/$name" -o "$out" || { err "нет архива $name в релизе $AWG_REF"; return 1; }
+    want=$(curl -fsSL -m 30 "$base/SHA256SUMS" 2>/dev/null | awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}')
+    have=$(sha256sum "$out" | cut -d' ' -f1)
+    [ -n "$want" ] || { err "в релизе $AWG_REF нет SHA256SUMS для $name: архив не устанавливаю"; rm -f "$out"; return 1; }
+    [ "$want" = "$have" ] || { err "контрольная сумма архива НЕ совпала (ожидалась $want, получена $have): не устанавливаю"; rm -f "$out"; return 1; }
+    ok "контрольная сумма архива релиза совпала"
+  else
+    curl -fsSL -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_REF.tar.gz" -o "$out"
+  fi
+}
+write_channel(){
+  case "$AWG_REPO$AWG_BRANCH" in *[!A-Za-z0-9_./-]*) return 0;; esac
+  printf 'AWG_REPO=%s\nAWG_CHANNEL=%s\nAWG_BRANCH=%s\n' "$AWG_REPO" "$AWG_CHANNEL" "$AWG_BRANCH" > "$DD/.channel"
 }
 kit_verify(){
   local f bad=0
@@ -329,7 +380,7 @@ install_files(){
   elif [ -f "$0" ] && [ "$(basename "$0")" = install.sh ] && ! [ "$0" -ef "$DD/install.sh" ]; then put "$0" "$DD/install.sh"; fi
   [ -f "$DD/install.sh" ] && chmod 755 "$DD/install.sh"
   [ -f "$KIT/VERSION" ] && put "$KIT/VERSION" "$DD/VERSION"
-  case "$AWG_REPO$AWG_BRANCH" in *[!A-Za-z0-9_./-]*) ;; *) printf 'AWG_REPO=%s\nAWG_BRANCH=%s\n' "$AWG_REPO" "$AWG_BRANCH" > "$DD/.channel";; esac
+  write_channel
   ensure_aliases
   write_manifest
   touch "$DD/.installer"
@@ -388,7 +439,7 @@ bins_build_on_vps(){  # сборка из официальных исходни�
   ok "файлы перенесены с VPS"
 }
 bins_manual_help(){
-  local base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH/server"
+  local base; resolve_ref || return 1; base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF/server"
   say "  На любом компьютере или сервере с Ubuntu/Debian (x86_64 или arm64, подойдёт и WSL), под root:"
   say "${C}    curl -fsSL $base/awg-build-router.sh -o awg-build-router.sh"
   say "    AWG_GO_REF=$AWG_GO_REF AWG_TOOLS_REF=$AWG_TOOLS_REF bash awg-build-router.sh"
@@ -706,7 +757,7 @@ vps_setup(){  # vps_setup ИМЯ_КОНФИГА(main.conf|backup.conf) — 0 е�
 }
 
 vps_manual(){
-  local cfg=$1 base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH/server"
+  local cfg=$1 base; resolve_ref || return 1; base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF/server"
   title "Ручная настройка VPS"
   say "  Выполните на VPS под root:"
   say "${C}    curl -fsSL $base/awg-server-build.sh -o /root/awg-server-build.sh"
@@ -1101,7 +1152,9 @@ do_verify(){
 do_selfupdate(){
   title "Обновление самого установщика"
   [ -n "$AWG_REPO" ] || die "не задан репозиторий (переменная AWG_REPO в начале install.sh)."
-  local base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH" tmp="$WORK/install.new" sha want have newv
+  local base tmp="$WORK/install.new" sha want have newv
+  resolve_ref || die "не удалось определить версию для скачивания"
+  base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF"
   mkdir -p "$WORK"
   curl -fsSL -m 60 "$base/install.sh" -o "$tmp" || die "не удалось скачать $base/install.sh"
   bash -n "$tmp" || die "скачанный файл не проходит проверку синтаксиса"
@@ -1856,10 +1909,14 @@ main(){
     case "$1" in
       --record)  [ $# -ge 2 ] || { echo "--record требует имя файла"; exit 1; }; RECORD_FILE=$2; shift 2;;
       --answers) [ $# -ge 2 ] || { echo "--answers требует имя файла"; exit 1; }; ANS_FILE=$2; shift 2;;
+      --channel) [ $# -ge 2 ] || { echo "--channel требует stable, beta или имя ветки"; exit 1; }
+                 case "$2" in stable|beta) AWG_CHANNEL=$2; [ "$2" = beta ] && AWG_BRANCH=main;; *) AWG_CHANNEL=branch; AWG_BRANCH=$2;; esac
+                 AWG_REF=""; CHANNEL_SET=1; shift 2;;
       *) ARGS+=("$1"); shift;;
     esac
   done
   set -- "${ARGS[@]}"
+  [ -n "${CHANNEL_SET:-}" ] && [ $# -eq 0 ] && set -- --update     # install.sh --channel beta — сменить канал и обновиться
   case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest) ;; *) open_tty;; esac
   case "${1:-}" in
     --update)       need_root; do_update;;

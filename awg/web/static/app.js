@@ -1847,6 +1847,18 @@
     const upd = el('div');
     const log = el('div', { class: 'out hidden' });
     const chk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить обновления'));
+    // канал обновлений (#8): stable — релизы с проверкой SHA256, beta — ветка main, своя ветка — для проверки до слияния
+    const chanLabel = (u) => (u.channel === 'stable' ? T('канал stable') + (u.kind === 'tag' ? ', ' + T('релиз ') + u.ref : ', ' + T('релизов нет — ветка main'))
+      : u.channel === 'beta' ? T('канал beta, ветка main') : T('ветка ') + u.branch);
+    const chSel = el('select', { class: 'input', 'aria-label': T('Канал обновлений') },
+      el('option', { value: 'stable' }, T('stable — проверенные релизы')), el('option', { value: 'beta' }, T('beta — ветка main')));
+    chSel.style.width = 'auto';
+    if (r.channel === 'branch') chSel.appendChild(el('option', { value: 'branch' }, T('ветка ') + r.branch));
+    chSel.value = r.channel || 'stable';
+    chSel.addEventListener('change', async () => {
+      if (chSel.value === 'branch') return;
+      try { ok((await api('/api/update/channel', { channel: chSel.value })).msg); replace(upd); } catch (e) { err(e); }
+    });
     async function followUpdate() {
       log.classList.remove('hidden');
       let lost = 0;
@@ -1878,10 +1890,10 @@
           if (!await confirmBox(T('Обновить до ') + u.latest + '?', T('Перед обновлением делается копия скриптов. Службы перезапустятся (несколько секунд без трафика PBR). Если после обновления сторож, маршрут или панель не заработают — автоматически вернётся прежняя версия.'), T('Обновить'))) return;
           try { ok((await api('/api/update/run', {})).msg); go.disabled = true; followUpdate(); } catch (e) { err(e); }
         });
-        replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Доступна версия '), el('b', null, u.latest), T(' (у вас ') + u.current + T(', ветка ') + u.branch + ').')),
+        replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Доступна версия '), el('b', null, u.latest), T(' (у вас ') + u.current + ', ' + chanLabel(u) + ').')),
           u.notes ? el('details', { class: 'fgroup' }, el('summary', null, T('Что нового')), el('pre', { class: 'res' }, u.notes)) : null,
           el('div', { class: 'spacer' }), go, el('div', { class: 'small muted' }, T('Или по SSH: '), el('code', null, u.cmd)))
-          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Установлена последняя версия ') + u.current + T(' (ветка ') + u.branch + ').')))
+          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Установлена последняя версия ') + u.current + ' (' + chanLabel(u) + ').')))
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
       } catch (e) { err(e); }
     }));
@@ -1905,7 +1917,7 @@
     });
     add(body, [
       el('div', { class: 'grid g-2e' },
-        card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')]]),
+        card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')], [T('Канал обновлений'), chSel]]),
           el('div', { class: 'spacer' }), upd, log), { icon: 'info', foot: chk }),
         card(T('Перенос настроек'), el('div', null, el('p', { class: 'muted small' }, T('Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.'))),
           { icon: 'archive', foot: [exp, imp] }))]);

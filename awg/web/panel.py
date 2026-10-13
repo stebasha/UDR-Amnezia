@@ -700,7 +700,7 @@ TOKENS = Tokens(os.path.join(WEBD, "tokens.json"))
 # только для входа по паролю: учётные данные, сеансы, токены, ключи, перезагрузка, настройки самой панели
 TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/passwd", "/api/user/delete", "/api/users",
               "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
-              "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/settings/import",
+              "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
               "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram"}
 
 
@@ -2043,7 +2043,7 @@ def api_system(h, q):
             "panel": VERSION, "awg": ver([os.path.join(DD, "awg"), "--version"]),
             "amneziawg_go": ver([os.path.join(DD, "amneziawg-go"), "--version"]),
             "python": sys.version.split()[0], "host": socket.gethostname(), "web": {k: v for k, v in conf().items()},
-            "tls": h.server.tls, "data_free_mb": disk_free_mb()}
+            "tls": h.server.tls, "data_free_mb": disk_free_mb(), "channel": channel()[1], "branch": channel()[2]}
 
 
 
@@ -2985,26 +2985,73 @@ def api_web_set(h, d):
 UPD_LOG = os.path.join(DD, "update.log")
 
 
+REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,99}$")
+
+
 def channel():
+    """(репозиторий, канал, ветка) — как в install.sh: stable по умолчанию, старый .channel с веткой не main → branch."""
     c = parse_env_text(read_file(os.path.join(DD, ".channel")))
     inst = read_file(os.path.join(DD, "install.sh"))
-    m = re.search(r"^AWG_REPO=\$\{AWG_REPO:-([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\}", inst, re.M)
-    return c.get("AWG_REPO") or (m.group(1) if m else "stebasha/UDR-Amnezia"), c.get("AWG_BRANCH") or "main"
+    m = re.search(r"AWG_REPO:-\$\{_ch_repo:-([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\}\}|^AWG_REPO=\$\{AWG_REPO:-([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\}", inst, re.M)
+    repo = c.get("AWG_REPO") or (m and (m.group(1) or m.group(2))) or "stebasha/UDR-Amnezia"
+    br = c.get("AWG_BRANCH") or "main"
+    ch = c.get("AWG_CHANNEL") or ("branch" if br != "main" else "stable")
+    if ch not in ("stable", "beta", "branch"):
+        ch = "stable"
+    if ch == "beta":
+        br = "main"
+    return repo, ch, br
+
+
+def resolve_ref(repo, ch, br):
+    """→ (ref, kind): тег последнего релиза для stable (нет релизов — main), иначе ветка."""
+    if ch == "stable":
+        rc, out = curl(["-f", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/%s/releases/latest" % repo], 20)
+        try:
+            data = json.loads(out) if rc == 0 else {}
+        except ValueError:
+            data = {}
+        tag = str(data.get("tag_name", "")) if isinstance(data, dict) else ""
+        if tag and REF_RE.match(tag) and ".." not in tag:
+            return tag, "tag"
+        return "main", "branch"
+    ref = "main" if ch == "beta" else br
+    if not REF_RE.match(ref) or ".." in ref:
+        raise ValueError("недопустимое имя ветки: %s" % ref)
+    return ref, "branch"
 
 
 def api_update_check(h, d):
-    repo, br = channel()
-    rc, out = curl(["-f", "https://raw.githubusercontent.com/%s/%s/VERSION" % (repo, br)], 15)
+    repo, ch, br = channel()
+    ref, kind = resolve_ref(repo, ch, br)
+    rc, out = curl(["-f", "https://raw.githubusercontent.com/%s/%s/VERSION" % (repo, ref)], 15)
     cur = read_file(os.path.join(DD, "VERSION")).strip()
     new = out.strip() if rc == 0 and re.match(r"^[0-9][0-9A-Za-z.\-]{0,20}$", out.strip()) else ""
-    rc2, chg = curl(["-f", "https://raw.githubusercontent.com/%s/%s/CHANGELOG.md" % (repo, br)], 15)
+    rc2, chg = curl(["-f", "https://raw.githubusercontent.com/%s/%s/CHANGELOG.md" % (repo, ref)], 15)
     notes = ""
     if rc2 == 0 and new:
-        m = re.search(r"^## %s\s*\n(.*?)(?=^## )" % re.escape(new), chg + "\n## ", re.M | re.S)
+        m = re.search(r"^## %s\s*(?:\(.*?\))?\s*\n(.*?)(?=^## )" % re.escape(new), chg + "\n## ", re.M | re.S)
         notes = (m.group(1).strip() if m else "")[:6000]
-    return {"current": cur, "latest": new, "repo": repo, "branch": br, "update": bool(new) and new != cur, "notes": notes,
-            "running": update_running(),
-            "cmd": "AWG_BRANCH=%s bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update" % (br, repo, br)}
+    env_ = "AWG_CHANNEL=%s" % ch + (" AWG_BRANCH=%s" % br if ch == "branch" else "")
+    return {"current": cur, "latest": new, "repo": repo, "channel": ch, "branch": br, "ref": ref, "kind": kind,
+            "update": bool(new) and new != cur, "notes": notes, "running": update_running(),
+            "cmd": "%s bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update" % (env_, repo, ref)}
+
+
+def api_update_channel(h, d):
+    ch = str(d.get("channel", ""))
+    repo, cur, br = channel()
+    if ch == "branch":
+        br = str(d.get("branch", "")).strip()
+        if not REF_RE.match(br) or ".." in br:
+            raise ValueError("недопустимое имя ветки")
+    elif ch not in ("stable", "beta"):
+        raise ValueError("канал: stable, beta или своя ветка")
+    if ch == "beta":
+        br = "main"
+    write_secure(os.path.join(DD, ".channel"), "AWG_REPO=%s\nAWG_CHANNEL=%s\nAWG_BRANCH=%s\n" % (repo, ch, br), 0o644)
+    h.act("update-channel", {"channel": ch, "branch": br})
+    return {"ok": True, "channel": ch, "branch": br, "msg": "канал обновлений: %s" % (ch if ch != "branch" else "ветка " + br)}
 
 
 def update_running():
@@ -3014,16 +3061,20 @@ def update_running():
 def api_update_run(h, d):
     if update_running():
         raise ValueError("обновление уже идёт")
-    repo, br = channel()
-    write_secure(UPD_LOG, "%s обновление запущено из панели (%s, ветка %s)\n" % (time.strftime("%F %T"), repo, br), 0o600)
-    script = ('cd /; export AWG_YES=1 AWG_REPO="$1" AWG_BRANCH="$2"; '
-              'f=$(mktemp); if curl -fsSL -m 120 "https://raw.githubusercontent.com/$1/$2/install.sh" -o "$f" && bash -n "$f"; then '
+    repo, ch, br = channel()
+    ref, kind = resolve_ref(repo, ch, br)
+    write_secure(UPD_LOG, "%s обновление запущено из панели (%s, канал %s, %s %s)\n" % (time.strftime("%F %T"), repo, ch,
+                 "релиз" if kind == "tag" else "ветка", ref), 0o600)
+    # установщик берётся из той же версии, что и скрипты; AWG_REF фиксирует проверенный релиз (новый, вышедший между
+    # проверкой и запуском, не подхватится незаметно)
+    script = ('cd /; export AWG_YES=1 AWG_REPO="$1" AWG_CHANNEL="$2" AWG_BRANCH="$3" AWG_REF="$4" AWG_REF_KIND="$5"; '
+              'f=$(mktemp); if curl -fsSL -m 120 "https://raw.githubusercontent.com/$1/$4/install.sh" -o "$f" && bash -n "$f"; then '
               'bash "$f" --update; rc=$?; else echo "не удалось скачать install.sh"; rc=1; fi; rm -f "$f"; echo "[код $rc]"; exit $rc')
     rc, out = run(["systemd-run", "--unit=awg-update", "--collect", "--quiet", "-p", "StandardOutput=append:" + UPD_LOG,
-                   "-p", "StandardError=append:" + UPD_LOG, "/bin/bash", "-c", script, "awg-update", repo, br], timeout=20)
+                   "-p", "StandardError=append:" + UPD_LOG, "/bin/bash", "-c", script, "awg-update", repo, ch, br, ref, kind], timeout=20)
     if rc != 0:
         raise ValueError("не удалось запустить обновление: " + out.strip()[:300])
-    h.act("update-run", br)
+    h.act("update-run", ref)
     return {"ok": True, "msg": "обновление запущено; панель перезапустится, страница переподключится сама"}
 
 
@@ -3190,6 +3241,7 @@ ROUTES = {
     ("POST", "/api/totp/disable"): api_totp_disable,
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
+    ("POST", "/api/update/channel"): api_update_channel,
     ("POST", "/api/system/reboot"): api_system_reboot,
     ("GET", "/api/tokens"): api_tokens,
     ("POST", "/api/token/create"): api_token_create,
