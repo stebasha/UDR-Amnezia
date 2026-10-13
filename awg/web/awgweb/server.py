@@ -274,8 +274,14 @@ ROUTES = {
     ("POST", "/api/xui/test"): api_xui_test,
     ("POST", "/api/xui/create"): api_xui_create,
     ("POST", "/api/xui/remove"): api_xui_remove,
+    ("POST", "/api/xui/panel/remove"): api_xui_panel_remove,
+    ("GET", "/api/xui/inbounds"): api_xui_inbounds,
+    ("POST", "/api/xui/import"): api_xui_import,
+    ("POST", "/api/xui/link"): api_xui_link,
+    ("POST", "/api/xui/sync"): api_xui_sync,
     ("GET", "/api/vps"): api_vps_get,
     ("POST", "/api/vps"): api_vps_set,
+    ("POST", "/api/vps/del"): api_vps_del,
     ("POST", "/api/vps/test"): api_vps_test,
     ("POST", "/api/vps/status"): api_vps_status,
     ("POST", "/api/vps/versions"): api_vps_versions,
@@ -437,6 +443,28 @@ def cli():
         audit("cli", "127.0.0.1", "tunnel-add", a[1])
         print(out.strip())
         sys.exit(0 if rc == 0 else 1)
+    if cmd == "xui":                            # panel.py xui [ПАНЕЛЬ] — подключения AmneziaWG в 3x-ui, только чтение (#32)
+        db = xui_db()
+        if not db["panels"]:
+            print("панелей 3x-ui нет")
+            return
+        for pid in ([a[1]] if len(a) > 1 else sorted(db["panels"])):
+            p = db["panels"].get(pid) or {}
+            print("== %s «%s» %s" % (pid, p.get("label", ""), p.get("url", "")))
+            try:
+                r = api_xui_inbounds(None, {"panel": [pid]})
+            except ValueError as ex:
+                print("  ОШИБКА: %s" % ex)
+                continue
+            for ib in r["inbounds"]:
+                print("  №%s «%s» %s:%s %s%s%s" % (ib["id"], ib["remark"], ib["host"] or "?", ib["port"], "вкл" if ib["enable"] else "выкл",
+                                                   (" · туннель роутера " + ib["match"]) if ib["match"] else "",
+                                                   (" · связан: " + ", ".join(ib["tunnels"])) if ib["tunnels"] else ""))
+                for c in ib["clients"]:
+                    print("     клиент %s %s%s%s" % (c["email"], c["address"], " · ключ в 3x-ui" if c["has_key"] else "", " · роутер" if c["router"] else ""))
+        for k, v in sorted(db["tunnels"].items()):
+            print("туннель %s: панель %s, подключение №%s, %s" % (k, v.get("panel"), v.get("inbound"), XUI_KINDS.get(v.get("kind"), v.get("kind"))))
+        return
     if cmd == "check":
         c = conf()
         print("порт %s, адрес %s, TLS %s, пользователей %d" % (c["WEB_PORT"], c["WEB_BIND"], c["WEB_TLS"], len(load_users())))

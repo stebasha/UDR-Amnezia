@@ -44,7 +44,7 @@ fi
 if [ -e "$STUB/needkey" ] && ! grep -qF "$(cat "$DD/ssh/id_ed25519.pub" 2>/dev/null)" "$VROOT/.ssh/authorized_keys" 2>/dev/null; then
   echo "Permission denied (publickey)." >&2; exit 255
 fi
-c="${@: -1}"; c=${c//\/root\//$VROOT/}; c=${c//\/usr\/local\/share\//$VSHARE/}
+c="${@: -1}"; c=${c//\/root\//$VROOT/}; c=${c//\/usr\/local\/share\//$VSHARE/}; case "$c" in *ListenPort*) c=${c//\/etc\/amnezia\/server.conf/$SRVCONF};; esac
 case "$c" in
   *ROLLBACK_BINS=1*) rm -f "$STUB/broken"; echo ROLLED_BACK; exit 0;;
   *"bash $VROOT/awg-build-router.sh"*) [ -e "$STUB/rbfail" ] && { echo "go: build failed"; exit 1; }
@@ -175,6 +175,20 @@ ck "router-bins: сборка упала → роутер не тронут" '! 
 rm -f "$STUB/rbfail"; touch "$STUB/bfail"
 ck "router-bins: установка не удалась → код ошибки и событие" '! "$V" router-bins >/dev/null 2>&1 && grep -q "не удалось, работают прежние" "$DD/events.log"'
 rm -f "$STUB/bfail"
+
+# --- несколько своих VPS (#32) и туннели 3x-ui
+mkdir -p "$DD/vps.d"; printf 'VPS_HOST="198.51.100.20"\nVPS_PORT="2222"\nVPS_USER="root"\nVPS_LABEL="Швеция"\n' > "$DD/vps.d/se.env"
+ck "list: main и второй VPS" '"$V" list > "$T/l1"; grep -q "^main	203.0.113.9	22	root" "$T/l1" && grep -q "^se	198.51.100.20	2222	root	Швеция" "$T/l1"'
+: > "$STUB/ssh.log"
+ck "--vps se: вход на второй VPS со своим портом" '"$V" --vps se test | grep -q "root@198.51.100.20:2222" && grep -q -- "-p 2222" "$STUB/ssh.log"'
+ck "--vps se: туннелей к нему нет" '[ -z "$("$V" --vps se tunnels)" ]'
+ck "--vps: неизвестный и опасный ID — отказ до ssh" ': > "$STUB/ssh.log"; ! "$V" --vps nope test >/dev/null && ! "$V" --vps "a;b" test >/dev/null && [ ! -s "$STUB/ssh.log" ]'
+printf '{"panels":{},"tunnels":{"awgbackup":{"panel":"p1","inbound":45,"kind":"linked"}}}' > "$DD/xui.json"
+ck "туннель, привязанный к 3x-ui, — не туннель VPS" '! "$V" tunnels | grep -qx awgbackup'
+rm -f "$DD/xui.json"
+cp "$DD/backup.conf" "$T/bk.p"; cp "$SRVCONF" "$T/srv.p"; sed -i 's/^Endpoint = .*/Endpoint = 203.0.113.9:36883/' "$DD/backup.conf"
+ck "туннель не на порт awg-server (его держит 3x-ui) — ничего не меняется" '! "$V" rotate-keys awgbackup > "$T/o13" 2>&1 && grep -q "другая программа" "$T/o13" && cmp -s "$SRVCONF" "$T/srv.p" && ! grep -q "36883" "$T/srv.p"'
+cp "$T/bk.p" "$DD/backup.conf"; rm -rf "$DD/vps.d"
 
 # --- проверки ввода
 printf 'VPS_HOST="vps;reboot"\n' > "$DD/vps.env"; : > "$STUB/ssh.log"

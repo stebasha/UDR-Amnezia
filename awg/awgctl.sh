@@ -16,7 +16,7 @@
 #   awgctl report             обезличенный отчёт для issue (ключи и IP скрыты)
 #   awgctl drift [save|repair]   сверка правил и служб с эталоном; repair — вернуть правила набора
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
-#   awgctl vps [test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh)
+#   awgctl vps [--vps ID] [list|test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh); несколько VPS — #32
 DD=${DD:-/data/awg}
 AWG=$DD/awg
 FORCEF=${FORCEF:-/run/awg-force}

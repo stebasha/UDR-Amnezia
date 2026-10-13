@@ -11,8 +11,11 @@
 #   vps.sh router-bins           собрать последние amneziawg-go и awg для роутера на VPS и поставить (откат по handshake)
 #   vps.sh rotate-keys [ТУННЕЛЬ] новые ключи сервера и роутера одновременно; нет handshake — откат на обеих сторонах
 #   vps.sh obfs [ТУННЕЛЬ]        новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
-# Адрес — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env. Ключ роутера — ssh/id_ed25519
-# (создаёт установщик при настройке VPS). Туннель к VPS определяется по Endpoint = адрес VPS.
+#   vps.sh list                  все свои VPS (#32): ID адрес порт пользователь метка
+#   vps.sh --vps ID КОМАНДА …    то же для другого своего VPS (по умолчанию main)
+# Адрес VPS main — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env; остальные VPS — vps.d/ID.env
+# (VPS_HOST, VPS_PORT, VPS_USER, VPS_LABEL). Ключ роутера — ssh/id_ed25519, общий для всех VPS. Туннель к VPS определяется
+# по Endpoint = адрес VPS; туннели, привязанные к 3x-ui (xui.json), и туннели не на порт awg-server сюда не относятся.
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
 RKEY=${RKEY:-$DD/ssh/id_ed25519}
@@ -22,13 +25,22 @@ umask 077
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}
-VPS_HOST=""; VPS_PORT=22; VPS_USER=root
-# shellcheck disable=SC1091
-[ -r "$DD/vps.env" ] && . "$DD/vps.env"
-VPS_HOST=${VPS_HOST:-${VPS_IP:-}}
-
 say(){ printf '%s\n' "$*"; }
 die(){ say "ОШИБКА: $*"; exit 1; }
+
+VPS_ID=${VPS_ID:-main}
+if [ "${1:-}" = --vps ]; then VPS_ID=${2:-}; shift 2 || shift; fi
+[[ $VPS_ID =~ ^[a-z][a-z0-9]{0,11}$ ]] || die "неверный ID VPS: $VPS_ID"
+VPS_HOST=""; VPS_PORT=22; VPS_USER=root; VPS_LABEL=""
+if [ "$VPS_ID" = main ]; then
+  # shellcheck disable=SC1091
+  [ -r "$DD/vps.env" ] && . "$DD/vps.env"
+  VPS_HOST=${VPS_HOST:-${VPS_IP:-}}
+else
+  [ -r "$DD/vps.d/$VPS_ID.env" ] || [ "${1:-}" = list ] || die "нет VPS $VPS_ID (vps.d/$VPS_ID.env): добавьте его в панели («Свой VPS → Добавить VPS»)"
+  # shellcheck disable=SC1090
+  [ -r "$DD/vps.d/$VPS_ID.env" ] && . "$DD/vps.d/$VPS_ID.env"
+fi
 event(){ echo "$(date +%s)|vps|$1" >> "$DD/events.log"; }
 notify(){ if { [ -r "$DD/telegram.env" ] || [ -r "$DD/hooks.env" ]; } && [ -x "$DD/notify.sh" ]; then "$DD/notify.sh" "$1" >/dev/null 2>&1; fi; return 0; }
 
@@ -66,15 +78,24 @@ conf_of(){
 }
 conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); split(line,a,"="); key=a[1]; gsub(/[ \t]/,"",key) } tolower(key)==k { sub(/^[^=]*=[ \t]*/,"",line); print line; exit }' "$1"; }
 hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
-vps_tunnels(){  # туннели, у которых Endpoint — этот VPS (имя или адрес, в т. ч. разрешённый up.sh)
-  local t cf ep host ip
+xui_tunnels(){  # туннели, привязанные к 3x-ui (#30, #32): их сервер — 3x-ui, а не awg-server
+  [ -r "$DD/xui.json" ] || return 0
+  python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+t = d.get("tunnels", {}) if "tunnels" in d or "panels" in d else d
+print(" ".join(k for k in t if isinstance(t, dict)))' "$DD/xui.json" 2>/dev/null
+}
+vps_tunnels(){  # туннели, у которых Endpoint — этот VPS (имя или адрес, в т. ч. разрешённый up.sh), кроме туннелей 3x-ui
+  local t cf ep host ip xt
   [ -n "$VPS_HOST" ] || return 0        # адрес VPS не задан — своих туннелей нет (пустое не совпадает с пустым)
+  xt=" $(xui_tunnels) "
   for t in $MAIN $BACKUP $TUNNELS_EXTRA; do
+    case "$xt" in *" $t "*) continue;; esac
     cf=$DD/$(conf_of "$t"); [ -f "$cf" ] || continue
     ep=$(conf_get "$cf" Endpoint | tr -d ' \r'); host=${ep%:*}
     ip=$(awk '{print $2}' "$DD/.endpoint-$t" 2>/dev/null)
     [ -n "$host" ] || continue
-    if [ "$host" = "$VPS_HOST" ] || { [ -n "$ip" ] && [ "$ip" = "$VPS_HOST" ]; } || { [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
+    if [ "$host" = "$VPS_HOST" ] || { [ -n "$ip" ] && [ "$ip" = "$VPS_HOST" ]; } || { [ "$VPS_ID" = main ] && [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
   done
 }
 pick(){  # pick [ТУННЕЛЬ] → $T, $CF
@@ -83,6 +104,11 @@ pick(){  # pick [ТУННЕЛЬ] → $T, $CF
   if [ -n "$1" ]; then echo "$l" | grep -qx "$1" || die "$1 — не туннель к $VPS_HOST (подходят: $(echo "$l" | tr '\n' ' '))"; T=$1
   else [ "$(echo "$l" | wc -l)" = 1 ] || die "к VPS ведут несколько туннелей ($(echo "$l" | tr '\n' ' ')): укажите какой"; T=$l; fi
   CF=$DD/$(conf_of "$T")
+  # туннель должен обслуживать awg-server (/etc/amnezia/server.conf), а не другая программа на том же VPS (например, 3x-ui)
+  local tp sp; tp=$(conf_get "$CF" Endpoint | tr -d ' \r'); tp=${tp##*:}
+  sp=$(vrun 'sed -n "s/^[[:space:]]*ListenPort[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p" /etc/amnezia/server.conf 2>/dev/null | head -n1' 2>/dev/null)
+  [ -n "$sp" ] || die "на VPS нет сервера awg-server (/etc/amnezia/server.conf): туннель $T обслуживает другая программа (например, 3x-ui) — меняйте его там"
+  [ "$sp" = "$tp" ] || die "туннель $T идёт на порт $tp, а awg-server слушает $sp: этот туннель обслуживает другая программа (например, 3x-ui) — ключи и обфускацию меняйте там (для 3x-ui: «3x-ui → Обновить из 3x-ui»)"
 }
 fresh(){ local a; a=$(hs_age "$1"); [ "$a" -ge 0 ] && [ "$a" -lt "${2:-20}" ]; }
 wait_hs(){  # wait_hs ТУННЕЛЬ — handshake свежее 20 с за VPS_WAIT секунд и интернет через туннель
@@ -163,6 +189,16 @@ remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt и
 
 cmd=${1:-help}; shift
 case "$cmd" in
+  list)    # #32: все свои VPS
+    mainh=$VPS_HOST; [ "$VPS_ID" = main ] || mainh=$( . "$DD/vps.env" 2>/dev/null; echo "${VPS_HOST:-${VPS_IP:-}}")
+    # shellcheck disable=SC1091
+    [ -n "$mainh" ] && ( VPS_PORT=22; VPS_USER=root; VPS_LABEL=""; [ -r "$DD/vps.env" ] && . "$DD/vps.env"
+      printf 'main\t%s\t%s\t%s\t%s\n' "$mainh" "$VPS_PORT" "$VPS_USER" "$VPS_LABEL" )
+    for f in "$DD"/vps.d/*.env; do
+      [ -r "$f" ] || continue; id=$(basename "$f" .env); [[ $id =~ ^[a-z][a-z0-9]{0,11}$ ]] || continue
+      # shellcheck disable=SC1090
+      ( VPS_HOST=""; VPS_PORT=22; VPS_USER=root; VPS_LABEL=""; . "$f"; printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$VPS_HOST" "$VPS_PORT" "$VPS_USER" "$VPS_LABEL" )
+    done;;
   tunnels) vps_tunnels;;
   addkey)  # ключ роутера на уже настроенный VPS: дальше обновление, состояние, ключи и обфускация — без пароля
     pw=""; if [ -n "${VPS_PASS_FILE:-}" ]; then pw=$(cat "$VPS_PASS_FILE" 2>/dev/null); rm -f "$VPS_PASS_FILE"; fi
@@ -341,5 +377,5 @@ case "$cmd" in
     say "· новые параметры обфускации для $T: $(tr '\n' ' ' < "$OBFL")"
     coordinated "смена обфускации" "OBF_FILE=/root/awg-obf.txt" apply_obf; rc=$?
     rm -rf "$tmpd"; exit $rc;;
-  *) sed -n '2,14p' "$0";;
+  *) sed -n '2,18p' "$0";;
 esac

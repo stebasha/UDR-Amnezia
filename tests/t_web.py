@@ -113,12 +113,20 @@ def restart_panel(pid, before=None):
 
 
 class FakeXui:
-    """Поддельная 3x-ui (#30): /secret/panel/api/inbounds/{list,add,del/ID}, Bearer-токен, ответ {success,msg,obj}."""
+    """Поддельная 3x-ui (#30, #32): /secret/panel/api/inbounds/{list,add,del/ID}, /panel/api/nodes/list, Bearer-токен,
+    ответ {success,msg,obj}. legacy=True — settings строкой (до 3.10), иначе объектом (3.10+)."""
+    SRV = {"privateKey": "c2VydmVyLXByaXZhdGUta2V5LWZvci10ZXN0cy0xMjM=", "publicKey": "U0VSVkVSLVBVQkxJQy1LRVktRk9SLVRFU1RTLTEyMzQ=",
+           "subnetIp": "10.8.1.0", "subnetCidr": 24, "mtu": 0, "jc": 4, "jmin": 50, "jmax": 200, "s1": 40, "s2": 120,
+           "s3": 20, "s4": 16, "h1": "100000-200000", "h2": "300000-400000", "h3": "500000-600000", "h4": "700000-800000",
+           "i1": "<r 64>", "headerProtectionKey": "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTMyLWJ5dGVzLTAxMjM=",
+           "contentPaddingAddition": "10-30", "rekeyAfterTime": "110-130", "rejectAfterTime": "170-220",
+           "rekeyTimeout": "4-6", "randomTrailers": True, "disableCookies": False}
 
-    def __init__(self, token="xui-token-123456"):
+    def __init__(self, token="xui-token-123456", existing=None):
         import http.server
         import threading
-        self.token, self.inbounds, self.added, self.next_id = token, [{"id": 1, "port": 2053, "protocol": "vless"}], [], 10
+        self.token, self.added, self.next_id, self.legacy = token, [], 50, False
+        self.inbounds = [{"id": 1, "port": 2053, "protocol": "vless", "settings": {"clients": []}}] + (existing or [])
         fx = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -139,11 +147,18 @@ class FakeXui:
                     return False
                 return True
 
+            def out(self, ib):
+                return dict(ib, settings=json.dumps(ib["settings"]) if fx.legacy else ib["settings"])
+
             def do_GET(self):
+                if self.path == "/secret/panel/api/nodes/list":
+                    if self.auth():
+                        self.reply(200, {"success": True, "msg": "", "obj": [{"id": 2, "name": "us", "address": "us.example.net"}]})
+                    return
                 if self.path != "/secret/panel/api/inbounds/list":
                     return self.reply(404, {})
                 if self.auth():
-                    self.reply(200, {"success": True, "msg": "", "obj": fx.inbounds})
+                    self.reply(200, {"success": True, "msg": "", "obj": [self.out(x) for x in fx.inbounds]})
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
@@ -154,17 +169,12 @@ class FakeXui:
                 if self.path.endswith("/add"):
                     ib = json.loads(body)
                     fx.added.append(ib)
-                    st = json.loads(ib["settings"])
-                    st["server"] = {"privateKey": "c2VydmVyLXByaXZhdGUta2V5LWZvci10ZXN0cy0xMjM=", "publicKey": "U0VSVkVSLVBVQkxJQy1LRVktRk9SLVRFU1RTLTEyMzQ=",
-                                    "subnetIp": "10.8.1.0", "subnetCidr": 24, "mtu": 0, "jc": 4, "jmin": 50, "jmax": 200, "s1": 40, "s2": 120,
-                                    "s3": 20, "s4": 16, "h1": "100000-200000", "h2": "300000-400000", "h3": "500000-600000", "h4": "700000-800000",
-                                    "i1": "<r 64>", "headerProtectionKey": "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTMyLWJ5dGVzLTAxMjM=",
-                                    "contentPaddingAddition": "10-30", "rekeyAfterTime": "110-130", "rejectAfterTime": "170-220",
-                                    "rekeyTimeout": "4-6", "randomTrailers": True, "disableCookies": False}
+                    st = json.loads(ib["settings"]) if isinstance(ib["settings"], str) else ib["settings"]
+                    st["server"] = dict(FakeXui.SRV)
                     fx.next_id += 1
-                    rec = dict(ib, id=fx.next_id, settings=json.dumps(st))
+                    rec = dict(ib, id=fx.next_id, settings=st)
                     fx.inbounds.append(rec)
-                    return self.reply(200, {"success": True, "msg": "ok", "obj": rec})
+                    return self.reply(200, {"success": True, "msg": "ok", "obj": self.out(rec)})
                 m = re.match(r".*/del/(\d+)$", self.path)
                 if m:
                     fx.inbounds = [x for x in fx.inbounds if x["id"] != int(m.group(1))]
@@ -659,27 +669,64 @@ def main():
         check("panel.py tunnel-add: повтор — отказ с кодом 2", p_.returncode == 2 and "уже есть" in p_.stdout, p_.stdout)
         a.post("/api/tunnel/remove", {"name": "awgcli", "current": "Test-pass-123"})
 
-        # ---------- 1.6 (#30): туннель через 3x-ui (AmneziaWG 3.1)
-        fx = FakeXui()
+        # ---------- 1.6 (#30, #32): туннели через 3x-ui (AmneziaWG 3.1), несколько панелей
+        rpriv = "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGVsbG8tMTI="                   # закрытый ключ роутера в конфигах стенда
+        rpub = base64.b64encode(hashlib.sha256(rpriv.encode()).digest()).decode()  # как заглушка awg pubkey
+        ppriv = base64.b64encode(hashlib.sha256(b"phone").digest()).decode()
+        home = {"id": 45, "port": 443, "protocol": "amneziawg", "remark": "Home", "enable": True, "listen": "",
+                "settings": {"server": dict(FakeXui.SRV, publicKey="c2VydmVyLXNlcnZlci1zZXJ2ZXItc2VydmVyLWtleTE="),
+                             "clients": [{"email": "home", "enable": True, "publicKey": rpub, "allowedIPs": ["10.8.1.2/32"],
+                                          "preSharedKey": "cHNrLXBzay1wc2stcHNrLXBzay1wc2stcHNrLXBzazE="},
+                                         {"email": "phone", "enable": True, "privateKey": ppriv, "publicKey": "cGhvbmUtcHViLWtleS1waG9uZS1wdWIta2V5LTAwMDA=",
+                                          "allowedIPs": ["10.8.1.3/32", "fd00::3/128"]}]},
+                "clientStats": [{"email": "home", "up": 1000, "down": 5000}]}
+        us = {"id": 48, "port": 25353, "protocol": "amneziawg", "remark": "US", "enable": True, "nodeId": 2, "shareAddrStrategy": "node",
+              "settings": {"server": dict(FakeXui.SRV), "clients": []}}
+        fx = FakeXui(existing=[home, us])
         base = "http://127.0.0.1:%d/secret" % fx.port
+        # перенос из 1.6-beta: xui.env + карта туннелей → xui.json (панель p1)
+        open(os.path.join(dd, "xui.env"), "w").write('XUI_URL="%s"\nXUI_TOKEN="xui-token-123456"\nXUI_INSECURE="no"\nXUI_HOST="203.0.113.50"\n' % base)
+        open(os.path.join(dd, "xui.json"), "w").write('{"awgold": {"inbound": 7, "email": "e", "port": 1, "host": "h", "created": 1}}')
+        s, j = a.get("/api/xui")
+        db = json.load(open(os.path.join(dd, "xui.json")))
+        check("3x-ui: перенос старых настроек в xui.json (панель p1, туннель с панелью), xui.env удалён",
+              s == 200 and [p["id"] for p in j["panels"]] == ["p1"] and db["tunnels"]["awgold"]["panel"] == "p1"
+              and not os.path.exists(os.path.join(dd, "xui.env")) and oct(os.stat(os.path.join(dd, "xui.json")).st_mode & 0o777) == "0o600", (j, db))
+        os.remove(os.path.join(dd, "xui.json"))
         s, j = a.post("/api/xui", {"url": base + "/x\nPostUp=evil", "token": "xui-token-123456"})
         check("3x-ui: опасный адрес отклонён", s == 400, j)
-        s, j = a.post("/api/xui", {"url": base, "token": "wrong-token-1", "host": "203.0.113.50"})
-        s, j = a.post("/api/xui/test", {})
+        s, j = a.post("/api/xui", {"url": base, "token": "wrong-token-1", "host": "203.0.113.50", "label": "Финляндия"})
+        xpid = j.get("id")
+        s, j = a.post("/api/xui/test", {"id": xpid})
         check("3x-ui: неверный токен → понятная ошибка 401", s == 400 and "401" in j.get("error", ""), j)
-        s, j = a.post("/api/xui", {"url": base, "token": "xui-token-123456", "host": "203.0.113.50"})
-        xe = open(os.path.join(dd, "xui.env")).read()
-        check("3x-ui: настройки сохранены (600)", s == 200 and "xui-token-123456" in xe and oct(os.stat(os.path.join(dd, "xui.env")).st_mode & 0o777) == "0o600", j)
+        s, j = a.post("/api/xui", {"id": xpid, "url": base, "token": "xui-token-123456", "host": "203.0.113.50", "label": "Финляндия"})
+        xe = open(os.path.join(dd, "xui.json")).read()
+        check("3x-ui: панель сохранена (600), тот же ID", s == 200 and j["id"] == xpid == "p1" and "xui-token-123456" in xe
+              and oct(os.stat(os.path.join(dd, "xui.json")).st_mode & 0o777) == "0o600", j)
+        s, j = a.post("/api/xui", {"url": "https://xui2.example.com:2053/abc", "token": "other-token-777", "label": "Швеция"})
         s, j = a.get("/api/xui")
-        check("3x-ui: токен в браузер не отдаётся, amneziawg-go v3 подходит", s == 200 and j["token_set"] and "xui-token" not in json.dumps(j) and j["go_ok"], j)
-        s, j = a.post("/api/xui/test", {})
-        check("3x-ui: проверка подключения", s == 200 and "подключений 1" in j["msg"], j)
-        s, j = a.post("/api/xui/create", {"name": "awgxui", "current": "wrong"})
+        check("3x-ui: две панели, токены в браузер не отдаются, amneziawg-go v3 подходит",
+              s == 200 and [p["id"] for p in j["panels"]] == ["p1", "p2"] and all(p["token_set"] for p in j["panels"])
+              and "xui-token" not in json.dumps(j) and "other-token" not in json.dumps(j) and j["go_ok"], j)
+        s, j = a.post("/api/xui/test", {"id": "p1"})
+        check("3x-ui: проверка подключения (3.10: settings объектом)", s == 200 and "подключений 3, из них AmneziaWG 2" in j["msg"], j)
+        s, j = a.get("/api/xui/inbounds?panel=p1")
+        ib = {x["id"]: x for x in j.get("inbounds", [])}
+        hm = ib.get(45, {})
+        check("3x-ui: подключения AmneziaWG — #45 ведёт туннель awgbackup, клиент home — роутер, у phone ключ в 3x-ui",
+              s == 200 and hm.get("match") == "awgbackup" and hm.get("match_email") == "home"
+              and [c["router"] for c in hm["clients"]] == [True, False] and [c["has_key"] for c in hm["clients"]] == [False, True]
+              and hm["host"] == "203.0.113.50" and hm["clients"][0]["down"] == 5000, j)
+        check("3x-ui: адрес подключения на узле — адрес узла", ib.get(48, {}).get("host") == "us.example.net" and not ib.get(48, {}).get("match"), ib.get(48))
+        check("3x-ui: закрытые ключи из 3x-ui в браузер не отдаются", ppriv not in json.dumps(j) and "privateKey" not in json.dumps(j), j)
+        # создать: подключение в 3x-ui + туннель (старый формат ответа — settings строкой)
+        fx.legacy = True
+        s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgxui", "current": "wrong"})
         check("3x-ui: создание только с паролем", s == 403 and not fx.added, j)
         open(os.path.join(LAB, "stub", "hs", "awgxui"), "w").write("5")       # заглушка awg: в файле — возраст handshake
-        s, j = a.post("/api/xui/create", {"name": "awgxui", "port": "2053", "current": "Test-pass-123"})
+        s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgxui", "port": "2053", "current": "Test-pass-123"})
         check("3x-ui: занятый порт отклонён до создания", s == 400 and "занят" in j.get("error", "") and not fx.added, j)
-        s, j = a.post("/api/xui/create", {"name": "awgxui", "current": "Test-pass-123"})
+        s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgxui", "current": "Test-pass-123"})
         sent = fx.added[-1] if fx.added else {}
         cl = json.loads(sent.get("settings", "{}")).get("clients", [{}])[0]
         check("3x-ui: подключение amneziawg создано, в 3x-ui ушёл только открытый ключ", s == 200 and j["ok"] and sent.get("protocol") == "amneziawg"
@@ -691,11 +738,66 @@ def main():
               and "MTU = 1404" in conf and "Endpoint = 203.0.113.50:%d" % sent.get("port", 0) in conf and "DNS" not in conf, conf)
         ev = open(os.path.join(dd, "awg.env")).read()
         s, j = a.get("/api/xui")
-        check("3x-ui: туннель добавлен и запомнен", "awgxui" in ev and j["tunnels"] and j["tunnels"][0]["name"] == "awgxui"
-              and json.load(open(os.path.join(dd, "web", "labels.json"))).get("awgxui") == "3x-ui", (ev, j))
+        t1 = [t for t in j["tunnels"] if t["name"] == "awgxui"]
+        check("3x-ui: туннель добавлен и запомнен (панель, «создан роутером»)", "awgxui" in ev and t1 and t1[0]["panel"] == "p1" and t1[0]["kind"] == "created"
+              and t1[0]["panel_label"] == "Финляндия" and json.load(open(os.path.join(dd, "web", "labels.json"))).get("awgxui") == "3x-ui", (ev, j))
         s, j = a.post("/api/xui/remove", {"name": "awgxui", "current": "Test-pass-123"})
         check("3x-ui: удаление — туннель убран, подключение в 3x-ui удалено", s == 200 and "awgxui" not in open(os.path.join(dd, "awg.env")).read()
-              and not [x for x in fx.inbounds if x.get("protocol") == "amneziawg"], (j, fx.inbounds))
+              and not [x for x in fx.inbounds if str(x.get("remark", "")).startswith("UDR-Amnezia")], (j, fx.inbounds))
+        fx.legacy = False
+        # 3x-ui 3.10 (settings объектом): создание доходит до конца, а при ошибке подключение в 3x-ui не остаётся
+        open(os.path.join(LAB, "stub", "hs", "awgxui3"), "w").write("5")
+        s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgxui3", "current": "Test-pass-123"})
+        check("3x-ui 3.10: создание работает", s == 200 and j["ok"] and os.path.exists(os.path.join(dd, "awgxui3.conf")), j)
+        a.post("/api/xui/remove", {"name": "awgxui3", "current": "Test-pass-123"})
+        n0 = len(fx.inbounds)
+        open(os.path.join(dd, "awgbad.conf"), "w").write("занято")
+        os.chmod(os.path.join(dd, "awgbad.conf"), 0o600)
+        s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgbad", "current": "Test-pass-123"})
+        check("3x-ui: занятое имя — отказ до создания в 3x-ui", s == 400 and len(fx.inbounds) == n0, j)
+        os.remove(os.path.join(dd, "awgbad.conf"))
+        # привязать работающий туннель (запасной) к его подключению: по ключу сервера и порту
+        s, j = a.post("/api/xui/link", {"panel": "p1", "inbound": 48, "name": "awgmain"})
+        check("3x-ui: привязка к чужому подключению — отказ", s == 400 and "не совпадают" in j.get("error", ""), j)
+        bk0 = open(os.path.join(dd, "backup.conf")).read()
+        s, j = a.post("/api/xui/link", {"panel": "p1", "inbound": 45, "name": "awgbackup"})
+        db = json.load(open(os.path.join(dd, "xui.json")))
+        check("3x-ui: awgbackup привязан к №45 (клиент home), конфиг не тронут", s == 200 and db["tunnels"]["awgbackup"]["kind"] == "linked"
+              and db["tunnels"]["awgbackup"]["email"] == "home" and open(os.path.join(dd, "backup.conf")).read() == bk0, (j, db))
+        # обновить из 3x-ui: в 3x-ui сменили обфускацию — роутер берёт новые значения, свой ключ и адрес оставляет
+        fx.inbounds[[x["id"] for x in fx.inbounds].index(45)]["settings"]["server"].update(h1="111-222", jc=7)
+        s, j = a.post("/api/xui/sync", {"name": "awgbackup", "current": "wrong"})
+        check("3x-ui: обновление из 3x-ui только с паролем", s == 403 and open(os.path.join(dd, "backup.conf")).read() == bk0, j)
+        s, j = a.post("/api/xui/sync", {"name": "awgbackup", "current": "Test-pass-123"})
+        bk1 = open(os.path.join(dd, "backup.conf")).read()
+        check("3x-ui: обновлено из 3x-ui — новые H1/Jc, прежние ключ роутера, адрес, общий ключ и Endpoint", s == 200 and j.get("ok")
+              and "H1 = 111-222" in bk1 and "Jc = 7" in bk1 and "PrivateKey = " + rpriv in bk1 and "Endpoint = 203.0.113.77:443" in bk1
+              and "PresharedKey = cHNrLXBzay1wc2stcHNrLXBzay1wc2stcHNrLXBzazE=" in bk1
+              and re.search(r"Address = 10\.8\.1\.\d+/32", bk1), (j, bk1))
+        # подключить клиента, ключ которого хранит 3x-ui
+        s, j = a.post("/api/xui/import", {"panel": "p1", "inbound": 45, "email": "home", "name": "awgph", "current": "Test-pass-123"})
+        check("3x-ui: клиент без ключа в 3x-ui — отказ", s == 400 and "закрытого ключа" in j.get("error", ""), j)
+        open(os.path.join(LAB, "stub", "hs", "awgph"), "w").write("5")
+        s, j = a.post("/api/xui/import", {"panel": "p1", "inbound": 45, "email": "phone", "name": "awgph", "current": "Test-pass-123"})
+        ph = open(os.path.join(dd, "awgph.conf")).read() if os.path.exists(os.path.join(dd, "awgph.conf")) else ""
+        check("3x-ui: клиент phone подключён туннелем awgph (его ключ, IPv4-адрес, Endpoint)", s == 200 and j["ok"] and "PrivateKey = " + ppriv in ph
+              and "Address = 10.8.1.3/32" in ph and "Endpoint = 203.0.113.50:443" in ph and "H1 = 111-222" in ph, (j, ph))
+        s, j = a.post("/api/xui/panel/remove", {"id": "p1"})
+        check("3x-ui: панель с туннелями не убирается", s == 400 and "awgbackup" in j.get("error", ""), j)
+        s, j = a.post("/api/xui/remove", {"name": "awgph", "current": "Test-pass-123"})
+        check("3x-ui: клиент из 3x-ui — убран только туннель, клиент в 3x-ui остался", s == 200 and "awgph" not in open(os.path.join(dd, "awg.env")).read()
+              and [c["email"] for c in fx.inbounds[[x["id"] for x in fx.inbounds].index(45)]["settings"]["clients"]] == ["home", "phone"], j)
+        s, j = a.post("/api/xui/remove", {"name": "awgbackup", "current": "Test-pass-123"})
+        ev = open(os.path.join(dd, "awg.env")).read()
+        check("3x-ui: отвязка — запасной канал на месте, подключение №45 цело", s == 200 and "BACKUP=awgbackup" in ev.replace('"', "")
+              and 45 in [x["id"] for x in fx.inbounds] and "awgbackup" not in json.load(open(os.path.join(dd, "xui.json")))["tunnels"], (j, ev))
+        open(os.path.join(dd, "backup.conf"), "w").write(bk0)
+        s, j = a.post("/api/xui/panel/remove", {"id": "p2"})
+        check("3x-ui: панель без туннелей убирается", s == 200 and [p["id"] for p in a.get("/api/xui")[1]["panels"]] == ["p1"], j)
+        p_ = subprocess.run([sys.executable, os.path.join(dd, "web", "panel.py"), "xui"], capture_output=True, text=True,
+                            env=dict(os.environ, DD=dd, AWG_WEBD=os.path.join(dd, "web")))
+        check("panel.py xui: подключения панели и связь с роутером (только чтение)", p_.returncode == 0 and "№45 «Home» 203.0.113.50:443" in p_.stdout
+              and "туннель роутера awgbackup" in p_.stdout and ppriv not in p_.stdout, p_.stdout + p_.stderr)
         go = os.path.join(dd, "amneziawg-go")
         keep_go = open(go).read()
         open(go, "w").write('#!/bin/bash\necho "amneziawg-go 0.0.20250522"\n')
@@ -703,6 +805,23 @@ def main():
         check("3x-ui: старый amneziawg-go — отказ с подсказкой обновить", s == 400 and "Обновить на роутере" in j.get("error", ""), j)
         open(go, "w").write(keep_go)
         fx.srv.shutdown()
+
+        # ---------- 1.6 (#32): несколько своих VPS
+        s, j = a.post("/api/vps", {"new": True, "label": "Швеция", "host": "198.51.100.30", "port": "2222", "user": "root"})
+        vf = os.path.join(dd, "vps.d", "%s.env" % j.get("vps"))
+        check("VPS: добавлен второй (ID v2, файл 600)", s == 200 and j.get("vps") == "v2" and os.path.exists(vf)
+              and oct(os.stat(vf).st_mode & 0o777) == "0o600" and 'VPS_LABEL="Швеция"' in open(vf).read(), j)
+        s, j = a.get("/api/vps?vps=v2")
+        check("VPS: выбранный VPS и список", s == 200 and j["host"] == "198.51.100.30" and j["port"] == "2222" and j["label"] == "Швеция"
+              and [p["id"] for p in j["profiles"]][:1] == ["main"] and "v2" in [p["id"] for p in j["profiles"]], j)
+        s, j = a.post("/api/vps", {"new": True, "label": 'x"; rm', "host": "198.51.100.31"})
+        check("VPS: опасное название отклонено", s == 400, j)
+        s, j = a.get("/api/vps?vps=a;b")
+        check("VPS: неверный ID → 400", s == 400, j)
+        s, j = a.post("/api/vps/del", {"vps": "main"})
+        check("VPS: основной не удаляется", s == 400, j)
+        s, j = a.post("/api/vps/del", {"vps": "v2"})
+        check("VPS: второй убран из списка", s == 200 and not os.path.exists(vf), j)
 
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
