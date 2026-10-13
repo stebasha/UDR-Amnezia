@@ -425,6 +425,12 @@ def main():
               and it["amneziawg-go"]["state"] == "update" and it["amneziawg-go"]["latest"] == "v3.1.20260901"
               and it["awg"]["state"] == "ok" and it["awg"]["installed"] == "v3.1.20260812" and "--bins-update" in j["cmd"], j)
         go = os.path.join(dd, "amneziawg-go")
+        keep = open(go).read()
+        open(go, "w").write('#!/bin/bash\nprintf "amneziawg-go 0.0.20250522\\n\\nUserspace AmneziaWG daemon for linux-arm64.\\n"\n')
+        s, j = a.post("/api/bins/check", {})
+        check("бинарники: старая сборка без «v» распознана и устарела (как на UDR7)", s == 200 and j["items"][0]["installed"] == "v0.0.20250522"
+              and j["items"][0]["state"] == "update", j)
+        open(go, "w").write(keep)
         with open(os.path.join(dd, ".binsver"), "w") as f:
             f.write("amneziawg-go v3.1.20260901 %s\n" % hashlib.sha256(open(go, "rb").read()).hexdigest())
         s, j = a.post("/api/bins/check", {})

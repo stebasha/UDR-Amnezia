@@ -142,7 +142,7 @@ latest(){  # latest amneziawg-go|amneziawg-tools — последний рели
 }
 remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt или --version)
   vrun 'f=/usr/local/share/amnezia-build.txt; if [ -f $f ]; then awk "/^amneziawg-go /{print \"go\", \$2} /^amneziawg-tools /{print \"tools\", \$2}" $f; else
-    echo "go $(amneziawg-go --version 2>&1 | grep -o "v[0-9][0-9.]*" | head -n1)"; echo "tools $(awg --version 2>&1 | grep -o "v[0-9][0-9.]*" | head -n1)"; fi' 2>/dev/null
+    echo "go $(amneziawg-go --version 2>&1 | head -n1 | grep -oE "v?[0-9]+(\.[0-9]+)+" | head -n1 | sed "s/^v*/v/")"; echo "tools $(awg --version 2>&1 | head -n1 | grep -oE "v?[0-9]+(\.[0-9]+)+" | head -n1 | sed "s/^v*/v/")"; fi' 2>/dev/null
 }
 
 cmd=${1:-help}; shift
