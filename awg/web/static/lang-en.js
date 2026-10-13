@@ -646,7 +646,9 @@ window.AWG_EN = {
  "идёт обновление набора: дождитесь его окончания, потом перезагружайте": "an update is running: wait for it to finish, then reboot",
  "Не принято: ": "Not accepted: ",
  " — подробности под формой": " — details below the form",
- "как текущая": "same as current"
+ "как текущая": "same as current",
+ "Способ": "Method",
+ "авто": "auto"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -673,6 +675,7 @@ window.AWG_EN = {
     [/^активен (\S+) \(выбран вручную\)\. Вернуть автоматику: «Авто»$/, "$1 is active (selected manually). Back to automatic: Auto"],
     [/^сторож отклонил переключение: канал (\S+) не отвечает$/, "the watchdog refused to switch: $1 does not respond"],
     [/^не переключилось за 30 с \(сейчас (\S+)\): канал (\S+) не отвечает или сторож не запущен$/, "did not switch within 30 s (now $1): $2 does not respond or the watchdog is not running"],
+    [/^способ: auto, icmp или tcp$/, "method: auto, icmp or tcp"],
     [/^Роутер: /, "Router: "],
     [/^пароль копии .*$/, "backup password must be at least 8 characters"],
     [/^сохранено: (.*)/, "saved: $1"]

@@ -362,7 +362,8 @@
         try {
           const r = await api('/api/login', { user: u.value.trim(), password: p.value, totp: t.value.trim() });
           if (r.need_totp) { tf.classList.remove('hidden'); t.focus(); return; }
-          S.csrf = r.csrf; S.user = r.user;
+          S.csrf = r.csrf; S.user = r.user; if (r.version) S.version = r.version;
+          checkVersion(r.version);
           start();
         } catch (ex) {
           replace(msg, icon('alert'), el('div', null, ex.message));
@@ -417,7 +418,19 @@
     S.csrf = '';
     showLogin(false);
   }
+  // Версия страницы подставляется панелью при отдаче app.js. Вкладка, открытая до обновления, после входа
+  // (или при опросе обзора) видит другую версию панели и перезагружается — иначе новых кнопок не видно до Ctrl+F5.
+  const PAGE_VERSION = '__AWG_PAGE_VERSION__';
+  function checkVersion(v) {
+    if (!v || PAGE_VERSION.indexOf('__') === 0 || v === PAGE_VERSION) return;
+    let last = '';
+    try { last = sessionStorage.getItem('awg-reloaded-for') || ''; } catch (e) { /* без хранилища — просто перезагрузка */ }
+    if (last === v) return;   // уже перезагружались ради этой версии: не зацикливаться (например, прокси отдаёт старый файл)
+    try { sessionStorage.setItem('awg-reloaded-for', v); } catch (e) { /* ничего */ }
+    location.reload();
+  }
   function updateChrome(ov) {
+    checkVersion(ov.panel);
     const host = $('#host');
     if (!host) return;
     replace(host, icon('router', 'sm'), el('span', { class: 'hn' }, ov.host));
@@ -948,6 +961,11 @@
       clear(body); clear(foot);
       ({ form: edForm, text: edText, hist: edHist, quality: edQuality, export: edExport })[k]();
     };
+    // число версий в названии вкладки: после применения, возврата или импорта история растёт
+    const setHist = (n) => {
+      TABS[2][1] = T('История (') + n + ')';
+      replace(tb, TABS.map(([id, name]) => el('button', { class: 'tab' + (id === cur ? ' on' : ''), onclick: () => show(id) }, name)));
+    };
     const res = el('div', { class: 'res hidden' });
     async function applyFlow(payload, btn) {
       await busy(btn, async () => {
@@ -972,8 +990,7 @@
             (x.ok ? ok : err)(x.ok ? T('Конфиг применён') : T('Конфиг не применён: возвращён прежний'));
             reload();
             d = await api('/api/tunnel/fields?name=' + encodeURIComponent(t.name));
-            TABS[2][1] = T('История (') + d.revisions + ')';
-            replace(tb, TABS.map(([id, name]) => el('button', { class: 'tab' + (id === cur ? ' on' : ''), onclick: () => show(id) }, name)));
+            setHist(d.revisions);
           } catch (e) { err(e); }
         }));
       });
@@ -1043,6 +1060,7 @@
       add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, T('Закрыть'))]);
       try {
         const r = await api('/api/tunnel/revisions?name=' + encodeURIComponent(t.name));
+        setHist(r.revisions.length);
         replace(box, r.revisions.length ? el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
           el('thead', null, el('tr', null, el('th', null, T('Версия')), el('th', null, T('Что')), el('th', null, T('Сервер')), el('th', null, ''), el('th', null, ''))),
           el('tbody', null, r.revisions.map((v) => el('tr', null,
@@ -1454,6 +1472,9 @@
     const mtuSel = el('select', { class: 'input' });
     const spSel = el('select', { class: 'input' }), spSize = el('select', { class: 'input' }, [5, 10, 25, 50].map((x) => el('option', { value: x, selected: x === 10 }, x + T(' МБ'))));
     const pgSel = el('select', { class: 'input' }), pgHost = el('input', { class: 'input', value: '1.1.1.1', spellcheck: 'false', autocapitalize: 'off' });
+    // ICMP часто режут провайдер или сервер туннеля: «авто» тогда меряет время TCP-подключения к :443
+    const pgMode = el('select', { class: 'input', 'aria-label': T('Способ') }, el('option', { value: 'auto' }, T('авто')), el('option', { value: 'icmp' }, 'ICMP'), el('option', { value: 'tcp' }, 'TCP :443'));
+    pgMode.style.width = 'auto';
     spSize.style.width = 'auto';
     const spHist = el('div');
     const loadSp = async () => {
@@ -1487,9 +1508,9 @@
           el('div', { class: 'input-group' }, spSel, spSize, el('button', { class: 'btn primary', onclick: () => { runTool({ tool: 'speedtest', iface: spSel.value, mb: +spSize.value }, T('Замер скорости')); watchDone(); } }, icon('activity', 'sm'), T('Замерить'))),
           el('div', { class: 'spacer' }), spHist), { icon: 'activity' }),
         card(T('Ping и трассировка'), el('div', null, el('p', { class: 'muted small' }, T('Проверить доступность адреса через выбранный туннель или напрямую.')),
-          el('div', { class: 'input-group' }, pgHost, pgSel),
+          el('div', { class: 'input-group' }, pgHost, pgSel, pgMode),
           el('div', { class: 'spacer' }),
-          el('div', { class: 'row' }, el('button', { class: 'btn', onclick: () => runTool({ ep: '/api/net', kind: 'ping', host: pgHost.value.trim(), iface: pgSel.value }, 'ping ' + pgHost.value) }, icon('activity', 'sm'), 'Ping'),
+          el('div', { class: 'row' }, el('button', { class: 'btn', onclick: () => runTool({ ep: '/api/net', kind: 'ping', host: pgHost.value.trim(), iface: pgSel.value, mode: pgMode.value }, 'ping ' + pgHost.value) }, icon('activity', 'sm'), 'Ping'),
             el('button', { class: 'btn', onclick: () => runTool({ ep: '/api/net', kind: 'trace', host: pgHost.value.trim(), iface: pgSel.value }, T('трассировка ') + pgHost.value) }, icon('route', 'sm'), T('Трассировка')))), { icon: 'globe' })),
       el('div', { class: 'spacer' }),
       card(T('Сверка правил с эталоном (drift)'), el('div', null,
@@ -2018,7 +2039,7 @@
     try {
       const r = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
       const j = await r.json();
-      if (r.ok) { S.csrf = j.csrf; S.user = j.user; S.version = j.version; start(); } else showLogin(j.setup);
+      if (r.ok) { S.csrf = j.csrf; S.user = j.user; S.version = j.version; checkVersion(j.version); start(); } else showLogin(j.setup);
     } catch (e) {
       replace($('#app'), el('div', { class: 'login-wrap' }, el('div', { class: 'login' }, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, T('Панель не отвечает: ') + e.message)))));
     }

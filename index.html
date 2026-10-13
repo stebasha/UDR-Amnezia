@@ -2393,6 +2393,7 @@ awgctl selftest --full<span class="c">        # плюс живая провер
 awgctl dedup<span class="c">                  # убрать дубликаты правил iptables для туннелей</span>
 awgctl diagnose<span class="c">               # что сломано и как исправить: первая причина и команда</span>
 awgctl domain youtube.com<span class="c">     # куда пойдёт сайт, открывается ли через туннель и напрямую</span>
+awgctl ping auto awgmain 1.1.1.1<span class="c"> # задержка через туннель; ICMP режется — меряет по TCP</span>
 awgctl report<span class="c">                 # обезличенный отчёт для issue (ключи и IP скрыты)</span>
 awgctl web<span class="c">                    # адрес веб-панели</span>
 awgctl drift<span class="c">                  # сверка правил и служб с эталоном (repair — вернуть правила набора)</span></code></pre></figure>

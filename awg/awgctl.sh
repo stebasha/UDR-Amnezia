@@ -12,6 +12,7 @@
 #   awgctl dedup              убрать дубликаты правил iptables для туннелей
 #   awgctl diagnose           дерево причин: что сломано и как исправить
 #   awgctl domain ДОМЕН       куда пойдёт сайт, открывается ли через туннель и напрямую
+#   awgctl ping [auto|icmp|tcp] ИНТЕРФЕЙС УЗЕЛ [ПОРТ]   задержка через туннель/WAN; auto: ICMP, без ответа — TCP
 #   awgctl report             обезличенный отчёт для issue (ключи и IP скрыты)
 #   awgctl drift [save|repair]   сверка правил и служб с эталоном; repair — вернуть правила набора
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
@@ -62,6 +63,56 @@ cmd_switch(){
 }
 cmd_auto(){ rm -f "$FORCEF"; sleep 7; [ -r "$STATEF" ] && . "$STATEF"; echo "автоматический режим. Сейчас активен: ${ACTIVE:-?}. Возврат на приоритетный канал — после RECOVER_SEC=${RECOVER_SEC:-600} с стабильной работы."; }
 
+# ping через интерфейс: ICMP, TCP (время подключения, как у сторожа при проверке качества) или auto —
+# ICMP, а если ни одного ответа (его часто режут провайдер или сервер туннеля) — TCP. Код: 0 — ответы были.
+cmd_ping(){
+  local mode=${1:-auto} dev=${2:-} host=${3:-} port=${4:-443} n=${COUNT:-10} out rc
+  case "$mode" in auto|icmp|tcp) ;; *) echo "awgctl ping [auto|icmp|tcp] ИНТЕРФЕЙС УЗЕЛ [ПОРТ]"; return 2;; esac
+  [ -n "$dev" ] && [ -n "$host" ] || { echo "awgctl ping [auto|icmp|tcp] ИНТЕРФЕЙС УЗЕЛ [ПОРТ]"; return 2; }
+  [[ $port =~ ^[0-9]{1,5}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo "порт: 1–65535"; return 2; }
+  _icmp(){
+    local out rc
+    out=$(ping -c "$n" -i 0.5 -W 2 -I "$dev" "$host" 2>&1); rc=$?
+    echo "$out"
+    return $rc
+  }
+
+  _tcp(){
+    local i t ok=0 sum=0 min="" max="" ms
+    echo "TCP: время подключения к $host:$port через $dev, попыток: $n"
+    for i in $(seq 1 "$n"); do
+      t=$(curl -sk -o /dev/null --connect-timeout 2 -m 3 --interface "$dev" -w '%{time_connect}' "https://$host:$port/" 2>/dev/null)
+      ms=$(awk -v t="${t:-0}" 'BEGIN{printf "%d", t*1000}')
+      if [ "${ms:-0}" -gt 0 ]; then
+        ok=$((ok+1)); sum=$((sum+ms))
+        { [ -z "$min" ] || [ "$ms" -lt "$min" ]; } && min=$ms
+        { [ -z "$max" ] || [ "$ms" -gt "$max" ]; } && max=$ms
+        echo "  $i: $ms мс"
+      else
+        echo "  $i: нет соединения"
+      fi
+      [ "$i" -lt "$n" ] && sleep 0.5
+    done
+    echo "--- $host:$port, TCP ---"
+    echo "попыток: $n, соединений: $ok, потери: $(( (n-ok)*100/n ))%"
+    [ $ok -gt 0 ] && echo "задержка мин/сред/макс: $min/$((sum/ok))/$max мс"
+    [ $ok -gt 0 ]
+  }
+
+  case "$mode" in
+    icmp) _icmp;;
+    tcp)  _tcp;;
+    auto)
+      out=$(_icmp); rc=$?
+      echo "$out"
+      if [ $rc -ne 0 ] && ! echo "$out" | grep -qE ' [1-9][0-9]* received'; then
+        echo
+        echo "ICMP не ответил (часто его режет провайдер или сервер туннеля) — меряю по TCP:"
+        _tcp
+      fi;;
+  esac
+}
+
 cmd_events(){
   local n=${1:-20}
   [ -s "$EVF" ] || { echo "событий пока нет"; return 0; }
@@ -111,6 +162,7 @@ case "${1:-status}" in
   backup)  shift; exec "$DD/backup.sh" "$@";;
   dedup)   exec "$DD/failover.sh" dedup;;
   diagnose|diag) exec "$DD/diagnose.sh";;
+  ping)    shift; cmd_ping "$@";;
   domain|domain-check) exec "$DD/domain-check.sh" "$2";;
   report)  shift; exec "$DD/report.sh" "$@";;
   drift)   shift; exec "$DD/drift.sh" "$@";;

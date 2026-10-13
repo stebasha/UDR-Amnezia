@@ -41,7 +41,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -1038,7 +1038,7 @@ def overview():
     load = read_file("/proc/loadavg").split()[:3]
     mem = parse_meminfo()
     return {
-        "host": socket.gethostname(), "version": read_file(os.path.join(DD, "VERSION")).strip() or VERSION,
+        "host": socket.gethostname(), "version": read_file(os.path.join(DD, "VERSION")).strip() or VERSION, "panel": VERSION,
         "time": now(), "uptime": up, "load": load, "mem": mem, "level": level, "alerts": alerts,
         "active": active, "forced": st.get("FORCED", ""), "tunnels": tl, "services": services,
         "pbr": {"table": table, "mark": e.get("MARK", ""), "rail": e.get("RAIL_IF", ""), "routes": tb.strip().splitlines(),
@@ -1329,6 +1329,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if method == "GET" and path in STATIC_FILES:
                 fn, ct = STATIC_FILES[path]
                 data = read_file(os.path.join(STATIC, fn)) if not fn.endswith(".png") else b""
+                if fn == "app.js":   # версия страницы: открытая до обновления вкладка увидит расхождение и перезагрузится
+                    data = data.replace("__AWG_PAGE_VERSION__", VERSION)
                 return self.send(200, data, ct)
             if not path.startswith("/api/"):
                 return self.send(404, {"error": "нет такой страницы"})
@@ -1392,7 +1394,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         tok = SESS.new(u, ip, self.headers.get("User-Agent", ""))
         audit(u, ip, "login")
         ck = "awgsid=%s; HttpOnly; SameSite=Strict; Path=/%s" % (tok, "; Secure" if self.server.tls else "")
-        return self.send(200, {"user": u, "csrf": SESS.get(tok)["csrf"]}, headers={"Set-Cookie": ck})
+        return self.send(200, {"user": u, "csrf": SESS.get(tok)["csrf"], "version": VERSION}, headers={"Set-Cookie": ck})
 
 
 # ======================================================================= API
@@ -2949,7 +2951,11 @@ def api_net_tool(h, d):
         raise ValueError("интерфейс: туннель или wan")
     dev = wan_if(e) if iface == "wan" else iface
     if kind == "ping":
-        cmd = ["ping", "-c", "10", "-i", "0.5", "-W", "2", "-I", dev, host]
+        mode = str(d.get("mode", "auto"))
+        if mode not in ("auto", "icmp", "tcp"):
+            raise ValueError("способ: auto, icmp или tcp")
+        # auto: ICMP, а если ни одного ответа (его часто режут провайдер или сервер туннеля) — время TCP-подключения
+        cmd = [os.path.join(DD, "awgctl.sh"), "ping", mode, dev, host]
     elif kind == "trace":
         tr = shutil.which("traceroute") or shutil.which("tracepath")
         if not tr:
