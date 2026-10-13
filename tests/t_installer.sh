@@ -24,6 +24,7 @@ t "алиасы в BASHRC" 'grep -q "alias awgctl=" "$BASHRC" && grep -q "alias 
 t "awgctl и awg-selftest доступны без алиасов (ссылки)" '[ "$(readlink "$AWG_BINDIR/awgctl")" = "$DD/awgctl.sh" ] && [ "$(readlink "$AWG_BINDIR/awg-selftest")" = "$DD/selftest.sh" ]'
 t "чужой файл с тем же именем не тронут" '[ ! -L "$AWG_BINDIR/awgs" ] && grep -q "чужой" "$AWG_BINDIR/awgs"'
 t "install.sh скопирован в DD" '[ -x "$DD/install.sh" ]'
+t "скрипты для VPS скопированы (#13)" '[ -x "$DD/vps.sh" ] && [ -f "$DD/server/vps-rotate.sh" ] && [ -f "$DD/server/audit-server.sh" ] && [ -f "$DD/server/awg-server-build.sh" ] && [ "$(stat -c %a "$DD/server")" = 700 ]'
 
 # --- манифест и проверка
 echo 'MAIN=awgmain' > "$DD/awg.env"; chmod 600 "$DD/awg.env"

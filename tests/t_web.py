@@ -484,6 +484,29 @@ def main():
         s, j = a.post("/api/backup/auto/test", {})
         check("автокопия: проверка VPS", s == 200 and j["ok"] and "VPS" in j["msg"], j)
 
+        # ---------- 1.5 (#13): свой VPS
+        s, j = a.post("/api/vps", {"host": "x;reboot", "port": "22", "user": "root"})
+        check("VPS: адрес проверяется", s == 400, j)
+        s, j = a.post("/api/vps", {"host": "", "port": "2222", "user": "root"})
+        vf = os.path.join(dd, "vps.env")
+        check("VPS: настройки сохранены (600)", s == 200 and 'VPS_PORT="2222"' in open(vf).read() and oct(os.stat(vf).st_mode & 0o777) == "0o600", j)
+        s, j = a.get("/api/vps")
+        check("VPS: адрес по умолчанию из awg.env, ключа нет", s == 200 and j["host_default"] == "203.0.113.9" and j["port"] == "2222" and not j["key"]
+              and isinstance(j["tunnels"], list), j)
+        s, j = a.post("/api/vps/test", {})
+        check("VPS: без ключа роутера — понятная причина", s == 200 and not j["ok"] and "нет ключа роутера" in j["msg"], j)
+        s, j = a.post("/api/vps/run", {"action": "rotate-keys", "current": "wrong"})
+        check("VPS: изменения только с паролем", s == 403, j)
+        s, j = a.post("/api/vps/run", {"action": "rm -rf", "current": "Test-pass-123"})
+        check("VPS: неизвестное действие отклонено", s == 400, j)
+        s, j = a.post("/api/vps/run", {"action": "obfs", "tunnel": "awg;x", "current": "Test-pass-123"})
+        check("VPS: имя туннеля проверяется", s == 400, j)
+        s, j = a.post("/api/vps/run", {"action": "update", "current": "Test-pass-123"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("VPS: действие запускается отдельной службой", s == 200 and "--unit=awg-vps-job" in srl and "vps.sh update" in srl, (j, srl[-300:]))
+        s, j = a.get("/api/vps/job")
+        check("VPS: журнал действия", s == 200 and "обновление AmneziaWG на VPS — запущено из панели" in j["text"], j)
+
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
         check("хуки: опасный адрес отклонён", s == 400, j)
@@ -529,7 +552,7 @@ def main():
         check("токен read: изменения запрещены", s == 403, j)
         s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
         check("токен admin: управление без CSRF", s == 200, j)
-        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET")):
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET"), ("/api/vps", "GET")):
             s, j = r_.req(m, path, headers=bh(atok))
             check("токен admin: %s только по паролю" % path, s == 403, j)
         s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))

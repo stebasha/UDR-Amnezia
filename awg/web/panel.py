@@ -703,7 +703,8 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
               "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
               "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha",
-              "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test", "/api/hooks", "/api/hooks/test"}
+              "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test", "/api/hooks", "/api/hooks/test",
+              "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job"}
 
 
 class Throttle:
@@ -3440,6 +3441,93 @@ def api_update_run(h, d):
     return {"ok": True, "msg": "обновление запущено; панель перезапустится, страница переподключится сама"}
 
 
+# ======================================================================= свой VPS (#13)
+VPS_F = os.path.join(DD, "vps.env")
+VPS_LOG = os.path.join(DD, "vps-job.log")
+VPS_ACTIONS = {"update": "обновление AmneziaWG на VPS", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
+
+
+def vps_job_running():
+    return run(["systemctl", "is-active", "--quiet", "awg-vps-job"], timeout=5)[0] == 0
+
+
+def vps_sh(args, timeout):
+    return run([os.path.join(DD, "vps.sh")] + args, timeout=timeout)
+
+
+def api_vps_get(h, q):
+    c = parse_env_text(read_file(VPS_F))
+    key = os.path.join(DD, "ssh", "id_ed25519")
+    tuns = [t for t in vps_sh(["tunnels"], 10)[1].split() if NAME_RE.match(t)]
+    return {"host": c.get("VPS_HOST", ""), "host_default": env().get("VPS_IP", ""), "port": c.get("VPS_PORT", "22"), "user": c.get("VPS_USER", "root"),
+            "key": os.path.exists(key), "pub": read_file(key + ".pub").strip()[:200], "tunnels": tuns,
+            "running": vps_job_running(), "log": read_file(VPS_LOG)[-20000:]}
+
+
+def api_vps_set(h, d):
+    host = str(d.get("host", "")).strip()
+    if host and not HOST_OR_IP_RE.match(host):
+        raise ValueError("адрес VPS: имя или IP")
+    port = str(d.get("port", "22")).strip()
+    if not re.match(r"^\d{1,5}$", port) or not 1 <= int(port) <= 65535:
+        raise ValueError("порт SSH: 1–65535")
+    user = str(d.get("user", "root")).strip()
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", user):
+        raise ValueError("пользователь: латиница в нижнем регистре, цифры, _ -")
+    write_secure(VPS_F, 'VPS_HOST="%s"\nVPS_PORT="%s"\nVPS_USER="%s"\n' % (host, port, user), 0o600)
+    h.act("vps-set", {"host": host, "port": port, "user": user})
+    return {"ok": True, "msg": "сохранено"}
+
+
+def api_vps_test(h, d):
+    rc, out = vps_sh(["test"], 40)
+    return {"ok": rc == 0, "msg": out.strip()}
+
+
+def api_vps_status(h, d):
+    h.act("vps-status")
+    rc, out = vps_sh(["status"], 120)
+    return {"ok": rc == 0, "text": out.strip()}
+
+
+def api_vps_versions(h, d):
+    rc, out = vps_sh(["versions"], 90)
+    return {"ok": rc in (0, 10), "update": rc == 10, "text": out.strip()}
+
+
+def api_vps_run(h, d):
+    """Изменения на VPS — отдельной службой (сборка идёт минуты), только с паролем текущего пользователя."""
+    a = str(d.get("action", ""))
+    if a not in VPS_ACTIONS:
+        raise ValueError("действие: update, rotate-keys или obfs")
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act("vps-denied", a)
+        raise ApiError(403, "текущий пароль неверен")
+    if vps_job_running():
+        raise ValueError("на VPS уже выполняется действие: дождитесь окончания")
+    if update_running():
+        raise ValueError("идёт обновление набора: дождитесь его окончания")
+    args = [a]
+    t = str(d.get("tunnel", "")).strip()
+    if a != "update" and t:
+        if not NAME_RE.match(t):
+            raise ValueError("недопустимое имя туннеля")
+        args.append(t)
+    write_secure(VPS_LOG, "%s %s — запущено из панели (%s)\n" % (time.strftime("%F %T"), VPS_ACTIONS[a], h.user), 0o600)
+    rc, out = run(["systemd-run", "--unit=awg-vps-job", "--collect", "--quiet", "--setenv=DD=" + DD, "-p", "StandardOutput=append:" + VPS_LOG,
+                   "-p", "StandardError=append:" + VPS_LOG, "/bin/bash", "-c", '"$0" "$@"; rc=$?; echo "[код $rc]"; exit $rc',
+                   os.path.join(DD, "vps.sh")] + args, timeout=20)
+    if rc != 0:
+        raise ValueError("не удалось запустить: " + out.strip()[:300])
+    h.act("vps-" + a, t)
+    return {"ok": True, "msg": VPS_ACTIONS[a] + ": запущено"}
+
+
+def api_vps_job(h, q):
+    return {"running": vps_job_running(), "text": read_file(VPS_LOG)[-20000:]}
+
+
 REBOOT_DELAY = 5
 
 
@@ -3599,6 +3687,13 @@ ROUTES = {
     ("POST", "/api/backup/auto"): api_backup_auto_set,
     ("POST", "/api/backup/auto/run"): api_backup_auto_run,
     ("POST", "/api/backup/auto/test"): api_backup_auto_test,
+    ("GET", "/api/vps"): api_vps_get,
+    ("POST", "/api/vps"): api_vps_set,
+    ("POST", "/api/vps/test"): api_vps_test,
+    ("POST", "/api/vps/status"): api_vps_status,
+    ("POST", "/api/vps/versions"): api_vps_versions,
+    ("POST", "/api/vps/run"): api_vps_run,
+    ("GET", "/api/vps/job"): api_vps_job,
     ("GET", "/api/hooks"): api_hooks_get,
     ("POST", "/api/hooks"): api_hooks_set,
     ("POST", "/api/hooks/test"): api_hooks_test,

@@ -47,7 +47,7 @@ decrypt(){ openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env
 
 list_files(){  # относительные пути, входящие в копию (пароль автокопии backup.pass не входит)
   ( cd "$DD" || exit 1
-    ls -1 awg.env *.conf telegram.env hooks.env ha.env backup.env rail.conf *.service *.sh VERSION motd.orig events.log .panel .audit .installer .manifest .units 2>/dev/null
+    ls -1 awg.env *.conf telegram.env hooks.env ha.env backup.env vps.env rail.conf *.service *.sh VERSION motd.orig events.log .panel .audit .installer .manifest .units 2>/dev/null
     ls -1 web/users.json web/web.conf web/labels.json web/cert.pem web/key.pem web/tokens.json 2>/dev/null
     [ $BINS = 1 ] && ls -1 awg amneziawg-go 2>/dev/null )
 }
@@ -215,7 +215,7 @@ case "$cmd" in
     ( cd "$DD" && tar czf "$pre" $(list_files | tr '\n' ' ') 2>/dev/null ); chmod 600 "$pre"
     echo "текущие настройки сохранены: $pre"
     tar xzf "$tmp" -C "$DD" && rm -f "$tmp" || { rm -f "$tmp"; echo "ошибка распаковки"; exit 1; }
-    chmod 600 "$DD"/*.conf "$DD/awg.env" "$DD/telegram.env" "$DD/hooks.env" "$DD/ha.env" "$DD/backup.env" 2>/dev/null
+    chmod 600 "$DD"/*.conf "$DD/awg.env" "$DD/telegram.env" "$DD/hooks.env" "$DD/ha.env" "$DD/backup.env" "$DD/vps.env" 2>/dev/null
     echo "восстановлено в $DD. Дальше: $DD/install.sh --restore (вернёт службы и правила)"
     ;;
   *) sed -n '2,16p' "$0";;

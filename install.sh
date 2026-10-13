@@ -286,7 +286,7 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/vps.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -373,6 +373,11 @@ install_files(){
     put "$KIT/awg/web/panel.py" "$DD/web/panel.py"; chmod 700 "$DD/web/panel.py"
     for f in "$KIT"/awg/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
     chmod 644 "$DD"/web/static/*
+  fi
+  # скрипты для своего VPS: панель и vps.sh передают их на сервер (#13)
+  if [ -d "$KIT/server" ]; then
+    mkdir -p "$DD/server"; chmod 700 "$DD/server"
+    for f in vps-rotate.sh audit-server.sh awg-server-build.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
   fi
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh" "$DD/bot.sh"
   chmod 644 "$DD"/*.service
@@ -1213,7 +1218,7 @@ valid_domain(){ [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([
 list_tunnels(){ echo "$MAIN $(env_get BACKUP) $(env_get TUNNELS_EXTRA)" | tr -s ' ' '\n' | grep -v '^$'; }
 
 write_manifest(){
-  ( cd "$DD" && sha256sum ./*.sh ./*.service ./web/panel.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
+  ( cd "$DD" && sha256sum ./*.sh ./*.service ./server/*.sh ./web/panel.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
 }
 do_verify(){
   title "Проверка файлов установки"

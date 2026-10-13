@@ -16,6 +16,7 @@
 #   awgctl report             обезличенный отчёт для issue (ключи и IP скрыты)
 #   awgctl drift [save|repair]   сверка правил и служб с эталоном; repair — вернуть правила набора
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
+#   awgctl vps [test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh)
 DD=${DD:-/data/awg}
 AWG=$DD/awg
 FORCEF=${FORCEF:-/run/awg-force}
@@ -166,6 +167,7 @@ case "${1:-status}" in
   domain|domain-check) exec "$DD/domain-check.sh" "$2";;
   report)  shift; exec "$DD/report.sh" "$@";;
   drift)   shift; exec "$DD/drift.sh" "$@";;
+  vps)     shift; exec "$DD/vps.sh" "$@";;
   web)     shift
            case "${1:-url}" in
              url) p=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null); b=$(ip -4 -br addr show br0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
