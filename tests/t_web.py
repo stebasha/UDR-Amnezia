@@ -6,6 +6,7 @@ import hmac
 import http.client
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import tempfile
 import time
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PANEL_VERSION = re.search(r'^VERSION = "([^"]+)"', open(os.path.join(R, "awg/web/panel.py")).read(), re.M).group(1)
 PORT = int(os.environ.get("WEB_TEST_PORT", "18471"))
 LAB = tempfile.mkdtemp(prefix="awgweb-")
 FAILS = []
@@ -351,6 +353,19 @@ def main():
         check("Telegram: мусор в chat id отклонён", s == 400, j)
         s, j = a.get("/api/telegram")
         check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
+
+        # ---------- 1.4.3: версия страницы, ping с выбором способа
+        s, b, r = a.get("/app.js", raw=True)
+        pv = re.search(rb"const PAGE_VERSION = '([^']*)'", b)
+        check("app.js: версия страницы подставлена", s == 200 and pv and pv.group(1).decode() == PANEL_VERSION, pv and pv.group(1))
+        s, j = a.get("/api/overview")
+        check("обзор отдаёт версию панели", j.get("panel") == PANEL_VERSION, j.get("panel"))
+        s, j = C().login()
+        check("вход отдаёт версию панели", s == 200 and j.get("version") == PANEL_VERSION, j)
+        s, j = a.post("/api/net", {"kind": "ping", "host": "1.1.1.1", "iface": "awgmain", "mode": "udp"})
+        check("ping: способ проверяется", s == 400, j)
+        s, j = a.post("/api/net", {"kind": "ping", "host": "1.1.1.1", "iface": "wan", "mode": "tcp"})
+        check("ping: TCP-способ запускается", s == 200 and j.get("job"), j)
 
         # ---------- 1.4.2: перезагрузка роутера, выключение защиты из панели
         s, j = a.post("/api/system/reboot", {"current": "nope"})

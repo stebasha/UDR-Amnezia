@@ -52,6 +52,18 @@ printf '%s|force|ручное переключение на awgbackup\n%s|auto|�
 out=$(DD=$S2 MAIN=awgmain bash "$COMP/awgctl.sh" stats 1)
 ck "stats: auto не обрывает время на запасном, выбор основного — обрывает (10м + 1м)" 'echo "$out" | grep -q "не на основном канале : 11м 00с"'
 
+# --- awgctl ping: ICMP режется → auto переходит на TCP; TCP-замер считает задержку и потери
+P=$T/pingstub; mkdir -p "$P"
+printf '#!/bin/bash\necho "10 packets transmitted, 0 received, 100%%%% packet loss"\nexit 1\n' > "$P/ping"
+printf '#!/bin/bash\nfor a; do case "$a" in *bad.example*) printf 0.000000; exit 28;; esac; done\nprintf 0.042000\n' > "$P/curl"
+chmod +x "$P/ping" "$P/curl"
+out=$(PATH="$P:$PATH" COUNT=3 DD=$T/nodd bash "$COMP/awgctl.sh" ping auto awgmain 1.1.1.1); rc=$?
+ck "ping auto: без ICMP — TCP, 42 мс, код 0" '[ $rc = 0 ] && echo "$out" | grep -q "меряю по TCP" && echo "$out" | grep -q "мин/сред/макс: 42/42/42 мс"'
+out=$(PATH="$P:$PATH" COUNT=2 DD=$T/nodd bash "$COMP/awgctl.sh" ping tcp eth3 bad.example); rc=$?
+ck "ping tcp: нет соединения — потери 100%, код 1" '[ $rc = 1 ] && echo "$out" | grep -q "потери: 100%"'
+out=$(DD=$T/nodd bash "$COMP/awgctl.sh" ping tcp eth3 1.1.1.1 99999); rc=$?
+ck "ping: неверный порт отклонён" '[ $rc = 2 ]'
+
 # --- деинсталлятор
 mkdir -p "$T/dd" "$T/sys" "$T/boot"
 cp "$COMP"/*.sh "$COMP"/*.service "$T/dd/" 2>/dev/null
