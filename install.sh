@@ -284,7 +284,7 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/bot.py awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -1190,7 +1190,7 @@ plan(){
   say; say "  ${B}Текущая установка${N}"
   if [ -f "$DD/awg.env" ]; then
     info "найдена: $DD (версия набора $(cat "$DD/VERSION" 2>/dev/null || echo ?)), туннели: $(list_tunnels | tr '\n' ' ')"
-    for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics; do
+    for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha; do
       [ -f "$SYSD/$u.service" ] && info "служба $u: $(systemctl is-active $u 2>/dev/null)"
     done
     n=$(pbr_rules | grep -c .); info "PBR-правил VPN Client: $n; таблица $(env_get TABLE), метка $(env_get MARK)"
@@ -1553,7 +1553,7 @@ do_rotate_keys(){
 }
 
 # ============================================================ мастер ======
-ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-web awg-motd"
+ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha awg-web awg-motd"
 seed_units(){  # установки до 1.2.0 не вели список служб: заполняем по включённым юнитам
   local u
   [ -s "$DD/.units" ] && return 0
@@ -1564,7 +1564,7 @@ seed_units(){  # установки до 1.2.0 не вели список слу
 }
 disable_service(){
   local a u opts=() x
-  for x in awg-web awg-bot awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
+  for x in awg-web awg-bot awg-ha awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
   [ ${#opts[@]} -gt 0 ] || { info "дополнительных служб не включено"; return 0; }
   choose a "Какую службу выключить?" "${opts[@]}" "Отмена"
   [ "$a" -gt ${#opts[@]} ] && return 0
@@ -1652,7 +1652,7 @@ summary(){
   local t u act=""; t=$(env_get TABLE)
   say "  Установлено в ${B}$DD${N}. Таблица PBR ${B}$t${N}, туннели: ${B}$(list_tunnels | tr '\n' ' ')${N}."
   [ -n "$(env_get EXTRA_SUBNETS)" ] && say "  Через туннель идут и клиенты VPN-сервера роутера: ${B}$(env_get EXTRA_SUBNETS)${N} (проверка: $DD/subnets.sh check)."
-  for u in awg-guard awg-self awg-bot awg-metrics awg-notify awg-web; do svc_active "$u" && act="$act ${u#awg-}"; done
+  for u in awg-guard awg-self awg-bot awg-ha awg-metrics awg-notify awg-web; do svc_active "$u" && act="$act ${u#awg-}"; done
   [ -n "$act" ] && say "  Включены службы:${B}$act${N}."
   svc_active awg-web && say "  Веб-панель: ${C}$(web_url)${N}"
   [ -x "$DD/status.sh" ] && "$DD/status.sh" -s | sed 's/^/  /'
@@ -1754,7 +1754,7 @@ do_uninstall(){
   yn "Удалить службы, маршруты и правила AWG с роутера?" N || return
   local purge="" v u s; v=$(env_get VPS_IP 2>/dev/null)
   yn "Удалить и папку $DD с конфигами и ключами?" N && purge=--purge
-  for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets; do
+  for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets; do
     [ -f "$SYSD/$u.service" ] && { systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; }
   done
   systemctl daemon-reload

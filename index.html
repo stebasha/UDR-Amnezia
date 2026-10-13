@@ -1367,7 +1367,7 @@ blackhole default metric 200
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
-ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics"
+ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha"
 <span class="c"># что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть</span>
 if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] &amp;&amp; UNITS="$UNITS $u"; done; fi
 need=0
@@ -1736,7 +1736,7 @@ wan=$(ip -4 -br addr show "$WANIF" 2&gt;/dev/null | awk '{print $2, $3}')
 echo " Нагрузка : ${load:-?} · RAM ${mem:-?} · /data ${disk:-?}${temp}"
 echo " WAN $WANIF : ${wan:-нет данных}"
 if systemctl is-enabled awg-notify &gt;/dev/null 2&gt;&amp;1; then echo " Telegram : awg-notify $(systemctl is-active awg-notify 2&gt;/dev/null)"; fi
-sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics; do
+sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha; do
   [ -f "/etc/systemd/system/$u.service" ] &amp;&amp; sv="$sv ${u#awg-}=$(systemctl is-active $u 2&gt;/dev/null)"
 done
 [ -n "$sv" ] &amp;&amp; echo " Службы   :$sv"
@@ -2415,6 +2415,9 @@ awgctl drift<span class="c">                  # сверка правил и с�
   <h3>Роутер, язык, загрузка файлов</h3>
   <p>Страница «Роутер» (или нажатие на плитку «Роутер» в обзоре): процессор, память, диск <code>/data</code>, температура, таблица соединений — кольцами и графиками за сутки; проверки железа с советами (мало места и прогноз заполнения, нехватка памяти, перегрев, переполнение таблицы соединений, OOM и ошибки ввода-вывода в журнале ядра); процессы, занимающие больше всего памяти. Замечания появляются и в обзоре, и в Telegram. Все плитки обзора нажимаются: состояние — список замечаний, канал — туннели, handshake — тест, скорость — график, основной канал — события.</p>
   <p>Переключатель EN/RU — в верхней строке и на странице входа (запоминается в браузере). Вывод скриптов на роутере остаётся русским. Вывод любой команды можно скопировать или скачать файлом, журналы — кнопкой «Скачать», отчёт для помощи скачивается сам после сбора.</p>
+  <h3>Home Assistant и токены API</h3>
+  <p>С версии 1.5 роутер появляется в Home Assistant сам, через MQTT discovery: «Настройки → Home Assistant» — адрес брокера (Mosquitto или встроенный брокер HA), логин, пароль, TLS — и «Проверить подключение». В HA появится устройство «UDR-Amnezia»: активный канал, состояние, kill switch, процессор, память, температура; по каждому туннелю — связь, handshake, RTT, потери, трафик; выбор канала (авто или туннель) и кнопки перезапуска туннелей. Кнопка перезагрузки роутера в HA выключена, пока её явно не включить. Служба — <code>awg-ha</code>, действия из HA попадают в журнал панели.</p>
+  <p>Для REST и скриптов — токены API: «Настройки → Пользователи и 2FA → Токены API». Права «только чтение» или «управление»; токен показывается один раз; пароли, сеансы, ключи туннелей, перезагрузка и настройки панели токену недоступны никогда. Пример: <code>curl -k -H "Authorization: Bearer awg_…" https://192.168.1.1:4443/api/overview</code>. Сеансы панели с 1.5 переживают её перезапуск и обновление.</p>
   <h3>Сертификат UniFi для панели</h3>
   <p>Если у веб-интерфейса роутера настоящий сертификат (свой домен, автообновление в UniFi), панель возьмёт его: «Настройки → Панель и сертификат → Источник: сертификат UniFi». Панель перечитывает файлы раз в минуту, поэтому продление подхватывается без перезапуска. Имена из сертификата разрешены для входа: открывайте <code>https://ваше.имя:4443/</code>. Файлы UniFi панель только читает.</p>
   <h3>Сверка правил и обновление с откатом</h3>
@@ -2532,7 +2535,7 @@ BASHRC=${BASHRC:-/root/.bashrc}
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
 <span class="c"># 1. службы — сначала остановить: иначе их 5-секундный цикл вернёт правила, пока мы их убираем</span>
-for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
+for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2&gt;/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done

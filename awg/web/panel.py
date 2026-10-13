@@ -59,7 +59,7 @@ KEY_F = os.path.join(WEBD, "key.pem")
 SIM_F = "/tmp/awg-sim-down"
 SYSNET = os.environ.get("AWG_SYSNET", "/sys/class/net")
 
-SERVICES = ["awg-failover", "awg-subnets", "awg-self", "awg-guard", "awg-notify", "awg-bot", "awg-metrics"]
+SERVICES = ["awg-failover", "awg-subnets", "awg-self", "awg-guard", "awg-notify", "awg-bot", "awg-metrics", "awg-ha"]
 SERVICE_INFO = {
     "awg-failover": "Сторож: маршрут в туннель, переключение каналов, kill switch",
     "awg-subnets": "Клиенты VPN-сервера роутера через туннель",
@@ -68,6 +68,7 @@ SERVICE_INFO = {
     "awg-notify": "Уведомления в Telegram",
     "awg-bot": "Команды Telegram-бота",
     "awg-metrics": "Метрики Prometheus",
+    "awg-ha": "Home Assistant: состояние и управление через MQTT",
 }
 LOCK = threading.Lock()          # запись awg.env, служб, конфигов
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -701,7 +702,7 @@ TOKENS = Tokens(os.path.join(WEBD, "tokens.json"))
 TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/passwd", "/api/user/delete", "/api/users",
               "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
               "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
-              "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram"}
+              "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha"}
 
 
 class Throttle:
@@ -1745,6 +1746,8 @@ def api_service(h, d):
         raise ValueError("сторож из панели не выключается: без него PBR-трафик стоит. Если нужно — systemctl stop awg-failover")
     if u in ("awg-notify", "awg-bot") and a != "disable" and not os.path.exists(os.path.join(DD, "telegram.env")):
         raise ValueError("сначала настройте Telegram (Настройки → Telegram)")
+    if u == "awg-ha" and a != "disable" and not os.path.exists(HA_F):
+        raise ValueError("сначала настройте брокер MQTT (Настройки → Home Assistant)")
     with LOCK:
         if a == "restart":
             rc, out = run(["systemctl", "restart", u], timeout=60)
@@ -1835,6 +1838,66 @@ def api_logs(h, q):
     if k not in LOGS:
         raise ValueError("нет такого журнала")
     return {"text": "\n".join(read_file(os.path.join(DD, LOGS[k])).splitlines()[-n:])}
+
+
+
+# ======================================================================= Home Assistant (#5)
+HA_F = os.path.join(DD, "ha.env")
+HOST_OR_IP_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
+
+
+def api_ha_get(h, q):
+    c = parse_env_text(read_file(HA_F))
+    return {"host": c.get("MQTT_HOST", ""), "port": c.get("MQTT_PORT", "1883"), "user": c.get("MQTT_USER", ""),
+            "pass_set": bool(c.get("MQTT_PASS")), "tls": c.get("MQTT_TLS", "no"), "prefix": c.get("HA_PREFIX", "homeassistant"),
+            "interval": c.get("HA_INTERVAL", "30"), "allow_reboot": c.get("HA_ALLOW_REBOOT", "no") == "yes",
+            "enabled": svc_installed("awg-ha"), "active": svc_active("awg-ha"),
+            "log": "\n".join(read_file(os.path.join(DD, "ha.log")).splitlines()[-15:])}
+
+
+def api_ha_set(h, d):
+    old = parse_env_text(read_file(HA_F))
+    host = str(d.get("host", "")).strip()
+    if not HOST_OR_IP_RE.match(host):
+        raise ValueError("адрес брокера: имя или IP")
+    port = str(d.get("port", "1883")).strip()
+    if not re.match(r"^\d{1,5}$", port) or not 1 <= int(port) <= 65535:
+        raise ValueError("порт: 1–65535")
+    user = str(d.get("user", "")).strip()
+    if not re.match(r"^[\w.@-]{0,64}$", user):
+        raise ValueError("логин: буквы, цифры, . @ - _ (до 64)")
+    pw = str(d.get("pass", ""))
+    if pw == "":
+        pw = old.get("MQTT_PASS", "")       # пусто — прежний пароль (в браузер он не передаётся)
+    if len(pw) > 128 or re.search(r"[\x00-\x1f\"'`$\\]", pw):
+        raise ValueError("пароль: до 128 символов, без кавычек, $, \\ и управляющих символов")
+    tls = str(d.get("tls", "no"))
+    if tls not in ("no", "yes", "insecure"):
+        raise ValueError("TLS: no, yes или insecure")
+    prefix = str(d.get("prefix", "homeassistant")).strip() or "homeassistant"
+    if not re.match(r"^[a-z0-9_/-]{1,40}$", prefix):
+        raise ValueError("префикс discovery: латиница, цифры, _ - /")
+    interval = str(d.get("interval", "30")).strip()
+    if not re.match(r"^\d{2,3}$", interval) or not 10 <= int(interval) <= 600:
+        raise ValueError("период: 10–600 с")
+    reboot = "yes" if d.get("allow_reboot") else "no"
+    text = "".join('%s="%s"\n' % kv for kv in (("MQTT_HOST", host), ("MQTT_PORT", port), ("MQTT_USER", user), ("MQTT_PASS", pw),
+                                               ("MQTT_TLS", tls), ("HA_PREFIX", prefix), ("HA_INTERVAL", interval), ("HA_ALLOW_REBOOT", reboot)))
+    with LOCK:
+        write_secure(HA_F, text, 0o600)
+        if d.get("enabled", True):
+            rc, out = unit_on("awg-ha") if not svc_installed("awg-ha") else run(["systemctl", "restart", "awg-ha"], timeout=30)
+        else:
+            unit_off("awg-ha")
+            rc, out = 0, ""
+    h.act("ha-set", {"host": host, "port": port, "tls": tls, "reboot": reboot, "enabled": bool(d.get("enabled", True))})
+    return {"ok": rc == 0, "msg": "настройки Home Assistant сохранены" + ("" if rc == 0 else ": " + out.strip()[:200])}
+
+
+def api_ha_test(h, d):
+    h.act("ha-test")
+    rc, out = run(["python3", os.path.join(DD, "ha.py"), "test"], timeout=40)
+    return {"ok": rc == 0, "msg": out.strip()[-600:] or "нет ответа"}
 
 
 def api_tg_get(h, q):
@@ -3242,6 +3305,9 @@ ROUTES = {
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
     ("POST", "/api/update/channel"): api_update_channel,
+    ("GET", "/api/ha"): api_ha_get,
+    ("POST", "/api/ha"): api_ha_set,
+    ("POST", "/api/ha/test"): api_ha_test,
     ("POST", "/api/system/reboot"): api_system_reboot,
     ("GET", "/api/tokens"): api_tokens,
     ("POST", "/api/token/create"): api_token_create,

@@ -1617,13 +1617,13 @@
   }
 
   // ===================================================================== НАСТРОЙКИ
-  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['system', T('Система и обновление')]];
+  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['system', T('Система и обновление')]];
   PAGES.settings = function (main, sub) {
     const cur = SET_TABS.some((t) => t[0] === sub) ? sub : 'failover';
     add(main, [head(T('Настройки')), tabs(SET_TABS, cur, (id) => { location.hash = '#/settings/' + id; })]);
     const body = el('div', { class: 'stack' });
     main.appendChild(body);
-    ({ failover: setFailover, services: setServices, telegram: setTelegram, users: setUsers, web: setWeb, backups: setBackups, system: setSystem })[cur](body);
+    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, system: setSystem })[cur](body);
   };
   async function setFailover(body) {
     try {
@@ -1690,6 +1690,47 @@
       r.muted && r.muted.length ? el('div', { class: 'small muted' }, T('Уведомления временно выключены в чатах: ') + r.muted.join(', ')) : null,
       sw(nw, T('Не слать напрямую через WAN'), T('Если туннели лежат, уведомления не пойдут мимо VPN (тише, но можно не узнать о сбое).')),
       res), { icon: 'tg', foot: [test, save] }));
+  }
+  // Home Assistant (#5): MQTT discovery — HA сам находит устройство, датчики, выбор канала и кнопки
+  async function setHa(body) {
+    let r;
+    try { r = await api('/api/ha'); } catch (e) { err(e); return; }
+    const host = el('input', { class: 'input mono', value: r.host, placeholder: '192.168.1.10', spellcheck: 'false' });
+    const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
+    const user = el('input', { class: 'input mono', value: r.user, autocomplete: 'off', spellcheck: 'false' });
+    const pass = el('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: r.pass_set ? T('задан — оставьте пустым, чтобы не менять') : '' });
+    const tls = el('select', { class: 'input' }, el('option', { value: 'no' }, T('без TLS (1883)')), el('option', { value: 'yes' }, T('TLS с проверкой сертификата (8883)')), el('option', { value: 'insecure' }, T('TLS без проверки (самоподписанный)')));
+    tls.value = r.tls;
+    const prefix = el('input', { class: 'input mono', value: r.prefix });
+    const interval = el('input', { class: 'input mono', value: r.interval, inputmode: 'numeric' });
+    const en = el('input', { type: 'checkbox', checked: r.enabled || !r.host });
+    const rb = el('input', { type: 'checkbox', checked: r.allow_reboot });
+    const logBox = el('pre', { class: 'res' + (r.log ? '' : ' hidden') }, r.log || '');
+    const sw = (inp, t, h) => el('div', { class: 'setting' }, el('div', { class: 'txt' }, el('b', null, t), el('span', null, h)), el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, inp, el('span', { class: 'knob' }))));
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => {
+      try {
+        const x = await api('/api/ha', { host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), pass: pass.value, tls: tls.value,
+          prefix: prefix.value.trim(), interval: interval.value.trim(), allow_reboot: rb.checked, enabled: en.checked });
+        (x.ok ? ok : err)(x.msg); pass.value = '';
+      } catch (e) { err(e); }
+    }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Проверить подключение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/ha/test', {}); (x.ok ? ok : err)(x.msg); logBox.textContent = x.msg; logBox.classList.remove('hidden'); } catch (e) { err(e); } }));
+    body.appendChild(card('Home Assistant', el('div', null,
+      el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.active ? 'ok' : '') }, r.active ? T('работает') : r.enabled ? T('не работает') : T('выкл'))),
+      el('p', { class: 'muted small' }, T('Через MQTT discovery: в Home Assistant с интеграцией MQTT появится устройство «UDR-Amnezia» — активный канал, связь, handshake, RTT, потери и трафик туннелей, kill switch, процессор, память, температура; выбор канала (авто или туннель) и перезапуск туннелей.')),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Брокер MQTT')), host, el('span', { class: 'hint' }, T('Адрес Mosquitto или брокера Home Assistant в LAN'))),
+        el('div', { class: 'field' }, el('label', null, T('Порт')), port),
+        el('div', { class: 'field' }, el('label', null, T('Логин')), user),
+        el('div', { class: 'field' }, el('label', null, T('Пароль')), pass),
+        el('div', { class: 'field' }, el('label', null, 'TLS'), tls),
+        el('div', { class: 'field' }, el('label', null, T('Префикс discovery')), prefix, el('span', { class: 'hint' }, T('Как в настройках MQTT в HA (обычно homeassistant)'))),
+        el('div', { class: 'field' }, el('label', null, T('Период, с')), interval, el('span', { class: 'hint' }, T('Как часто отправлять состояние: 10–600')))),
+      sw(en, T('Служба awg-ha'), T('Публикует состояние и принимает команды из Home Assistant.')),
+      sw(rb, T('Кнопка «Перезагрузить роутер» в HA'), T('Выключено по умолчанию: любой, кто может писать в брокер MQTT, сможет перезагрузить роутер.')),
+      logBox), { icon: 'activity', foot: [test, save] }));
   }
   async function setUsers(body) {
     let r;

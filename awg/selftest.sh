@@ -29,7 +29,7 @@ wan_if(){ [ -n "$WANIF" ] && { echo "$WANIF"; return; }; ip -4 route show table 
 WAN=$(wan_if)
 
 sec "Службы"
-for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics; do
+for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha; do
   if [ "$u" = awg-failover ] || unit_present $u; then
     if systemctl is-active --quiet $u 2>/dev/null; then P "$u: active"; else
       if [ "$u" = awg-failover ]; then F "$u не запущен" "systemctl start $u; journalctl -u $u -n 20"; else W "$u установлен, но не запущен" "systemctl start $u; journalctl -u $u -n 20"; fi

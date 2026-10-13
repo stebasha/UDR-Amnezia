@@ -403,6 +403,22 @@ def main():
         s, j = a.get("/api/telegram")
         check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
 
+        # ---------- 1.5 (#5): Home Assistant
+        s, j = a.post("/api/ha", {"host": "evil;rm", "port": "1883"})
+        check("HA: адрес брокера проверяется", s == 400, j)
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "port": "1883", "user": "ha", "pass": "mqtt-pass-1", "tls": "no",
+                                  "prefix": "homeassistant", "interval": "30", "allow_reboot": False, "enabled": False})
+        he = open(os.path.join(dd, "ha.env")).read()
+        check("HA: настройки сохранены, файл 600", s == 200 and 'MQTT_HOST="192.168.1.10"' in he and 'HA_ALLOW_REBOOT="no"' in he
+              and oct(os.stat(os.path.join(dd, "ha.env")).st_mode & 0o777) == "0o600", (j, he))
+        s, j = a.get("/api/ha")
+        check("HA: пароль в браузер не отдаётся", s == 200 and j["pass_set"] and "mqtt-pass-1" not in json.dumps(j), j)
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "port": "1883", "user": "ha", "pass": "", "tls": "no", "prefix": "homeassistant",
+                                  "interval": "30", "allow_reboot": False, "enabled": False})
+        check("HA: пустой пароль сохраняет прежний", 'MQTT_PASS="mqtt-pass-1"' in open(os.path.join(dd, "ha.env")).read())
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "pass": 'x"; reboot; "', "interval": "30"})
+        check("HA: опасный пароль отклонён", s == 400, j)
+
         # ---------- 1.5 (#6): токены API
         s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
         check("токен: без пароля не создать", s == 403, j)
@@ -427,7 +443,7 @@ def main():
         check("токен read: изменения запрещены", s == 403, j)
         s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
         check("токен admin: управление без CSRF", s == 200, j)
-        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET")):
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET")):
             s, j = r_.req(m, path, headers=bh(atok))
             check("токен admin: %s только по паролю" % path, s == 403, j)
         s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))

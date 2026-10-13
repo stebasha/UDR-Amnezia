@@ -1,0 +1,13 @@
+[Unit]
+Description=AWG: Home Assistant (MQTT discovery)
+After=awg-failover.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/env python3 /data/awg/ha.py
+Restart=always
+RestartSec=10
+# остановка systemd (SIGTERM) — штатное завершение
+SuccessExitStatus=143 SIGTERM
+
+[Install]
+WantedBy=multi-user.target

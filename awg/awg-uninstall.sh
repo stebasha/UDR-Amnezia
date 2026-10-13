@@ -13,7 +13,7 @@ BASHRC=${BASHRC:-/root/.bashrc}
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
 # 1. службы — сначала остановить: иначе их 5-секундный цикл вернёт правила, пока мы их убираем
-for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
+for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done

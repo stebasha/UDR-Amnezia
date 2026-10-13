@@ -153,7 +153,7 @@ fi
 # ---------------------------------------------------------------- 6. службы
 sec "6. Дополнительные службы"
 any=0
-for u in awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics; do
+for u in awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha; do
   [ -f "/etc/systemd/system/$u.service" ] || continue; any=1
   systemctl is-active --quiet "$u" && ok "$u работает" || no "$u установлена, но не работает" "systemctl restart $u; journalctl -u $u -n 20"
 done
