@@ -44,6 +44,15 @@ ck "selftest: без LEAK_GUARD защита считается выключен
 echo 'LEAK_GUARD=yes' >> "$S/dd/awg.env"
 out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
 ck "selftest: LEAK_GUARD=yes без службы → WARN с подсказкой" 'echo "$out" | grep -q "WARN  LEAK_GUARD=yes, но служба awg-guard не включена"'
+ck "selftest: автокопия выключена — проверок нет" '! echo "$out" | grep -q автокопи'
+# автокопия (#12): таймер и итог последнего запуска
+printf 'BK_AUTO="weekly"\n' > "$S/dd/backup.env"; chmod 600 "$S/dd/backup.env"; mkdir -p "$S/dd/backups"; touch "$S/sys/awg-backup.timer"
+printf '%s|FAIL||VPS: Permission denied\n' "$(date +%s)" > "$S/dd/backups/auto.status"
+out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
+ck "selftest: неудачная автокопия → WARN с причиной" 'echo "$out" | grep -q "OK    автокопия по расписанию включена" && echo "$out" | grep -q "WARN  последняя автокопия не удалась: VPS: Permission denied"'
+printf '%s|OK|awg-auto-1.tgz.enc|ok\n' "$(( $(date +%s) - 10 * 86400 ))" > "$S/dd/backups/auto.status"; rm -f "$S/sys/awg-backup.timer"
+out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
+ck "selftest: старая автокопия и нет таймера → WARN" 'echo "$out" | grep -q "старше 8 дн" && echo "$out" | grep -q "таймера нет"'
 
 # --- статистика: «auto» не заканчивает время на запасном, ручной выбор основного — заканчивает
 S2=$T/stats; mkdir -p "$S2"; n=$(date +%s)
@@ -76,6 +85,10 @@ ck "прошивка: первый запуск — только запомни�
 out=$(fw); ck "прошивка: без смены — ничего" '[ -z "$out" ] && [ ! -s "$F/dd/events.log" ]'
 out=$(fw env FWVER=5.1.2)
 ck "прошивка: смена → восстановление, событие с самопроверкой" 'echo "$out" | grep -q "сменилась прошивка" && grep -q "|firmware|прошивка: os=5.0.10 net=10.0.1 → os=5.1.2 net=10.0.1; службы восстановлены; самопроверка: OK: 29" "$F/dd/events.log" && [ "$(cat "$F/dd/.fwver")" = "os=5.1.2 net=10.0.1" ]'
+# автокопия (#12): прошивка стёрла таймер — on_boot.d (--if-needed) возвращает его по backup.env
+cp "$COMP/backup.sh" "$COMP/awg-backup.service" "$F/dd/"; printf 'BK_AUTO="daily"\n' > "$F/dd/backup.env"; touch "$F/bashrc"
+out=$(PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin bash "$F/dd/awg-restore.sh" --if-needed 2>&1)
+ck "восстановление: таймер автокопии возвращён" 'grep -q "^OnCalendar=\*-\*-\* 04:20" "$F/sys/awg-backup.timer" && [ -f "$F/sys/awg-backup.service" ]'
 
 # --- деинсталлятор
 mkdir -p "$T/dd" "$T/sys" "$T/boot"

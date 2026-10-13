@@ -333,7 +333,7 @@ def scr_tunnel(chat, name):
 
 def ev_line(e):
     m = {"start": "▶️", "stop": "⏹", "switch": "🔀", "degrade": "📉", "return": "✅", "force": "✋", "auto": "🤖",
-         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁", "firmware": "🔄"}.get(e["type"], "•")
+         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁", "firmware": "🔄", "backup": "💾"}.get(e["type"], "•")
     return "%s <code>%s</code> %s" % (m, time.strftime("%d.%m %H:%M", time.localtime(e["t"])), esc(e["text"]))
 
 

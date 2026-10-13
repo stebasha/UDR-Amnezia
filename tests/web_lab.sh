@@ -16,6 +16,10 @@ rm -rf "$DD/web/__pycache__"
 for f in up.sh mtu.sh backup.sh awg-notify.sh; do printf '#!/bin/bash\necho "%s $*: ок"\n' "$f" > "$DD/$f"; done
 cat > "$DD/backup.sh" <<'EOF'
 #!/bin/bash
+case "$1" in
+  timer) echo "timer $(grep -o 'BK_AUTO="[a-z]*"' "$DD/backup.env")"; exit 0;;
+  vps-test) echo "VPS: вход ключом роутера работает"; exit 0;;
+esac
 mkdir -p "$DD/backups"; f=$DD/backups/awg-backup-$(date +%Y%m%d-%H%M%S).tgz.enc; head -c 4000 /dev/urandom > "$f"; echo "копия: $f"
 EOF
 cat > "$L/bin/conntrack" <<'CT'

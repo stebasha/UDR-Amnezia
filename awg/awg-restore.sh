@@ -14,6 +14,8 @@ if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $A
 need=0
 for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
 grep -q AWGS_SHOWN $BASHRC 2>/dev/null || { [ -f "$D/.panel" ] && need=1; }
+bk_auto(){ grep -qE '^BK_AUTO="?(daily|weekly)' "$D/backup.env" 2>/dev/null; }
+bk_auto && [ ! -f "$SYSD/awg-backup.timer" ] && need=1
 
 fw_now(){
   local os net pk v
@@ -35,6 +37,7 @@ if [ "$1" = --if-needed ] && [ $need = 0 ]; then exit 0; fi
 for u in $UNITS; do [ -f "$D/$u.service" ] && cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
 for u in $UNITS; do [ -f "$D/$u.service" ] && systemctl enable --now "$u" >/dev/null 2>&1 && echo "служба $u восстановлена"; done
+bk_auto && [ -x "$D/backup.sh" ] && SYSD=$SYSD "$D/backup.sh" timer
 if ! grep -q AWGS_SHOWN $BASHRC 2>/dev/null; then
   cat >> $BASHRC <<'RC'
 alias awgs='/data/awg/status.sh'

@@ -1378,6 +1378,8 @@ if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $A
 need=0
 for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
 grep -q AWGS_SHOWN $BASHRC 2&gt;/dev/null || { [ -f "$D/.panel" ] &amp;&amp; need=1; }
+bk_auto(){ grep -qE '^BK_AUTO="?(daily|weekly)' "$D/backup.env" 2&gt;/dev/null; }
+bk_auto &amp;&amp; [ ! -f "$SYSD/awg-backup.timer" ] &amp;&amp; need=1
 
 fw_now(){
   local os net pk v
@@ -1399,6 +1401,7 @@ if [ "$1" = --if-needed ] &amp;&amp; [ $need = 0 ]; then exit 0; fi
 for u in $UNITS; do [ -f "$D/$u.service" ] &amp;&amp; cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
 for u in $UNITS; do [ -f "$D/$u.service" ] &amp;&amp; systemctl enable --now "$u" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo "служба $u восстановлена"; done
+bk_auto &amp;&amp; [ -x "$D/backup.sh" ] &amp;&amp; SYSD=$SYSD "$D/backup.sh" timer
 if ! grep -q AWGS_SHOWN $BASHRC 2&gt;/dev/null; then
   cat &gt;&gt; $BASHRC &lt;&lt;'RC'
 alias awgs='/data/awg/status.sh'
@@ -1437,7 +1440,7 @@ $fw_changed
 fi
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 77 строк">Показать целиком · 77 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 80 строк">Показать целиком · 80 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 
@@ -2573,6 +2576,7 @@ for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-n
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2&gt;/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
+systemctl disable --now awg-backup.timer &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/awg-backup.timer" "$SYSD/awg-backup.service"
 systemctl daemon-reload 2&gt;/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2&gt;/dev/null
 
@@ -2616,7 +2620,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 64 строк">Показать целиком · 64 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 65 строк">Показать целиком · 65 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 

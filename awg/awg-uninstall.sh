@@ -17,6 +17,7 @@ for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-n
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2>/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
+systemctl disable --now awg-backup.timer >/dev/null 2>&1; rm -f "$SYSD/awg-backup.timer" "$SYSD/awg-backup.service"
 systemctl daemon-reload 2>/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2>/dev/null
 

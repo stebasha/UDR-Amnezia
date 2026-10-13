@@ -457,6 +457,33 @@ def main():
         s, j = a.post("/api/ha", {"host": "192.168.1.10", "pass": 'x"; reboot; "', "interval": "30"})
         check("HA: опасный пароль отклонён", s == 400, j)
 
+        # ---------- 1.5 (#12): автокопия вне роутера
+        with open(os.path.join(dd, "awg.env"), "a") as f:
+            f.write("VPS_IP=203.0.113.9\n")
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "keep": "7", "vps": True, "vps_dir": "/root/bk", "vps_keep": "14"})
+        check("автокопия: без пароля расписание не включить", s == 400 and "пароль" in j.get("error", ""), j)
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "pass": "bk-pass-12345", "vps": True, "vps_dir": "/root/../etc", "vps_keep": "14"})
+        check("автокопия: папка с .. отклонена", s == 400, j)
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "pass": "bk-pass-12345", "vps": True, "vps_host": "x;reboot"})
+        check("автокопия: адрес VPS проверяется", s == 400, j)
+        s, j = a.post("/api/backup/auto", {"auto": "weekly", "keep": "5", "pass": "bk-pass-12345", "vps": True, "vps_host": "", "vps_port": "2222",
+                                           "vps_user": "root", "vps_dir": "/root/udr-backups", "vps_keep": "10", "tg": True})
+        be, bp = os.path.join(dd, "backup.env"), os.path.join(dd, "backup.pass")
+        check("автокопия: настройки и пароль сохранены (600), расписание применено", s == 200 and 'BK_AUTO="weekly"' in open(be).read()
+              and 'BK_VPS_PORT="2222"' in open(be).read() and open(bp).read().strip() == "bk-pass-12345"
+              and oct(os.stat(bp).st_mode & 0o777) == "0o600" and "weekly" in j.get("msg", ""), j)
+        with open(os.path.join(dd, "backups", "auto.status"), "a") as f:
+            f.write("1791800000|OK|awg-auto-1.tgz.enc|VPS: ok\n1791900000|FAIL||VPS: Permission denied\n")
+        s, j = a.get("/api/backup/auto")
+        check("автокопия: пароль не отдаётся, история новыми сверху", s == 200 and j["pass_set"] and "bk-pass" not in json.dumps(j)
+              and j["auto"] == "weekly" and j["vps_host_default"] and j["history"][0]["ok"] is False and j["history"][1]["file"] == "awg-auto-1.tgz.enc", j)
+        s, j = a.post("/api/backup/auto", {"auto": "weekly", "keep": "5", "pass": "", "vps": False, "tg": False})
+        check("автокопия: пустой пароль сохраняет прежний", s == 200 and open(bp).read().strip() == "bk-pass-12345", j)
+        s, j = a.post("/api/backup/auto/run", {})
+        check("автокопия: «Сделать сейчас» — отдельной службой", s == 200 and "awg-backup-run" in open(os.path.join(LAB, "systemd-run.log")).read(), j)
+        s, j = a.post("/api/backup/auto/test", {})
+        check("автокопия: проверка VPS", s == 200 and j["ok"] and "VPS" in j["msg"], j)
+
         # ---------- 1.5 (#6): токены API
         s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
         check("токен: без пароля не создать", s == 403, j)
@@ -481,7 +508,7 @@ def main():
         check("токен read: изменения запрещены", s == 403, j)
         s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
         check("токен admin: управление без CSRF", s == 200, j)
-        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET")):
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET")):
             s, j = r_.req(m, path, headers=bh(atok))
             check("токен admin: %s только по паролю" % path, s == 403, j)
         s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))

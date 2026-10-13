@@ -141,9 +141,20 @@ sec "Система"
 fr=$(df -Pm "$DD" 2>/dev/null | awk 'NR==2{print $4}')
 [ -n "$fr" ] && { [ "$fr" -ge 100 ] && P "на /data свободно $fr МБ" || W "на /data свободно только $fr МБ" "почистите $DD/backups и логи"; }
 [ "$(date +%Y)" -ge 2025 ] && P "время роутера: $(date '+%F %T')" || W "часы роутера показывают $(date): handshake может не проходить" "проверьте NTP"
-for f in main.conf backup.conf client.conf telegram.env awg.env; do
+for f in main.conf backup.conf client.conf telegram.env awg.env ha.env backup.env backup.pass; do
   [ -e "$DD/$f" ] && { [ "$(stat -c %a "$DD/$f")" = 600 ] && P "$f: права 600" || W "$f: права $(stat -c %a "$DD/$f")" "chmod 600 $DD/$f"; }
 done
+# автокопия вне роутера (#12): расписание стоит, последний запуск успешный и не старее периода
+bka=$(sed -n 's/^BK_AUTO="\{0,1\}\([a-z]*\)"\{0,1\}$/\1/p' "$DD/backup.env" 2>/dev/null)
+if [ "$bka" = daily ] || [ "$bka" = weekly ]; then
+  per=$([ "$bka" = daily ] && echo 2 || echo 8)
+  [ -f "${SYSD:-/etc/systemd/system}/awg-backup.timer" ] && P "автокопия по расписанию включена ($bka)" || W "автокопия включена в backup.env, но таймера нет" "$DD/backup.sh timer"
+  la=$(tail -n1 "$DD/backups/auto.status" 2>/dev/null)
+  if [ -z "$la" ]; then I "автокопия ещё не запускалась"
+  elif [ "$(echo "$la" | cut -d'|' -f2)" != OK ]; then W "последняя автокопия не удалась: $(echo "$la" | cut -d'|' -f4 | cut -c1-120)" "панель: Резервные копии → Автокопия"
+  elif [ $(( $(date +%s) - $(echo "$la" | cut -d'|' -f1) )) -gt $((per * 86400)) ]; then W "последняя успешная автокопия старше $per дн." "проверьте таймер: systemctl list-timers awg-backup"
+  else P "последняя автокопия успешна: $(date -d "@$(echo "$la" | cut -d'|' -f1)" '+%F %H:%M')"; fi
+fi
 if [ -x "$DD/install.sh" ] && [ -f "$DD/.manifest" ]; then
   v=$("$DD/install.sh" --verify 2>&1 | grep -c -E '^  (изменён|нет файла)')
   [ "${v:-0}" = 0 ] && P "файлы установки совпадают с манифестом" || W "файлов, изменённых или пропавших относительно манифеста: $v" "$DD/install.sh --verify"

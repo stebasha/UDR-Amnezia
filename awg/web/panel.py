@@ -702,7 +702,8 @@ TOKENS = Tokens(os.path.join(WEBD, "tokens.json"))
 TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/passwd", "/api/user/delete", "/api/users",
               "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
               "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
-              "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha"}
+              "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha",
+              "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test"}
 
 
 class Throttle:
@@ -2083,6 +2084,86 @@ def api_backup_delete(h, d):
     return {"ok": True}
 
 
+BK_F = os.path.join(DD, "backup.env")
+BK_PASS_F = os.path.join(DD, "backup.pass")
+
+
+def bk_auto_running():
+    return run(["systemctl", "is-active", "--quiet", "awg-backup"], timeout=5)[0] == 0 or \
+        run(["systemctl", "is-active", "--quiet", "awg-backup-run"], timeout=5)[0] == 0
+
+
+def api_backup_auto_get(h, q):
+    """Автокопия вне роутера (#12): расписание, куда отправлять, история запусков. Пароль в браузер не передаётся."""
+    c = parse_env_text(read_file(BK_F))
+    hist = []
+    for line in read_file(os.path.join(DD, "backups", "auto.status")).splitlines()[-10:]:
+        p = line.split("|", 3)
+        if len(p) == 4 and p[0].isdigit():
+            hist.append({"time": int(p[0]), "ok": p[1] == "OK", "file": p[2], "msg": p[3]})
+    return {"auto": c.get("BK_AUTO", "no"), "keep": c.get("BK_KEEP", "7"), "vps": c.get("BK_VPS", "no") == "yes",
+            "vps_host": c.get("BK_VPS_HOST", ""), "vps_host_default": env().get("VPS_IP", ""), "vps_port": c.get("BK_VPS_PORT", "22"),
+            "vps_user": c.get("BK_VPS_USER", "root"), "vps_dir": c.get("BK_VPS_DIR", "/root/udr-backups"), "vps_keep": c.get("BK_VPS_KEEP", "14"),
+            "tg": c.get("BK_TG", "no") == "yes", "tg_ready": bool(parse_env_text(read_file(os.path.join(DD, "telegram.env"))).get("TG_TOKEN")),
+            "key": os.path.exists(os.path.join(DD, "ssh", "id_ed25519")), "pass_set": os.path.exists(BK_PASS_F) and os.path.getsize(BK_PASS_F) > 0,
+            "timer": os.path.exists(os.path.join(SYSD, "awg-backup.timer")), "running": bk_auto_running(), "history": list(reversed(hist))}
+
+
+def api_backup_auto_set(h, d):
+    auto = str(d.get("auto", "no"))
+    if auto not in ("no", "daily", "weekly"):
+        raise ValueError("расписание: выключено, ежедневно или еженедельно")
+    keep, vkeep = str(d.get("keep", "7")).strip(), str(d.get("vps_keep", "14")).strip()
+    if not re.match(r"^\d{1,3}$", keep) or not 1 <= int(keep) <= 100 or not re.match(r"^\d{1,3}$", vkeep) or not 1 <= int(vkeep) <= 365:
+        raise ValueError("хранить: на роутере 1–100 копий, на VPS 1–365")
+    vps, tg = bool(d.get("vps")), bool(d.get("tg"))
+    host = str(d.get("vps_host", "")).strip()
+    if host and not HOST_OR_IP_RE.match(host):
+        raise ValueError("адрес VPS: имя или IP")
+    port = str(d.get("vps_port", "22")).strip()
+    if not re.match(r"^\d{1,5}$", port) or not 1 <= int(port) <= 65535:
+        raise ValueError("порт SSH: 1–65535")
+    user = str(d.get("vps_user", "root")).strip()
+    if not re.match(r"^[a-z_][a-z0-9_-]{0,31}$", user):
+        raise ValueError("пользователь VPS: латиница в нижнем регистре, цифры, _ -")
+    vdir = str(d.get("vps_dir", "/root/udr-backups")).strip()
+    if not re.match(r"^/[A-Za-z0-9._/-]{1,200}$", vdir) or ".." in vdir:
+        raise ValueError("папка на VPS: абсолютный путь из латиницы, цифр, . _ - /")
+    if vps and not (host or env().get("VPS_IP")):
+        raise ValueError("укажите адрес VPS")
+    pw = str(d.get("pass", ""))
+    if pw:
+        if len(pw) < 8 or len(pw) > 128 or re.search(r"[\x00-\x1f]", pw):
+            raise ValueError("пароль автокопии: 8–128 символов")
+        write_secure(BK_PASS_F, pw + "\n", 0o600)
+    if auto != "no" and not (os.path.exists(BK_PASS_F) and os.path.getsize(BK_PASS_F) > 0):
+        raise ValueError("задайте пароль автокопии: без него копию не зашифровать")
+    write_secure(BK_F, "".join('%s="%s"\n' % kv for kv in (
+        ("BK_AUTO", auto), ("BK_KEEP", keep), ("BK_VPS", "yes" if vps else "no"), ("BK_VPS_HOST", host), ("BK_VPS_PORT", port),
+        ("BK_VPS_USER", user), ("BK_VPS_DIR", vdir), ("BK_VPS_KEEP", vkeep), ("BK_TG", "yes" if tg else "no"))), 0o600)
+    rc, out = run([os.path.join(DD, "backup.sh"), "timer"], timeout=30, env={"SYSD": SYSD})
+    h.act("backup-auto", {"auto": auto, "vps": vps, "tg": tg, "pass": bool(pw)})
+    return {"ok": rc == 0, "msg": out.strip() or "сохранено"}
+
+
+def api_backup_auto_run(h, d):
+    if bk_auto_running():
+        raise ValueError("автокопия уже выполняется")
+    if not (os.path.exists(BK_PASS_F) and os.path.getsize(BK_PASS_F) > 0):
+        raise ValueError("сначала задайте пароль автокопии")
+    rc, out = run(["systemd-run", "--unit=awg-backup-run", "--collect", "--quiet", "--setenv=DD=" + DD, os.path.join(DD, "backup.sh"), "auto"], timeout=15)
+    h.act("backup-auto-run")
+    if rc != 0:
+        raise ValueError("не удалось запустить: " + out.strip()[:300])
+    return {"ok": True, "msg": "автокопия запущена: результат появится в истории через полминуты"}
+
+
+def api_backup_auto_test(h, d):
+    rc, out = run([os.path.join(DD, "backup.sh"), "vps-test"], timeout=40)
+    h.act("backup-vps-test")
+    return {"ok": rc == 0, "msg": out.strip()}
+
+
 def get_backup_file(h, rest, q):
     f = (q.get("name") or [""])[0]
     if not BK_RE.match(f) or not os.path.exists(os.path.join(DD, "backups", f)):
@@ -3438,6 +3519,10 @@ ROUTES = {
     ("GET", "/api/backups"): api_backups,
     ("POST", "/api/backup/create"): api_backup_create,
     ("POST", "/api/backup/delete"): api_backup_delete,
+    ("GET", "/api/backup/auto"): api_backup_auto_get,
+    ("POST", "/api/backup/auto"): api_backup_auto_set,
+    ("POST", "/api/backup/auto/run"): api_backup_auto_run,
+    ("POST", "/api/backup/auto/test"): api_backup_auto_test,
     ("GET", "/api/users"): api_users,
     ("POST", "/api/passwd"): api_passwd,
     ("POST", "/api/user/delete"): api_user_delete,
