@@ -634,6 +634,76 @@ class Sessions:
 SESS = Sessions(os.path.join(WEBD, "sessions.json"))
 
 
+class Tokens:
+    """Долгоживущие токены API (#6): для Home Assistant, скриптов, мониторинга.
+    Роли: read — только GET; admin — всё, кроме учётных данных и опасных действий (см. TOKEN_DENY).
+    Хранится только SHA-256 токена (web/tokens.json, 600); сам токен показывается один раз при создании."""
+    MAX = 20
+    PREFIX = "awg_"
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.t = {}
+        self.saved = 0
+        try:
+            self.t = {k: v for k, v in (json.loads(read_file(path) or "{}").get("tokens") or {}).items()
+                      if re.match(r"^[0-9a-f]{12}$", k) and isinstance(v, dict) and re.match(r"^[0-9a-f]{64}$", v.get("hash", ""))}
+        except ValueError:
+            self.t = {}
+
+    def save(self):
+        write_secure(self.path, json.dumps({"format": 1, "tokens": self.t}, ensure_ascii=False), 0o600)
+        self.saved = now()
+
+    def create(self, name, role, days, user):
+        tok = self.PREFIX + secrets.token_urlsafe(32)
+        tid = secrets.token_hex(6)
+        with self.lock:
+            if len(self.t) >= self.MAX:
+                raise ValueError("не больше %d токенов: отзовите ненужные" % self.MAX)
+            if any(v["name"] == name for v in self.t.values()):
+                raise ValueError("токен с таким названием уже есть")
+            self.t[tid] = {"name": name, "role": role, "hash": hashlib.sha256(tok.encode()).hexdigest(), "created": now(),
+                           "expires": now() + days * 86400 if days else 0, "last_used": 0, "last_ip": "", "user": user}
+            self.save()
+        return tid, tok
+
+    def check(self, tok, ip):
+        if not tok.startswith(self.PREFIX) or len(tok) > 100:
+            return None
+        hh = hashlib.sha256(tok.encode()).hexdigest()
+        with self.lock:
+            for tid, v in self.t.items():
+                if hmac.compare_digest(v["hash"], hh):
+                    if v["expires"] and now() > v["expires"]:
+                        return None
+                    v["last_used"], v["last_ip"] = now(), ip
+                    if now() - self.saved > 60:
+                        self.save()
+                    return dict(v, id=tid)
+        return None
+
+    def listing(self):
+        with self.lock:
+            return [dict({k: v[k] for k in ("name", "role", "created", "expires", "last_used", "last_ip", "user")}, id=tid,
+                         expired=bool(v["expires"] and now() > v["expires"])) for tid, v in self.t.items()]
+
+    def revoke(self, tid):
+        with self.lock:
+            if self.t.pop(tid, None) is None:
+                raise ApiError(404, "нет такого токена")
+            self.save()
+
+
+TOKENS = Tokens(os.path.join(WEBD, "tokens.json"))
+# только для входа по паролю: учётные данные, сеансы, токены, ключи, перезагрузка, настройки самой панели
+TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/passwd", "/api/user/delete", "/api/users",
+              "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
+              "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/settings/import",
+              "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram"}
+
+
 class Throttle:
     """5 неудачных входов за 10 минут с одного адреса → блокировка на 15 минут."""
 
@@ -1396,13 +1466,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.send(401, {"error": "нужен вход", "setup": not load_users()})
                 return self.send(200, {"user": s["user"], "csrf": s["csrf"], "version": VERSION})
             s = self.session()
+            tk = None
             if not s:
-                return self.send(401, {"error": "нужен вход"})
+                auth = self.headers.get("Authorization", "")
+                if not auth.startswith("Bearer "):
+                    return self.send(401, {"error": "нужен вход"})
+                ip = self.client_ip()
+                if THR.blocked(ip):
+                    return self.send(429, {"error": "слишком много неудачных попыток: подождите 15 минут"})
+                tk = TOKENS.check(auth[7:].strip(), ip)
+                if not tk:
+                    THR.fail(ip)
+                    audit("", ip, "token-fail")
+                    return self.send(401, {"error": "токен неверен, отозван или истёк"})
+                if path in TOKEN_DENY or any(path.startswith(x + "/") for x in TOKEN_DENY):
+                    return self.send(403, {"error": "это действие доступно только после входа по паролю"})
+                if tk["role"] != "admin" and method != "GET":
+                    return self.send(403, {"error": "токен только для чтения"})
             if method == "POST":
                 _OV["v"] = None          # после действия обзор собирается заново
-                if not self.same_origin() or not hmac.compare_digest(self.headers.get("X-CSRF", ""), s["csrf"]):
+                # CSRF нужен браузеру с кукой; запрос с токеном куки не несёт, подделать его со страницы нельзя
+                if s and (not self.same_origin() or not hmac.compare_digest(self.headers.get("X-CSRF", ""), s["csrf"])):
                     return self.send(403, {"error": "проверка CSRF не пройдена: обновите страницу"})
-            self.user = s["user"]
+            self.user = s["user"] if s else "token:" + tk["name"]
             fn = ROUTES.get((method, path))
             if fn:
                 if method == "POST":
@@ -2691,6 +2777,38 @@ def api_session_revoke(h, d):
     return {"ok": True}
 
 
+def api_tokens(h, q):
+    return {"tokens": sorted(TOKENS.listing(), key=lambda x: -x["created"])}
+
+
+def api_token_create(h, d):
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act("token-create-denied")
+        raise ApiError(403, "текущий пароль неверен")
+    name = str(d.get("name", "")).strip()
+    if not re.match(r"^[\w .:-]{1,40}$", name):
+        raise ValueError("название: 1–40 символов (буквы, цифры, пробел, . : - _)")
+    role = str(d.get("role", ""))
+    if role not in ("read", "admin"):
+        raise ValueError("роль: read или admin")
+    days = d.get("days", 0)
+    if not isinstance(days, int) or not 0 <= days <= 3650:
+        raise ValueError("срок: 0 (бессрочно) – 3650 дней")
+    tid, tok = TOKENS.create(name, role, days, h.user)
+    h.act("token-create", {"id": tid, "name": name, "role": role, "days": days})
+    return {"id": tid, "token": tok, "msg": "токен создан: скопируйте его сейчас, повторно он не показывается"}
+
+
+def api_token_revoke(h, d):
+    tid = str(d.get("id", ""))
+    if not re.match(r"^[0-9a-f]{12}$", tid):
+        raise ValueError("нет такого токена")
+    TOKENS.revoke(tid)
+    h.act("token-revoke", tid)
+    return {"ok": True}
+
+
 # ======================================================================= сертификат
 UNIFI_CORE = os.environ.get("AWG_UNIFI_CORE", "/data/unifi-core/config")
 
@@ -3073,6 +3191,9 @@ ROUTES = {
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
     ("POST", "/api/system/reboot"): api_system_reboot,
+    ("GET", "/api/tokens"): api_tokens,
+    ("POST", "/api/token/create"): api_token_create,
+    ("POST", "/api/token/revoke"): api_token_revoke,
 }
 def get_log_file(h, rest, q):
     k = (q.get("kind") or [""])[0]

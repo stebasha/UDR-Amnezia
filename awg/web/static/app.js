@@ -1756,7 +1756,53 @@
         el('div', { class: 'field' }, el('label', null, T('Новый пароль')), p1, el('span', { class: 'hint' }, T('Не короче 10 символов'))),
         el('div', { class: 'field' }, el('label', null, T('Повторите')), p2),
         el('div', { class: 'field' }, el('label', null, T('Ваш текущий пароль')), cur)), { icon: 'lock', foot: save }),
-      await sessionsCard()]);
+      await sessionsCard(), await tokensCard()]);
+  }
+  // токены API (#6): для Home Assistant, скриптов, мониторинга. Сам токен показывается один раз.
+  const tokHint = (p) => { p.style.padding = '0 16px'; return p; };   // через CSSOM: атрибут style запрещён CSP
+  async function tokensCard() {
+    const tb = el('tbody');
+    const ROLE_T = { read: T('только чтение'), admin: T('управление') };
+    const load = async () => {
+      const r = await api('/api/tokens');
+      replace(tb, r.tokens.length ? r.tokens.map((x) => el('tr', null,
+        el('td', null, el('b', null, x.name), ' ', el('span', { class: 'badge ' + (x.role === 'admin' ? 'warn' : 'outline') }, ROLE_T[x.role] || x.role),
+          x.expired ? el('span', { class: 'badge crit' }, T('истёк')) : null,
+          el('div', { class: 'small muted' }, T('создал ') + x.user + ' · ' + fmtTime(x.created) + (x.expires ? T(' · до ') + fmtTime(x.expires) : T(' · бессрочно')))),
+        el('td', { class: 'nowrap' }, x.last_used ? [fmtAge(Math.floor(Date.now() / 1000) - x.last_used), el('div', { class: 'small muted mono' }, x.last_ip)] : el('span', { class: 'muted' }, T('не использовался'))),
+        el('td', { class: 'r' }, el('button', { class: 'btn sm danger', onclick: async () => {
+          if (!await confirmBox(T('Отозвать токен?'), T('Всё, что пользуется токеном «') + x.name + T('», перестанет получать доступ.'), T('Отозвать'), true)) return;
+          try { await api('/api/token/revoke', { id: x.id }); ok(T('Токен отозван')); load(); } catch (e) { err(e); }
+        } }, T('Отозвать'))))) : el('tr', null, el('td', { class: 'muted' }, T('Токенов нет'))));
+    };
+    load().catch(err);
+    const add = el('button', { class: 'btn sm primary', onclick: () => {
+      const nm = el('input', { class: 'input', maxlength: 40, placeholder: 'home-assistant' });
+      const role = el('select', { class: 'input' }, el('option', { value: 'read' }, T('только чтение')), el('option', { value: 'admin' }, T('управление (переключение каналов, службы, инструменты)')));
+      const days = el('select', { class: 'input' }, [[0, T('бессрочно')], [30, T('30 дней')], [90, T('90 дней')], [365, T('1 год')]].map(([v, t]) => el('option', { value: v }, t)));
+      const pw = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
+      const go = el('button', { class: 'btn primary' }, T('Создать'));
+      const m = modal(T('Новый токен API'), el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Название')), nm, el('span', { class: 'hint' }, T('Кто будет пользоваться: home-assistant, grafana…'))),
+        el('div', { class: 'field' }, el('label', null, T('Права')), role, el('span', { class: 'hint' }, T('Пароли, сеансы, токены, ключи туннелей, перезагрузка и настройки панели недоступны токену никогда.'))),
+        el('div', { class: 'field' }, el('label', null, T('Срок')), days),
+        el('div', { class: 'field' }, el('label', null, T('Ваш текущий пароль')), pw)), [el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), go]);
+      go.addEventListener('click', () => busy(go, async () => {
+        try {
+          const x = await api('/api/token/create', { name: nm.value.trim(), role: role.value, days: +days.value, current: pw.value });
+          m.close(); load();
+          const box = el('input', { class: 'input mono', readonly: 'readonly', value: x.token });
+          const cp = el('button', { class: 'btn primary', onclick: async () => { try { await navigator.clipboard.writeText(x.token); ok(T('Скопировано')); } catch (e) { box.select(); } } }, icon('copy', 'sm'), T('Копировать'));
+          modal(T('Токен создан'), el('div', { class: 'stack' },
+            el('div', { class: 'alert warn' }, icon('key'), el('div', null, T('Скопируйте токен сейчас: повторно он не показывается. Храните как пароль.'))), box,
+            el('p', { class: 'small muted' }, T('Пример: '), el('code', null, 'curl -k -H "Authorization: Bearer ' + x.token.slice(0, 8) + '…" https://' + location.host + '/api/overview'))),
+          [cp], { sticky: true });
+          setTimeout(() => box.select(), 50);
+        } catch (e) { err(e); }
+      }));
+    } }, icon('plus', 'sm'), T('Создать токен'));
+    return card(T('Токены API'), el('div', null, tokHint(el('p', { class: 'muted small' }, T('Для Home Assistant, скриптов и мониторинга: заголовок Authorization: Bearer <токен>. Доступ только из локальной сети.'))),
+      el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: add });
   }
   async function setBackups(body) {
     const tb = el('tbody');
