@@ -141,7 +141,7 @@ sec "Система"
 fr=$(df -Pm "$DD" 2>/dev/null | awk 'NR==2{print $4}')
 [ -n "$fr" ] && { [ "$fr" -ge 100 ] && P "на /data свободно $fr МБ" || W "на /data свободно только $fr МБ" "почистите $DD/backups и логи"; }
 [ "$(date +%Y)" -ge 2025 ] && P "время роутера: $(date '+%F %T')" || W "часы роутера показывают $(date): handshake может не проходить" "проверьте NTP"
-for f in main.conf backup.conf client.conf telegram.env awg.env ha.env backup.env backup.pass; do
+for f in main.conf backup.conf client.conf telegram.env hooks.env awg.env ha.env backup.env backup.pass; do
   [ -e "$DD/$f" ] && { [ "$(stat -c %a "$DD/$f")" = 600 ] && P "$f: права 600" || W "$f: права $(stat -c %a "$DD/$f")" "chmod 600 $DD/$f"; }
 done
 # автокопия вне роутера (#12): расписание стоит, последний запуск успешный и не старее периода

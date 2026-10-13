@@ -703,7 +703,7 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/totp/begin", "/api/totp/enable", "/api/totp/disable", "/api/sessions", "/api/session/revoke",
               "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
               "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha",
-              "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test"}
+              "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test", "/api/hooks", "/api/hooks/test"}
 
 
 class Throttle:
@@ -1828,8 +1828,9 @@ def api_service(h, d):
         raise ValueError("недопустимая служба или действие")
     if u == "awg-failover" and a == "disable":
         raise ValueError("сторож из панели не выключается: без него PBR-трафик стоит. Если нужно — systemctl stop awg-failover")
-    if u in ("awg-notify", "awg-bot") and a != "disable" and not os.path.exists(os.path.join(DD, "telegram.env")):
-        raise ValueError("сначала настройте Telegram (Настройки → Telegram)")
+    if a != "disable" and ((u == "awg-bot" and not os.path.exists(os.path.join(DD, "telegram.env")))
+                           or (u == "awg-notify" and not notify_configured())):
+        raise ValueError("сначала настройте Telegram, вебхук или ntfy (Настройки → Telegram)")
     if u == "awg-ha" and a != "disable" and not os.path.exists(HA_F):
         raise ValueError("сначала настройте брокер MQTT (Настройки → Home Assistant)")
     with LOCK:
@@ -2041,6 +2042,81 @@ def api_tg_set(h, d):
             msgs.append("awg-bot: выключен")
     h.act("telegram-set", {"chat": chat, "viewers": viewers, "report_time": rt})
     return {"ok": True, "msg": "сохранено\n" + "\n".join(msgs)}
+
+
+HOOKS_F = os.path.join(DD, "hooks.env")
+HOOK_URL_RE = re.compile(r"^https?://[A-Za-z0-9.-]{1,253}(:\d{1,5})?(/[A-Za-z0-9._~%/+=&?:@!,;-]*)?$")
+
+
+def notify_configured():
+    t = parse_env_text(read_file(os.path.join(DD, "telegram.env")))
+    k = parse_env_text(read_file(HOOKS_F))
+    return bool(t.get("TG_TOKEN") or k.get("HOOK_URL") or k.get("NTFY_URL"))
+
+
+def mask_url(u):
+    """Адрес без пути и запроса: в путях вебхуков (Slack, Discord, HA) часто секрет."""
+    m = re.match(r"^(https?://[^/]+)(/.*)?$", u or "")
+    return (m.group(1) + ("/…" if m.group(2) and m.group(2) != "/" else "")) if m else ""
+
+
+def api_hooks_get(h, q):
+    """Вебхук и ntfy (#14). Полный адрес вебхука, заголовок и токен ntfy в браузер не передаются."""
+    k = parse_env_text(read_file(HOOKS_F))
+    return {"hook_set": bool(k.get("HOOK_URL")), "hook": mask_url(k.get("HOOK_URL", "")), "header_set": bool(k.get("HOOK_HEADER")),
+            "ntfy": k.get("NTFY_URL", ""), "ntfy_token_set": bool(k.get("NTFY_TOKEN")), "notify": svc_active("awg-notify")}
+
+
+def api_hooks_set(h, d):
+    k = parse_env_text(read_file(HOOKS_F))
+    out = {}
+    hook = str(d.get("hook", "")).strip()
+    if d.get("hook_clear"):
+        hook = ""
+    elif not hook:
+        hook = k.get("HOOK_URL", "")            # пусто — прежний адрес (в браузер он не передаётся)
+    if hook and not HOOK_URL_RE.match(hook):
+        raise ValueError("адрес вебхука: http(s)://узел[:порт]/путь, без пробелов и кавычек")
+    hdr = str(d.get("header", "")).strip()
+    if d.get("header_clear") or not hook:
+        hdr = ""
+    elif not hdr:
+        hdr = k.get("HOOK_HEADER", "")
+    if hdr and not re.match(r"^[A-Za-z0-9-]{1,64}: [ -~]{1,400}$", hdr) or re.search(r"[\"\\$`]", hdr):
+        raise ValueError("заголовок: «Имя: значение», латиница, без кавычек, \\, $ и `")
+    ntfy = str(d.get("ntfy", "")).strip()
+    if ntfy and not HOOK_URL_RE.match(ntfy):
+        raise ValueError("адрес ntfy: https://ntfy.sh/ТЕМА или свой сервер")
+    tok = str(d.get("ntfy_token", "")).strip()
+    if d.get("ntfy_token_clear") or not ntfy:
+        tok = ""
+    elif not tok:
+        tok = k.get("NTFY_TOKEN", "")
+    if tok and not re.match(r"^[A-Za-z0-9_.-]{1,128}$", tok):
+        raise ValueError("токен ntfy: латиница, цифры, _ . -")
+    for key, v in (("HOOK_URL", hook), ("HOOK_HEADER", hdr), ("NTFY_URL", ntfy), ("NTFY_TOKEN", tok)):
+        if v:
+            out[key] = v
+    with LOCK:
+        if out:
+            write_secure(HOOKS_F, "".join('%s="%s"\n' % kv for kv in out.items()), 0o600)
+        elif os.path.exists(HOOKS_F):
+            os.remove(HOOKS_F)
+        msg = "сохранено"
+        if out and not svc_installed("awg-notify"):
+            rc, o = unit_on("awg-notify")
+            msg += "\nawg-notify: " + ("работает" if rc == 0 else o.strip()[:200])
+    h.act("hooks-set", {"hook": mask_url(hook), "ntfy": mask_url(ntfy)})
+    return {"ok": True, "msg": msg}
+
+
+def api_hooks_test(h, d):
+    if not parse_env_text(read_file(HOOKS_F)):
+        raise ValueError("вебхук и ntfy не настроены")
+    h.act("hooks-test")
+    rc, out = run([os.path.join(DD, "notify.sh"), "--only", "hooks", "✅ Тест уведомлений UDR-Amnezia · %s\nвебхук и ntfy работают" % socket.gethostname()], timeout=40)
+    log = "\n".join(l for l in read_file(os.path.join(DD, "notify.log")).splitlines()[-3:] if "вебхук" in l or "ntfy" in l)
+    return {"ok": rc == 0, "msg": "отправлено" if rc == 0 else "не доставлено" + (": " + log if log else "")}
 
 
 def api_tg_test(h, d):
@@ -3385,7 +3461,7 @@ def api_system_reboot(h, d):
             f.write("%d|reboot|перезагрузка роутера из панели (%s)\n" % (now(), h.user))
     except OSError:
         pass
-    if os.path.exists(os.path.join(DD, "telegram.env")) and os.access(os.path.join(DD, "notify.sh"), os.X_OK):
+    if notify_configured() and os.access(os.path.join(DD, "notify.sh"), os.X_OK):
         run([os.path.join(DD, "notify.sh"), "--html", "🔁 <b>Перезагрузка роутера</b> · %s\nиз веб-панели, пользователь %s"
              % (html.escape(socket.gethostname()), html.escape(h.user))], timeout=8)
     return {"ok": True, "delay": REBOOT_DELAY,
@@ -3523,6 +3599,9 @@ ROUTES = {
     ("POST", "/api/backup/auto"): api_backup_auto_set,
     ("POST", "/api/backup/auto/run"): api_backup_auto_run,
     ("POST", "/api/backup/auto/test"): api_backup_auto_test,
+    ("GET", "/api/hooks"): api_hooks_get,
+    ("POST", "/api/hooks"): api_hooks_set,
+    ("POST", "/api/hooks/test"): api_hooks_test,
     ("GET", "/api/users"): api_users,
     ("POST", "/api/passwd"): api_passwd,
     ("POST", "/api/user/delete"): api_user_delete,

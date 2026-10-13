@@ -1431,7 +1431,7 @@ if [ -n "$fw_changed" ]; then
   sum=$(timeout 180 "$D/selftest.sh" 2&gt;/dev/null | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E '^Итог' | tail -n1)
   sum=${sum#Итог: }
   echo "$(date +%s)|firmware|прошивка: ${fw_changed}; службы восстановлены; самопроверка: ${sum:-не выполнена}" &gt;&gt; "$D/events.log"
-  if [ -r "$D/telegram.env" ] &amp;&amp; [ -x "$D/notify.sh" ]; then
+  if { [ -r "$D/telegram.env" ] || [ -r "$D/hooks.env" ]; } &amp;&amp; [ -x "$D/notify.sh" ]; then
     "$D/notify.sh" --html "🔄 &lt;b&gt;Обновилась прошивка UniFi&lt;/b&gt; · $(hostname)
 $fw_changed
 Службы UDR-Amnezia восстановлены. Самопроверка: ${sum:-не выполнена}" &gt;/dev/null 2&gt;&amp;1
@@ -1915,7 +1915,7 @@ st=$(systemctl is-active awg-failover 2&gt;/dev/null); en=$(systemctl is-enabled
 UL=$(cat "$DD/.units" 2&gt;/dev/null); [ -n "$UL" ] || UL="awg-failover awg-notify awg-motd"
 for u in $UL; do
   [ -f "$DD/$u.service" ] || continue
-  [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; continue   # Telegram не настраивался
+  [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; [ ! -f "$DD/hooks.env" ] &amp;&amp; continue   # уведомления не настраивались
   [ $u = awg-motd ] &amp;&amp; [ ! -f "$DD/motd.orig" ] &amp;&amp; continue        # баннер не отключался
   cmp -s "/etc/systemd/system/$u.service" "$DD/$u.service" &amp;&amp; P "$u.service совпадает с копией в $DD" \
     || W "$u.service в /etc отличается от копии в $DD или отсутствует" "cp $DD/$u.service /etc/systemd/system/ &amp;&amp; systemctl daemon-reload &amp;&amp; systemctl enable --now $u"
@@ -2049,19 +2049,29 @@ chmod 600 /data/awg/telegram.env; unset T C</code></pre></figure>
     <h4>Скрипты</h4>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
-<span class="c"># notify.sh — отправка в Telegram с резервированием: основной туннель -&gt; запасной -&gt; WAN.</span>
-<span class="c">#   notify.sh [--html] "текст"</span>
-<span class="c"># Не доставилось никуда — сообщение откладывается в notify.spool и уходит при следующей удачной отправке.</span>
+<span class="c"># notify.sh — уведомление: Telegram (с резервированием: основной туннель -&gt; запасной -&gt; WAN), вебхук и ntfy (#14).</span>
+<span class="c">#   notify.sh [--html] [--only telegram|hooks] "текст"</span>
+<span class="c"># Telegram: telegram.env. Не доставилось никуда — сообщение откладывается в notify.spool и уходит при следующей удачной отправке.</span>
+<span class="c"># Вебхук и ntfy: hooks.env (HOOK_URL, HOOK_HEADER, NTFY_URL, NTFY_TOKEN). Идут обычным маршрутом роутера (в LAN или через WAN).</span>
+<span class="c"># Код: 0 — доставлено, 1 — не доставлено (Telegram — отложено), 2 — ничего не настроено.</span>
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
-. "$DD/telegram.env" || exit 2
+TG=0; HK=0
+<span class="c"># shellcheck disable=SC1091</span>
+[ -r "$DD/telegram.env" ] &amp;&amp; . "$DD/telegram.env" &amp;&amp; [ -n "${TG_TOKEN:-}" ] &amp;&amp; TG=1
+<span class="c"># shellcheck disable=SC1091</span>
+[ -r "$DD/hooks.env" ] &amp;&amp; . "$DD/hooks.env" &amp;&amp; [ -n "${HOOK_URL:-}${NTFY_URL:-}" ] &amp;&amp; HK=1
+<span class="c"># shellcheck disable=SC1091</span>
 [ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
-MODE=""
-[ "$1" = "--html" ] &amp;&amp; { MODE=html; shift; }
+MODE=""; ONLY=""
+while :; do case "$1" in --html) MODE=html; shift;; --only) ONLY=$2; shift 2;; *) break;; esac; done
 TEXT="${1:0:3900}"
 [ -z "$TEXT" ] &amp;&amp; exit 0
+[ "$ONLY" = hooks ] &amp;&amp; TG=0
+[ "$ONLY" = telegram ] &amp;&amp; HK=0
+[ $TG = 0 ] &amp;&amp; [ $HK = 0 ] &amp;&amp; exit 2
 
 LOG=$DD/notify.log
 SPOOL=$DD/notify.spool
@@ -2075,6 +2085,33 @@ log() {
   if [ "$(wc -l &lt; "$LOG")" -gt 300 ]; then tail -n 200 "$LOG" &gt; "$LOG.t" &amp;&amp; mv "$LOG.t" "$LOG"; fi
 }
 
+<span class="c"># ---------- вебхук и ntfy (#14) ----------</span>
+plain(){ if [ "$MODE" = html ]; then printf '%s' "$1" | sed -e 's/&lt;[^&gt;]*&gt;//g' -e 's/&amp;lt;/&lt;/g' -e 's/&amp;gt;/&gt;/g' -e 's/&amp;amp;/\&amp;/g'; else printf '%s' "$1"; fi; }
+level(){ case "$1" in *🛑*) echo critical;; *⚠️*|*🔴*|*❌*|*🟠*) echo warning;; *✅*|*🟢*) echo ok;; *) echo info;; esac; }
+hook_send(){  # hook_send ТЕКСТ — 0, если доставлено хоть куда-то из настроенного
+  local t lv code rc=1 h ttl pr js
+  t=$(plain "$1"); lv=$(level "$1"); h=$(hostname)
+  if [ -n "${HOOK_URL:-}" ]; then
+    js=$(HOOK_T="$t" HOOK_LV="$lv" HOOK_H="$h" python3 -c 'import json,os,time; print(json.dumps({"source":"udr-amnezia","host":os.environ["HOOK_H"],"level":os.environ["HOOK_LV"],"time":int(time.time()),"text":os.environ["HOOK_T"]},ensure_ascii=False))')
+<span class="c">    # адрес и заголовок (там может быть секрет) — через stdin (-K -), в списке процессов их не видно</span>
+    code=$( { printf 'url = "%s"\n' "$HOOK_URL"; [ -n "${HOOK_HEADER:-}" ] &amp;&amp; printf 'header = "%s"\n' "$HOOK_HEADER"; } \
+      | curl -s -m 10 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary "$js" -K - 2&gt;/dev/null)
+    case "$code" in 2??) rc=0;; *) log "вебхук: HTTP ${code:-000}";; esac
+  fi
+  if [ -n "${NTFY_URL:-}" ]; then
+    case "$lv" in critical) pr=5;; warning) pr=4;; *) pr=3;; esac
+    ttl="UDR-Amnezia · $h"
+    code=$( { printf 'url = "%s"\n' "$NTFY_URL"; [ -n "${NTFY_TOKEN:-}" ] &amp;&amp; printf 'header = "Authorization: Bearer %s"\n' "$NTFY_TOKEN"; } \
+      | curl -s -m 10 -o /dev/null -w '%{http_code}' -H "Title: $ttl" -H "Priority: $pr" -H "Tags: $lv" --data-binary "$t" -K - 2&gt;/dev/null)
+    case "$code" in 2??) rc=0;; *) log "ntfy: HTTP ${code:-000}";; esac
+  fi
+  return $rc
+}
+
+HRC=1
+if [ $HK = 1 ]; then hook_send "$TEXT" &amp;&amp; HRC=0; fi
+[ $TG = 1 ] || exit $HRC
+
 <span class="c"># Получатели: TG_CHAT (администраторы) и TG_VIEWERS (только просмотр), через пробел или запятую.</span>
 <span class="c"># Чат может временно выключить уведомления кнопкой бота (файл bot.mute: «chat_id до_epoch»);</span>
 <span class="c"># сообщения о полной потере каналов (🛑) приходят всегда.</span>
@@ -2087,7 +2124,7 @@ for c in $(printf '%s %s' "${TG_CHAT:-}" "${TG_VIEWERS:-}" | tr ',;' '  '); do
   fi
   CHATS+=("$c")
 done
-[ ${#CHATS[@]} -gt 0 ] || exit 0
+[ ${#CHATS[@]} -gt 0 ] || { [ $HK = 1 ] &amp;&amp; exit $HRC; exit 0; }
 <span class="c"># кнопки под уведомлением, если работает бот (нажатие открывает его меню)</span>
 MARKUP=""
 systemctl is-active --quiet awg-bot 2&gt;/dev/null &amp;&amp; MARKUP='{"inline_keyboard":[[{"text":"📊 Состояние","callback_data":"m:main"},{"text":"🔀 Каналы","callback_data":"m:tun"}]]}'
@@ -2153,7 +2190,7 @@ log "ВСЕ КАНАЛЫ НЕДОСТУПНЫ, сообщение отложен
 spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
 exit 1
 EOF
-chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 107 строк">Показать целиком · 107 строк</button></figure>
+chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 144 строк">Показать целиком · 144 строк</button></figure>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-notify.sh — уведомления в Telegram о работе failover.</span>

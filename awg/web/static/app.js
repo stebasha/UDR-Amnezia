@@ -1710,6 +1710,38 @@
       r.muted && r.muted.length ? el('div', { class: 'small muted' }, T('Уведомления временно выключены в чатах: ') + r.muted.join(', ')) : null,
       sw(nw, T('Не слать напрямую через WAN'), T('Если туннели лежат, уведомления не пойдут мимо VPN (тише, но можно не узнать о сбое).')),
       res), { icon: 'tg', foot: [test, save] }));
+    const hc = await hooksCard();
+    if (hc) body.appendChild(hc);
+  }
+  // вебхук и ntfy (#14): те же события, что в Telegram. Адрес вебхука, заголовок и токен ntfy в браузер не возвращаются.
+  async function hooksCard() {
+    let r;
+    try { r = await api('/api/hooks'); } catch (e) { err(e); return null; }
+    const keep = T('задан — оставьте пустым, чтобы не менять');
+    const hook = el('input', { class: 'input mono', placeholder: r.hook_set ? r.hook + ' (' + keep + ')' : 'https://example.com/hook', spellcheck: 'false', autocomplete: 'off' });
+    const hdr = el('input', { class: 'input mono', placeholder: r.header_set ? keep : 'Authorization: Bearer …', spellcheck: 'false', autocomplete: 'off' });
+    const ntfy = el('input', { class: 'input mono', value: r.ntfy, placeholder: 'https://ntfy.sh/my-udr-topic', spellcheck: 'false' });
+    const ntok = el('input', { class: 'input mono', type: 'password', placeholder: r.ntfy_token_set ? keep : T('если тема закрыта'), autocomplete: 'off' });
+    const clr = (label, key) => r[key] ? el('label', { class: 'small muted' }, el('input', { type: 'checkbox', 'data-k': key }), ' ' + label) : null;
+    const c1 = clr(T('убрать вебхук'), 'hook_set'), c2 = clr(T('убрать заголовок'), 'header_set'), c3 = clr(T('убрать токен'), 'ntfy_token_set');
+    const on = (c) => !!(c && c.querySelector('input').checked);
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => {
+      try {
+        const x = await api('/api/hooks', { hook: hook.value.trim(), header: hdr.value.trim(), ntfy: ntfy.value.trim(), ntfy_token: ntok.value.trim(),
+          hook_clear: on(c1), header_clear: on(c2), ntfy_token_clear: on(c3) });
+        ok(x.msg.split('\n')[0]); hook.value = hdr.value = ntok.value = '';
+      } catch (e) { err(e); }
+    }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Тестовое сообщение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/hooks/test', {}); (x.ok ? ok : err)(x.msg); } catch (e) { err(e); } }));
+    return card(T('Вебхук и ntfy'), el('div', null,
+      el('p', { class: 'muted small' }, T('Те же события, что в Telegram: переключения, падения, возвраты, отчёт, перезагрузка, прошивка, сбой автокопии. Отправляются обычным маршрутом роутера — подойдут адреса в LAN (Home Assistant, свой ntfy).')),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Вебхук (POST, JSON)')), hook, c1, el('span', { class: 'hint' }, T('Тело: {"source","host","level","time","text"}; level — critical, warning, ok или info.'))),
+        el('div', { class: 'field' }, el('label', null, T('Заголовок вебхука')), hdr, c2, el('span', { class: 'hint' }, T('Необязательно, например для авторизации.'))),
+        el('div', { class: 'field' }, el('label', null, T('ntfy: адрес темы')), ntfy, el('span', { class: 'hint' }, T('ntfy.sh или свой сервер; приоритет по важности события.'))),
+        el('div', { class: 'field' }, el('label', null, T('ntfy: токен')), ntok, c3))), { icon: 'bell', foot: [test, save] });
   }
   // Home Assistant (#5): MQTT discovery — HA сам находит устройство, датчики, выбор канала и кнопки
   async function setHa(body) {

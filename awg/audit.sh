@@ -28,7 +28,7 @@ st=$(systemctl is-active awg-failover 2>/dev/null); en=$(systemctl is-enabled aw
 UL=$(cat "$DD/.units" 2>/dev/null); [ -n "$UL" ] || UL="awg-failover awg-notify awg-motd"
 for u in $UL; do
   [ -f "$DD/$u.service" ] || continue
-  [ $u = awg-notify ] && [ ! -f "$DD/telegram.env" ] && continue   # Telegram не настраивался
+  [ $u = awg-notify ] && [ ! -f "$DD/telegram.env" ] && [ ! -f "$DD/hooks.env" ] && continue   # уведомления не настраивались
   [ $u = awg-motd ] && [ ! -f "$DD/motd.orig" ] && continue        # баннер не отключался
   cmp -s "/etc/systemd/system/$u.service" "$DD/$u.service" && P "$u.service совпадает с копией в $DD" \
     || W "$u.service в /etc отличается от копии в $DD или отсутствует" "cp $DD/$u.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now $u"

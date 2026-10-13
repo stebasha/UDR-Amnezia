@@ -484,6 +484,27 @@ def main():
         s, j = a.post("/api/backup/auto/test", {})
         check("автокопия: проверка VPS", s == 200 and j["ok"] and "VPS" in j["msg"], j)
 
+        # ---------- 1.5 (#14): вебхук и ntfy
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
+        check("хуки: опасный адрес отклонён", s == 400, j)
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/api/webhook/SECRETID", "header": 'X-Key: a"b'})
+        check("хуки: заголовок с кавычкой отклонён", s == 400, j)
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/api/webhook/SECRETID", "header": "Authorization: Bearer hsec",
+                                     "ntfy": "https://ntfy.sh/udr-test", "ntfy_token": "tk_abc"})
+        hf = os.path.join(dd, "hooks.env")
+        check("хуки: сохранены (600)", s == 200 and 'HOOK_URL="https://hooks.example.com/api/webhook/SECRETID"' in open(hf).read()
+              and oct(os.stat(hf).st_mode & 0o777) == "0o600", j)
+        s, j = a.get("/api/hooks")
+        check("хуки: путь вебхука, заголовок и токен в браузер не отдаются", s == 200 and j["hook"] == "https://hooks.example.com/…" and j["header_set"]
+              and j["ntfy_token_set"] and "SECRETID" not in json.dumps(j) and "hsec" not in json.dumps(j) and "tk_abc" not in json.dumps(j), j)
+        s, j = a.post("/api/hooks", {"ntfy": "https://ntfy.sh/udr-test"})
+        hv = open(hf).read()
+        check("хуки: пустые поля сохраняют прежние значения", s == 200 and "SECRETID" in hv and "hsec" in hv and "tk_abc" in hv, hv)
+        s, j = a.post("/api/hooks/test", {})
+        check("хуки: тестовое сообщение (настоящий notify.sh, заглушка curl)", s == 200 and j["ok"] and j["msg"] == "отправлено", j)
+        s, j = a.post("/api/hooks", {"hook_clear": True, "ntfy": ""})
+        check("хуки: всё убрано — файл удалён", s == 200 and not os.path.exists(hf), j)
+
         # ---------- 1.5 (#6): токены API
         s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
         check("токен: без пароля не создать", s == 403, j)
@@ -508,7 +529,7 @@ def main():
         check("токен read: изменения запрещены", s == 403, j)
         s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
         check("токен admin: управление без CSRF", s == 200, j)
-        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET")):
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET")):
             s, j = r_.req(m, path, headers=bh(atok))
             check("токен admin: %s только по паролю" % path, s == 403, j)
         s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))

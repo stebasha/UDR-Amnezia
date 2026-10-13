@@ -67,7 +67,7 @@ if [ -n "$fw_changed" ]; then
   sum=$(timeout 180 "$D/selftest.sh" 2>/dev/null | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E '^Итог' | tail -n1)
   sum=${sum#Итог: }
   echo "$(date +%s)|firmware|прошивка: ${fw_changed}; службы восстановлены; самопроверка: ${sum:-не выполнена}" >> "$D/events.log"
-  if [ -r "$D/telegram.env" ] && [ -x "$D/notify.sh" ]; then
+  if { [ -r "$D/telegram.env" ] || [ -r "$D/hooks.env" ]; } && [ -x "$D/notify.sh" ]; then
     "$D/notify.sh" --html "🔄 <b>Обновилась прошивка UniFi</b> · $(hostname)
 $fw_changed
 Службы UDR-Amnezia восстановлены. Самопроверка: ${sum:-не выполнена}" >/dev/null 2>&1
