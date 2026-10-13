@@ -9,7 +9,7 @@
       pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       const m = modal(title, el('div', null, el('p', null, text),
         el('div', { class: 'field' }, el('label', null, T('Имя туннеля')), nm),
-        el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), pw)), [
+        el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
         el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
         el('button', { class: 'btn primary', onclick: go }, T('Подключить')),
       ], { onclose: () => { if (!done) res(null); } });

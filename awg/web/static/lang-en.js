@@ -2,6 +2,7 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "Пароль от этой веб-панели (тот же, что при входе)": "Password of this web panel (the one you log in with)",
  "основной": "main",
  "Добавить VPS": "Add VPS",
  "например, Швеция": "e.g. Sweden",

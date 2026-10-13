@@ -281,7 +281,7 @@
       const inp = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
       const go = () => { done = true; m.close(); res(inp.value); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), inp)), [
+      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), inp)), [
         el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
         el('button', { class: 'btn primary', onclick: go }, T('Подтвердить')),
       ], { onclose: () => { if (!done) res(null); } });
@@ -304,7 +304,7 @@
       el('div', { class: 'alert crit' }, icon('alert'), el('div', null,
         T('Перезагрузится весь роутер: интернет, Wi-Fi, UniFi и туннели пропадут на 2–4 минуты. Звонки и загрузки оборвутся.'))),
       el('p', { class: 'small muted' }, T('Для подтверждения введите пароль. После загрузки сторож сам поднимет туннели и маршруты PBR.')),
-      el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), pw)), [
+      el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
       el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), go]);
   }
   function rebootWait(delay) {
@@ -2339,7 +2339,7 @@
       pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       const m = modal(title, el('div', null, el('p', null, text),
         el('div', { class: 'field' }, el('label', null, T('Имя туннеля')), nm),
-        el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), pw)), [
+        el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
         el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
         el('button', { class: 'btn primary', onclick: go }, T('Подключить')),
       ], { onclose: () => { if (!done) res(null); } });
