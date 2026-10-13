@@ -69,6 +69,18 @@
       } catch (e) { err(e); }
     });
     btns.push(wiz);
+    const akey = el('button', { class: 'btn' }, icon('key', 'sm'), T('Добавить ключ роутера'));
+    akey.addEventListener('click', async () => {
+      if (!vpw.value) { err(T('введите пароль VPS')); vpw.focus(); return; }
+      const pw = await promptPw(T('Добавить ключ роутера на VPS?'), T('Для VPS, где сервер уже настроен: роутер войдёт по паролю один раз и добавит свой ключ в ~/.ssh/authorized_keys. Дальше обновление, состояние, ключи и обфускация — без пароля. Сервер не меняется.'));
+      if (pw == null) return;
+      try {
+        ok((await api('/api/vps/run', { action: 'addkey', host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), vps_password: vpw.value, current: pw })).msg);
+        vpw.value = '';
+        await follow();
+      } catch (e) { err(e); }
+    });
+    btns.push(akey);
     const upd = job('update', T('Обновить AmneziaWG на VPS'), T('Последние релизы amnezia-vpn собираются на VPS из исходников (3–7 минут), сервер перезапускается. Если туннели к VPS не получат handshake — вернутся прежние файлы.'));
     const rk = job('rotate-keys', T('Сменить ключи'), T('Новые ключи сервера и роутера одновременно. Туннель будет недоступен 10–30 секунд (kill switch держит трафик). Не заработает — обе стороны откатятся.'));
     const ob = job('obfs', T('Новые параметры обфускации'), T('Новые Jc, Jmin, Jmax, S1, S2, H1–H4 на VPS и роутере одновременно — если провайдер начал узнавать трафик. Туннель будет недоступен 10–30 секунд; не заработает — откат.'));
@@ -87,7 +99,7 @@
             el('div', { class: 'field' }, el('label', null, T('Имя нового туннеля')), tname),
             el('div', { class: 'field' }, el('label', null, T('Порт AmneziaWG (UDP)')), aport, el('span', { class: 'hint' }, T('Откройте его в файрволе хостера')))),
           r.pub ? el('details', { class: 'fgroup' }, el('summary', null, T('Открытый ключ роутера (для ~/.ssh/authorized_keys на VPS)')), el('pre', { class: 'res' }, r.pub)) : null,
-          out, log), { icon: 'server', foot: [test, save, wiz] }),
+          out, log), { icon: 'server', foot: [test, save, akey, wiz] }),
         card(T('Сервер и AmneziaWG'), el('div', null,
           el('p', { class: 'muted small' }, T('Состояние — только чтение: служба awg-server, handshake роутера, NAT, файрвол, права на ключи, нагрузка и место. Обновление — только из официальных исходников amnezia-vpn.'))),
         { icon: 'activity', foot: [st, ver, upd] })),

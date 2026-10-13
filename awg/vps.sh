@@ -2,6 +2,7 @@
 # vps.sh — управление своим VPS (сервер запасного канала) с роутера по SSH ключом роутера (#13).
 #   vps.sh setup [ИМЯ] [ПОРТ]    мастер (#28): ключ роутера на VPS (пароль — один раз, из VPS_PASS_FILE), сборка и сервер
 #                                AmneziaWG, конфиг клиента → новый туннель (по умолчанию awgvps, UDP 51823), проверка handshake
+#   vps.sh addkey                только положить ключ роутера на VPS по паролю (VPS_PASS_FILE) — для уже настроенного VPS
 #   vps.sh test                  вход по ключу без пароля
 #   vps.sh tunnels               туннели, ведущие на этот VPS
 #   vps.sh status                состояние сервера (audit-server.sh, только чтение), версии AmneziaWG, нагрузка, место
@@ -163,6 +164,22 @@ remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt и
 cmd=${1:-help}; shift
 case "$cmd" in
   tunnels) vps_tunnels;;
+  addkey)  # ключ роутера на уже настроенный VPS: дальше обновление, состояние, ключи и обфускация — без пароля
+    pw=""; if [ -n "${VPS_PASS_FILE:-}" ]; then pw=$(cat "$VPS_PASS_FILE" 2>/dev/null); rm -f "$VPS_PASS_FILE"; fi
+    if [ ! -f "$RKEY" ]; then
+      command -v ssh-keygen >/dev/null || die "на роутере нет ssh-keygen"
+      mkdir -p "$DD/ssh"; chmod 700 "$DD/ssh"
+      ssh-keygen -q -t ed25519 -N "" -C "udr-awg@$(hostname)" -f "$RKEY" || die "ssh-keygen не сработал"
+      say "· создан ключ роутера $RKEY"
+    fi
+    valid
+    if vrun true >/dev/null 2>&1; then say "✔ ключ роутера уже на VPS: вход без пароля работает"; exit 0; fi
+    [ -n "$pw" ] || die "укажите пароль VPS"
+    push_key "$pw" >/dev/null 2>"$DD/.ssh.err" || { e=$(tail -n1 "$DD/.ssh.err"); rm -f "$DD/.ssh.err"; die "вход по паролю не удался: ${e:-нет ответа}"; }
+    rm -f "$DD/.ssh.err"; unset pw
+    vrun true >/dev/null 2>&1 || die "ключ добавлен, но вход по нему не работает (PubkeyAuthentication на VPS?)"
+    event "ключ роутера добавлен на VPS $VPS_HOST"
+    say "✔ ключ роутера добавлен на VPS $VPS_HOST: вход без пароля работает, пароль нигде не сохранён";;
   setup)   # #28: мастер своего VPS — от пароля до работающего туннеля
     name=${1:-awgvps}; aport=${2:-51823}; pw=""
     if [ -n "${VPS_PASS_FILE:-}" ]; then pw=$(cat "$VPS_PASS_FILE" 2>/dev/null); rm -f "$VPS_PASS_FILE"; fi

@@ -5,7 +5,7 @@ from .webconf import *  # noqa: F401,F403  (всё из предыдущих м�
 # ======================================================================= свой VPS (#13)
 VPS_F = os.path.join(DD, "vps.env")
 VPS_LOG = os.path.join(DD, "vps-job.log")
-VPS_ACTIONS = {"setup": "подключение своего VPS", "update": "обновление AmneziaWG на VPS", "router-bins": "обновление AmneziaWG на роутере", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
+VPS_ACTIONS = {"setup": "подключение своего VPS", "addkey": "ключ роутера на VPS", "update": "обновление AmneziaWG на VPS", "router-bins": "обновление AmneziaWG на роутере", "rotate-keys": "смена ключей", "obfs": "смена параметров обфускации"}
 
 
 def vps_job_running():
@@ -60,7 +60,7 @@ def api_vps_run(h, d):
     """Изменения на VPS — отдельной службой (сборка идёт минуты), только с паролем текущего пользователя."""
     a = str(d.get("action", ""))
     if a not in VPS_ACTIONS:
-        raise ValueError("действие: setup, update, router-bins, rotate-keys или obfs")
+        raise ValueError("действие: setup, addkey, update, router-bins, rotate-keys или obfs")
     need_pw(h, d, "vps-" + a)
     if vps_job_running():
         raise ValueError("на VPS уже выполняется действие: дождитесь окончания")
@@ -73,15 +73,16 @@ def api_vps_run(h, d):
             raise ValueError("недопустимое имя туннеля")
         args.append(t)
     env_ = []
-    if a == "setup":          # мастер (#28): адрес VPS сохраняется, пароль VPS — только во временный файл 600 до первого входа
+    if a in ("setup", "addkey"):   # мастер (#28): адрес VPS сохраняется, пароль VPS — только во временный файл 600 до первого входа
         api_vps_set(h, d)
-        t = str(d.get("name", "awgvps")).strip() or "awgvps"
-        if not NAME_RE.match(t) or t in tunnels(env()):
-            raise ValueError("имя туннеля: awg и 1–10 строчных букв или цифр, не занятое (например awgvps)")
-        ap = str(d.get("awg_port", "51823")).strip()
-        if not re.match(r"^\d{4,5}$", ap) or not 1024 <= int(ap) <= 65535:
-            raise ValueError("порт AmneziaWG: 1024–65535")
-        args += [t, ap]
+        if a == "setup":
+            t = str(d.get("name", "awgvps")).strip() or "awgvps"
+            if not NAME_RE.match(t) or t in tunnels(env()):
+                raise ValueError("имя туннеля: awg и 1–10 строчных букв или цифр, не занятое (например awgvps)")
+            ap = str(d.get("awg_port", "51823")).strip()
+            if not re.match(r"^\d{4,5}$", ap) or not 1024 <= int(ap) <= 65535:
+                raise ValueError("порт AmneziaWG: 1024–65535")
+            args += [t, ap]
         vp = str(d.get("vps_password", ""))
         if vp:
             if len(vp) > 256 or re.search(r"[\x00-\x1f]", vp):

@@ -210,6 +210,12 @@ ck "мастер: пароль не попал в аргументы ssh, фай
 ck "мастер: сервер создан на нужном порту и адресе, конфиг клиента на VPS удалён" 'grep -q "Endpoint = 198.51.100.7:51888" "$DD/awgvps.conf" && [ ! -e "$VROOT/awgbuild/client.conf" ] && [ ! -e "$VROOT/awg-server-setup.sh" ]'
 ck "мастер: VPS_IP записан, событие" 'grep -qx "VPS_IP=198.51.100.7" "$DD/awg.env" && grep -q "|vps|свой VPS 198.51.100.7 подключён: туннель awgvps" "$DD/events.log"'
 ck "мастер: занятое имя туннеля — отказ" '! "$V" setup awgvps > "$T/w3" 2>&1 && grep -q "уже есть" "$T/w3"'
+# --- только ключ роутера на уже настроенный VPS
+rm -f "$DD/ssh/id_ed25519" "$DD/ssh/id_ed25519.pub" "$VROOT/.ssh/authorized_keys"
+ck "addkey: без пароля — отказ" '! "$V" addkey > "$T/k0" 2>&1 && grep -q "укажите пароль VPS" "$T/k0"'
+printf 'Vps-Root-Pass' > "$DD/.vpspass-z"
+ck "addkey: ключ положен, файл пароля удалён, сервер не тронут" 'cp "$SRVCONF" "$T/srv.k"; VPS_PASS_FILE="$DD/.vpspass-z" "$V" addkey | grep -q "ключ роутера добавлен" && grep -qF "$(cat "$DD/ssh/id_ed25519.pub")" "$VROOT/.ssh/authorized_keys" && [ ! -e "$DD/.vpspass-z" ] && cmp -s "$SRVCONF" "$T/srv.k"'
+ck "addkey: повторно — «уже на VPS»" '"$V" addkey | grep -q "уже на VPS"'
 rm -f "$STUB/needkey"
 echo "== vps: ошибок $fails"
 [ $fails = 0 ]

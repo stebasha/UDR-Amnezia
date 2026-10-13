@@ -2,6 +2,10 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "Добавить ключ роутера": "Add router key",
+ "введите пароль VPS": "enter the VPS password",
+ "Добавить ключ роутера на VPS?": "Add the router key to the VPS?",
+ "Для VPS, где сервер уже настроен: роутер войдёт по паролю один раз и добавит свой ключ в ~/.ssh/authorized_keys. Дальше обновление, состояние, ключи и обфускация — без пароля. Сервер не меняется.": "For a VPS whose server is already set up: the router logs in with the password once and adds its key to ~/.ssh/authorized_keys. After that updates, status, keys and obfuscation work without a password. The server is not changed.",
  "в 3x-ui: «Учетная запись → Токен API»": "in 3x-ui: “Authentication → API Token”",
  "3x-ui отвечает": "3x-ui responds",
  "свободный — выберется сам": "a free one is picked automatically",
