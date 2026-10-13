@@ -2,7 +2,8 @@ name: release
 # Релиз по тегу vX.Y.Z (#8): тесты, архив udr-amnezia-vX.Y.Z.tar.gz и SHA256SUMS в GitHub Release.
 # Канал stable (install.sh, панель) ставит последний релиз и сверяет сумму архива.
 # Если релиз с этим тегом уже создан вручную — архив и суммы дозагружаются в него, описание берётся из CHANGELOG.
-# Ручной запуск (Actions → release → Run workflow, тег) — пересобрать архив для существующего тега.
+# Ручной запуск (Actions → release → Run workflow, тег): тег есть — пересобрать архив; тега нет — он создаётся
+# на текущем main, если VERSION там совпадает с тегом.
 on:
   push:
     tags: ['v*']
@@ -24,8 +25,18 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::тег $TAG — не vX.Y.Z"; exit 1; }
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
           fetch-depth: 0
+      - name: Тег (при ручном запуске — создать на main, если его нет)
+        run: |
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || { echo "::error::нет тега $TAG"; exit 1; }
+            [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "::error::тег создаётся только на main"; exit 1; }
+            [ "$(cat VERSION)" = "${TAG#v}" ] || { echo "::error::в main VERSION=$(cat VERSION), а не ${TAG#v}"; exit 1; }
+            git config user.name "github-actions[bot]"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "UDR-Amnezia ${TAG#v}" && git push origin "refs/tags/$TAG"
+            echo "создан тег $TAG на $(git rev-parse --short HEAD)"
+          fi
+          git checkout -q "$TAG"
       - name: Тег совпадает с VERSION и install.sh
         run: |
           ver=${TAG#v}
