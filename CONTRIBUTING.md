@@ -42,7 +42,9 @@ python3 tools/sync-guide.py                                     # обновит
 python3 tools/i18n-check.py                                     # строки панели без перевода
 ```
 
-CI повторяет это, а также гоняет панель на Python 3.7–3.12 и весь набор на aarch64 (Debian 11, Python 3.9).
+Тесты панели в браузере (`tests/t_ui.py`) идут, если установлен Playwright: `pip install playwright && python3 -m playwright install chromium`.
+
+CI повторяет это, а также гоняет панель на Python 3.7–3.12, в Chromium (Playwright) и весь набор на aarch64 (Debian 11, Python 3.9).
 
 Новая возможность — вместе с тестом на заглушках (`tests/t_*.sh` или `tests/t_web.py` на стенде `tests/web_lab.sh`), записью в `CHANGELOG.md` (раздел текущей версии) и, если она видна пользователю, — в README и `docs/TESTPLAN-*.md` (как проверить на роутере).
 
