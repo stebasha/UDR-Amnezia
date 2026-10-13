@@ -182,6 +182,8 @@ U
 chmod 755 "$BS/curl" "$DD/up.sh"
 printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"
 t "bins: версия из --version" '[ "$(bins_ver amneziawg-go)" = v0.2.12 ] && [ "$(bins_ver awg)" = v1.0.20240213 ]'
+printf '#!/bin/bash\nprintf "amneziawg-go 0.0.20250522\\n\\nUserspace AmneziaWG daemon for linux-arm64.\\n"\n' > "$T/oldgo"; chmod 755 "$T/oldgo"
+t "bins: старая сборка без «v» (как на UDR7: amneziawg-go 0.0.20250522)" '( cp "$DD/amneziawg-go" "$T/go.keep"; cp "$T/oldgo" "$DD/amneziawg-go"; v=$(bins_ver amneziawg-go); cp "$T/go.keep" "$DD/amneziawg-go"; [ "$v" = v0.0.20250522 ] )'
 t "bins: последний релиз и самый свежий тег без мусора" '[ "$(PATH="$BS:$PATH" bins_latest amneziawg-go)" = v0.2.16 ] && [ "$(PATH="$BS:$PATH" bins_latest amneziawg-tools)" = v1.0.20250901 ]'
 t "bins-check: есть новее → код 10" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1; [ $? = 10 ])'
 touch "$HS/offline"

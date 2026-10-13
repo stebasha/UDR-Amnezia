@@ -57,4 +57,4 @@ CI повторяет это, а также гоняет панель на Pytho
 
 ## Релиз
 
-Версия в `VERSION`, `INSTALLER_VERSION` в `install.sh`, `VERSION` в `awg/web/awgweb/core.py`, раздел `## X.Y.Z` в `CHANGELOG.md`. Тег `vX.Y.Z` запускает workflow `release`: тесты, архив `udr-amnezia-vX.Y.Z.tar.gz` и `SHA256SUMS` в GitHub Release; канал stable ставит его со сверкой суммы.
+Версия в `VERSION`, `INSTALLER_VERSION` в `install.sh`, `VERSION` в `awg/web/awgweb/core.py`, раздел `## X.Y.Z` в `CHANGELOG.md`. Тег `vX.Y.Z` запускает workflow `release`: тесты, архив `udr-amnezia-vX.Y.Z.tar.gz` и `SHA256SUMS` в GitHub Release; канал stable ставит его со сверкой суммы. Релиз создавать вручную не нужно; если он уже создан — workflow дозагрузит в него архив (или запустите его вручную: Actions → release → Run workflow, тег). Релиз без архива канал stable поставить не сможет.

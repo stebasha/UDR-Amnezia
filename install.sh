@@ -26,7 +26,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.5.0
+INSTALLER_VERSION=1.5.1
 # Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
 #   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
 #   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
@@ -480,7 +480,8 @@ bins_ver(){  # bins_ver amneziawg-go|awg — тег установленной �
     read -r v sum < <(awk -v n="$1" '$1==n {print $2, $3; exit}' "$DD/.binsver")
     [ -n "$sum" ] && [ "$sum" = "$(sha256sum "$DD/$1" 2>/dev/null | cut -d' ' -f1)" ] && { echo "$v"; return; }
   fi
-  "$DD/$1" --version 2>&1 | grep -o 'v[0-9][0-9.]*' | head -n1
+  # первая строка: «amneziawg-tools v3.1.20260812 - …» или у старых сборок «amneziawg-go 0.0.20250522» (без v)
+  "$DD/$1" --version 2>&1 | head -n1 | grep -oE 'v?[0-9]+(\.[0-9]+)+' | head -n1 | sed 's/^v*/v/'
 }
 bins_latest(){  # bins_latest amneziawg-go|amneziawg-tools — последний релиз (или самый свежий тег) в github.com/amnezia-vpn
   local r=$1 tag

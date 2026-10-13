@@ -52,11 +52,13 @@ conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); sp
 hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 vps_tunnels(){  # туннели, у которых Endpoint — этот VPS (имя или адрес, в т. ч. разрешённый up.sh)
   local t cf ep host ip
+  [ -n "$VPS_HOST" ] || return 0        # адрес VPS не задан — своих туннелей нет (пустое не совпадает с пустым)
   for t in $MAIN $BACKUP $TUNNELS_EXTRA; do
     cf=$DD/$(conf_of "$t"); [ -f "$cf" ] || continue
     ep=$(conf_get "$cf" Endpoint | tr -d ' \r'); host=${ep%:*}
     ip=$(awk '{print $2}' "$DD/.endpoint-$t" 2>/dev/null)
-    if [ "$host" = "$VPS_HOST" ] || [ "$ip" = "$VPS_HOST" ] || { [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
+    [ -n "$host" ] || continue
+    if [ "$host" = "$VPS_HOST" ] || { [ -n "$ip" ] && [ "$ip" = "$VPS_HOST" ]; } || { [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
   done
 }
 pick(){  # pick [ТУННЕЛЬ] → $T, $CF
@@ -140,7 +142,7 @@ latest(){  # latest amneziawg-go|amneziawg-tools — последний рели
 }
 remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt или --version)
   vrun 'f=/usr/local/share/amnezia-build.txt; if [ -f $f ]; then awk "/^amneziawg-go /{print \"go\", \$2} /^amneziawg-tools /{print \"tools\", \$2}" $f; else
-    echo "go $(amneziawg-go --version 2>&1 | grep -o "v[0-9][0-9.]*" | head -n1)"; echo "tools $(awg --version 2>&1 | grep -o "v[0-9][0-9.]*" | head -n1)"; fi' 2>/dev/null
+    echo "go $(amneziawg-go --version 2>&1 | head -n1 | grep -oE "v?[0-9]+(\.[0-9]+)+" | head -n1 | sed "s/^v*/v/")"; echo "tools $(awg --version 2>&1 | head -n1 | grep -oE "v?[0-9]+(\.[0-9]+)+" | head -n1 | sed "s/^v*/v/")"; fi' 2>/dev/null
 }
 
 cmd=${1:-help}; shift

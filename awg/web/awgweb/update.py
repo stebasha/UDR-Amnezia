@@ -78,8 +78,9 @@ def bins_installed(name):
             except OSError:
                 pass
     rc, out = run([path, "--version"], timeout=5)
-    m = re.search(r"v[0-9][0-9.]*", out or "")
-    return m.group(0) if rc == 0 and m else ""
+    # первая строка: «amneziawg-tools v3.1.20260812 - …» или у старых сборок «amneziawg-go 0.0.20250522» (без v)
+    m = re.search(r"v?([0-9]+(?:\.[0-9]+)+)", (out or "").split("\n")[0])
+    return "v" + m.group(1) if rc == 0 and m else ""
 
 
 def bins_latest(repo):
