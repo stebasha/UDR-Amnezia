@@ -89,7 +89,7 @@ def job(c, payload, timeout=60):
     return 0, {"out": "timeout"}
 
 
-def restart_panel(pid):
+def restart_panel(pid, before=None):
     """Перезапуск панели стенда с тем же окружением (как systemctl restart awg-web). Возвращает новый PID."""
     env = dict(x.split("=", 1) for x in open("/proc/%s/environ" % pid).read().split("\0") if "=" in x)
     cmd = [x for x in open("/proc/%s/cmdline" % pid).read().split("\0") if x]
@@ -99,6 +99,8 @@ def restart_panel(pid):
         if not os.path.exists("/proc/%s" % pid):
             break
         time.sleep(0.1)
+    if before:
+        before()
     p = subprocess.Popen(cmd, env=env, cwd=cwd, stdout=open(os.path.join(LAB, "panel.log"), "a"), stderr=subprocess.STDOUT)
     for _ in range(100):
         try:
@@ -402,6 +404,28 @@ def main():
         check("Telegram: мусор в chat id отклонён", s == 400, j)
         s, j = a.get("/api/telegram")
         check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
+
+        # ---------- 1.5 (#10): длинная история и CSV
+        h0 = int(time.time()) // 3600 * 3600
+        hrs = [{"t": h0 - k * 3600, "n": 60, "active": "awgmain", "tun": {"awgmain": {"rx": 1000, "tx": 100, "rtt": 40.0, "loss": 0.0, "up": 100.0},
+                "awgbackup": {"rx": 10, "tx": 1, "rtt": None, "loss": None, "up": 0.0}}, "sys": {"cpu": 5.0, "mem": 50.0, "temp": None}} for k in range(720, 0, -1)]
+        pid = restart_panel(pid, before=lambda: json.dump({"points": [], "hours": hrs}, open(os.path.join(dd, "web", "history.json"), "w")))
+        s, j = a.get("/api/history?range=7d")
+        check("история 7 дней: сводки часов", s == 200 and 160 <= len(j.get("hours", [])) <= 168 and "awgmain" in j["hours"][0]["tun"], len(j.get("hours", [])))
+        s, j = a.get("/api/history?range=30d")
+        check("история 30 дней", s == 200 and 700 <= len(j.get("hours", [])) <= 720, len(j.get("hours", [])))
+        s, j = a.get("/api/history?range=1y")
+        check("история: период проверяется", s == 400, j)
+        s, b, r = a.get("/api/history.csv?range=7d", raw=True)
+        lines = b.decode().splitlines()
+        check("CSV: заголовок, строки по туннелям, файл", s == 200 and lines[0].startswith("time,tunnel,active,rx_bps") and len(lines) > 300
+              and "attachment" in (r.getheader("Content-Disposition") or "") and ",awgbackup," in b.decode(), lines[:2])
+        code = ("import sys, os; sys.path.insert(0, %r); import panel as P\n"
+                "pts=[{'t':7200+i*60,'active':'m','tun':{'m':{'rx':100,'tx':10,'hs':30 if i<45 else 500,'loss':'2','rtt':'40'}}} for i in range(60)]\n"
+                "h=P.hour_summary(7200, pts, [{'cpu':10,'mem':50,'temp':60}])\n"
+                "print(h['tun']['m']['up'], h['tun']['m']['rtt'], h['tun']['m']['loss'], h['tun']['m']['rx'], h['active'], h['sys']['temp'])") % os.path.join(R, "awg/web")
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=dict(os.environ, DD=dd, AWG_WEBD=tempfile.mkdtemp())).stdout.strip()
+        check("сводка часа: доля handshake, средние RTT и потери", out == "75.0 40.0 2.0 100 m 60", out)
 
         # ---------- 1.5 (#5): Home Assistant
         s, j = a.post("/api/ha", {"host": "evil;rm", "port": "1883"})

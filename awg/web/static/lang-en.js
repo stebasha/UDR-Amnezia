@@ -723,7 +723,12 @@ window.AWG_EN = {
  "период: 10–600 с": "interval: 10–600 s",
  "префикс discovery: латиница, цифры, _ - /": "discovery prefix: latin letters, digits, _ - /",
  "сначала настройте брокер MQTT (Настройки → Home Assistant)": "configure the MQTT broker first (Settings → Home Assistant)",
- "Прошивка": "Firmware"
+ "Прошивка": "Firmware",
+ "7 дн": "7 d",
+ "30 дн": "30 d",
+ "Скачать CSV": "Download CSV",
+ "Сводки копятся раз в час — загляните позже": "Hourly summaries accumulate — check back later",
+ "период: 24h, 7d или 30d": "range: 24h, 7d or 30d"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],

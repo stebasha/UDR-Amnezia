@@ -946,7 +946,9 @@ def system_health(cpu=None, hist=None):
 
 # ======================================================================= сбор данных
 class Sampler(threading.Thread):
-    """Каждые 2 с: скорость по туннелям (10 минут в памяти); раз в минуту — точка истории (сутки)."""
+    """Каждые 2 с: скорость по туннелям (10 минут в памяти); раз в минуту — точка истории (сутки);
+    раз в час — сводка часа (30 дней, #10): средняя скорость, RTT и потери, доля минут со свежим handshake, процессор и память."""
+    HOURS = 30 * 24
 
     def __init__(self):
         super().__init__(daemon=True)
@@ -1027,6 +1029,27 @@ class Sampler(threading.Thread):
             self.cpu_acc = [0.0, 0]
             self.hist.setdefault("sys", []).append(sp)
             self.hist["sys"] = self.hist["sys"][-1440:]
+            self.roll_hours()
+
+    def roll_hours(self):
+        """Под self.lock: свести завершённые часы из минутных точек в hist["hours"] (без повторов)."""
+        hours = self.hist.setdefault("hours", [])
+        done = hours[-1]["t"] if hours else 0
+        cur = now() // 3600 * 3600
+        by = collections.OrderedDict()
+        for p in self.hist["points"]:
+            h = p["t"] // 3600 * 3600
+            if done < h < cur:
+                by.setdefault(h, {"p": [], "s": []})["p"].append(p)
+        for sp in self.hist.get("sys", []):
+            h = sp["t"] // 3600 * 3600
+            if h in by:
+                by[h]["s"].append(sp)
+        for h, g in by.items():
+            hours.append(hour_summary(h, g["p"], g["s"]))
+        if by:
+            self.hist["hours"] = hours[-self.HOURS:]
+            self.last_save = 0          # сводку часа сохранить сразу
 
     def save(self):
         self.last_save = now()
@@ -1047,6 +1070,37 @@ class Sampler(threading.Thread):
     def sys_history(self):
         with self.lock:
             return list(self.hist.get("sys", []))
+
+    def hours(self, since):
+        with self.lock:
+            return [h for h in self.hist.get("hours", []) if h["t"] >= since]
+
+
+def _num(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _avg(xs):
+    xs = [x for x in xs if x is not None]
+    return round(sum(xs) / len(xs), 1) if xs else None
+
+
+def hour_summary(h, pts, sps):
+    """Сводка часа: по туннелю средние rx/tx (бит/с), RTT, потери, доля минут со свежим handshake (≤180 с); активный канал."""
+    tun = {}
+    names = sorted({t for p in pts for t in p.get("tun", {})})
+    for t in names:
+        xs = [p["tun"][t] for p in pts if t in p.get("tun", {})]
+        tun[t] = {"rx": int(sum(x.get("rx", 0) for x in xs) / len(xs)), "tx": int(sum(x.get("tx", 0) for x in xs) / len(xs)),
+                  "rtt": _avg([_num(x.get("rtt")) for x in xs]), "loss": _avg([_num(x.get("loss")) for x in xs]),
+                  "up": round(100.0 * sum(1 for x in xs if 0 <= (x.get("hs") if isinstance(x.get("hs"), int) else -1) <= 180) / len(xs), 1)}
+    act = collections.Counter(p.get("active", "") for p in pts).most_common(1)
+    return {"t": h, "n": len(pts), "active": act[0][0] if act else "", "tun": tun,
+            "sys": {"cpu": _avg([_num(x.get("cpu")) for x in sps]), "mem": _avg([_num(x.get("mem")) for x in sps]),
+                    "temp": max([x["temp"] for x in sps if isinstance(x.get("temp"), (int, float))] or [0]) or None}}
 
 
 SAMPLER = Sampler()
@@ -1577,8 +1631,37 @@ def api_live(h, q):
     return {"live": SAMPLER.live_data(), "time": now()}
 
 
+RANGES = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400}
+
+
 def api_history(h, q):
-    return {"points": SAMPLER.history()}
+    rg = (q.get("range") or ["24h"])[0]
+    if rg not in RANGES:
+        raise ValueError("период: 24h, 7d или 30d")
+    if rg == "24h":
+        return {"range": rg, "points": SAMPLER.history()}
+    return {"range": rg, "hours": SAMPLER.hours(now() - RANGES[rg])}
+
+
+def get_history_csv(h, rest, q):
+    rg = (q.get("range") or ["24h"])[0]
+    if rg not in RANGES:
+        return h.send(400, {"error": "период: 24h, 7d или 30d"})
+    rows = ["time,tunnel,active,rx_bps,tx_bps,rtt_ms,loss_pct,handshake_ok_pct"]
+    if rg == "24h":
+        for p in SAMPLER.history():
+            for t, x in sorted(p.get("tun", {}).items()):
+                hs = x.get("hs") if isinstance(x.get("hs"), int) else -1
+                rows.append("%s,%s,%d,%d,%d,%s,%s,%d" % (time.strftime("%F %T", time.localtime(p["t"])), t, p.get("active") == t,
+                                                          x.get("rx", 0), x.get("tx", 0), x.get("rtt", ""), x.get("loss", ""), 100 if 0 <= hs <= 180 else 0))
+    else:
+        for p in SAMPLER.hours(now() - RANGES[rg]):
+            for t, x in sorted(p["tun"].items()):
+                rows.append("%s,%s,%d,%d,%d,%s,%s,%s" % (time.strftime("%F %H:00", time.localtime(p["t"])), t, p.get("active") == t, x["rx"], x["tx"],
+                                                          "" if x["rtt"] is None else x["rtt"], "" if x["loss"] is None else x["loss"], x["up"]))
+    h.act("history-csv", rg)
+    fn = "udr-amnezia-history-%s-%s.csv" % (rg, time.strftime("%Y%m%d-%H%M"))
+    return h.send(200, "\n".join(rows) + "\n", "text/csv; charset=utf-8", {"Content-Disposition": 'attachment; filename="%s"' % fn})
 
 
 def api_events(h, q):
@@ -3330,7 +3413,7 @@ def get_log_file(h, rest, q):
     return h.send(200, text, "text/plain; charset=utf-8", {"Content-Disposition": 'attachment; filename="%s"' % fn})
 
 
-PREFIX_ROUTES = {("GET", "/api/backup/file"): get_backup_file, ("GET", "/api/report/file"): get_report_file,
+PREFIX_ROUTES = {("GET", "/api/history.csv"): get_history_csv, ("GET", "/api/backup/file"): get_backup_file, ("GET", "/api/report/file"): get_report_file,
                  ("GET", "/api/logs/file"): get_log_file}
 
 

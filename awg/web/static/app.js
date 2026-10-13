@@ -549,7 +549,8 @@
     for (let i = 0; i <= nx; i++) {
       const t = t0 + (t1 - t0) * i / nx;
       const d = new Date(t * 1000);
-      c.fillText(pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (t1 - t0 < 1200 ? ':' + pad2(d.getSeconds()) : ''), Math.min(Math.max(X(t), L + 20), W - R - 20), H - B + 7);
+      // больше двух суток — подписи датами (7 и 30 дней), иначе временем
+      c.fillText(t1 - t0 > 2 * 86400 ? pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) : pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (t1 - t0 < 1200 ? ':' + pad2(d.getSeconds()) : ''), Math.min(Math.max(X(t), L + 20), W - R - 20), H - B + 7);
     }
     for (const s of series) {
       if (!s.points.length) continue;
@@ -672,7 +673,16 @@
     tunSel.style.width = 'auto'; tunSel.style.height = '30px';
     const seg = el('div', { class: 'seg' });
     const segBtn = (m, t) => el('button', { class: S.histMode === m ? 'on' : '', onclick: (e) => { S.histMode = m; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === e.currentTarget)); drawMain(); } }, t);
-    add(seg, [segBtn('live', T('10 мин')), segBtn('day', T('24 ч'))]);
+    add(seg, [segBtn('live', T('10 мин')), segBtn('day', T('24 ч')), segBtn('7d', T('7 дн')), segBtn('30d', T('30 дн'))]);
+    // выгрузка истории в CSV (#10): за выбранный период (10 минут — как сутки)
+    const csv = el('a', { class: 'btn sm ghost icon', title: T('Скачать CSV'), 'aria-label': T('Скачать CSV') }, icon('download', 'sm'));
+    csv.addEventListener('click', () => { csv.href = '/api/history.csv?range=' + ({ live: '24h', day: '24h' }[S.histMode] || S.histMode); });
+    S.histLong = S.histLong || {};
+    const longPts = async (rg) => {
+      const c = S.histLong[rg];
+      if (!c || Date.now() - c.at > 600000) S.histLong[rg] = { at: Date.now(), hours: (await api('/api/history?range=' + rg)).hours };
+      return S.histLong[rg].hours;
+    };
     tunSel.addEventListener('change', () => { S.chartTun = tunSel.value; drawMain(); });
     let hist = [];
     add(main, [
@@ -683,7 +693,7 @@
         card(T('События'), evs, { icon: 'activity', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/logs' }, T('Все')) })),
       el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-2' },
-        card(T('Трафик'), el('div', { class: 'stack' }, chartWrap, legend), { icon: 'activity', id: 'traffic', right: el('div', { class: 'row' }, tunSel, seg) }),
+        card(T('Трафик'), el('div', { class: 'stack' }, chartWrap, legend), { icon: 'activity', id: 'traffic', right: el('div', { class: 'row' }, tunSel, seg, csv) }),
         card(T('Службы'), svcs, { icon: 'cpu', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/settings/services' }, T('Управление')) })),
       el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-2' },
@@ -710,12 +720,22 @@
         drawChart(chartWrap, [
           { name: T('Получено'), color: '--chart-rx', fill: true, points: q.map((p) => [p[0], p[1]]) },
           { name: T('Отправлено'), color: '--chart-tx', points: q.map((p) => [p[0], p[2]]) }]);
-      } else {
+      } else if (S.histMode === 'day') {
         const pts = hist.filter((p) => p.tun && p.tun[t]);
         drawChart(chartWrap, [
           { name: T('Получено'), color: '--chart-rx', fill: true, points: pts.map((p) => [p.t, p.tun[t].rx]) },
           { name: T('Отправлено'), color: '--chart-tx', points: pts.map((p) => [p.t, p.tun[t].tx]) }],
         { empty: T('История копится раз в минуту — загляните позже') });
+      } else {
+        const mode = S.histMode;
+        longPts(mode).then((hs) => {
+          if (S.histMode !== mode || S.chartTun !== t) return;
+          const pts = hs.filter((p) => p.tun && p.tun[t]);
+          drawChart(chartWrap, [
+            { name: T('Получено'), color: '--chart-rx', fill: true, points: pts.map((p) => [p.t, p.tun[t].rx]) },
+            { name: T('Отправлено'), color: '--chart-tx', points: pts.map((p) => [p.t, p.tun[t].tx]) }],
+          { empty: T('Сводки копятся раз в час — загляните позже') });
+        }).catch(err);
       }
       const r = lastRate(t);
       replace(legend, el('span', null, el('i', null), T('Получено '), el('b', null, r ? fmtBits(r[1]) : '—')),
