@@ -3322,6 +3322,8 @@ def port_busy(p):
     return any(re.search(r"[:.]%d$" % p, line.split()[3]) for line in out.splitlines() if len(line.split()) > 3)
 
 
+PRIVATE_NETS = [ipaddress.ip_network(x) for x in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "127.0.0.0/8",
+                                                  "169.254.0.0/16", "fc00::/7", "fe80::/10", "::1/128")]
 UNIFI_PORTS = {22, 53, 80, 443, 8080, 8443, 8444, 8880, 8843, 6789, 3478, 10001, 5514, 11443, 1900, 5671, 5656, 9543, 9090}
 
 
@@ -3343,7 +3345,8 @@ def api_web_set(h, d):
     allow = str(d.get("allow", c["WEB_ALLOW"])).split()
     for n in allow:
         net = ipaddress.ip_network(n, strict=False)
-        if not net.is_private and not net.is_loopback:
+        # явный список частных диапазонов: is_private в Python до 3.11 считал 0.0.0.0/0 частной сетью
+        if not any(net.version == p.version and net.subnet_of(p) for p in PRIVATE_NETS):
             raise ValueError("«%s»: разрешать можно только частные сети (панель не для интернета)" % n)
     if not allow:
         raise ValueError("нужна хотя бы одна сеть")

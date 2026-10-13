@@ -57,7 +57,7 @@ if [ "$HOSTARCH" = x86_64 ]; then
   STRIP=aarch64-linux-gnu-strip
 else
   make -s LDFLAGS=-static 2>&1 | grep -v "getaddrinfo" || true
-  STRIP=strip
+  STRIP="strip"
 fi
 [ -x wg ] || { echo "ОШИБКА: awg не собрался"; exit 1; }
 install -m 755 wg "$OUT/awg"

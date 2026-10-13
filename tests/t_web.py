@@ -402,8 +402,9 @@ def main():
         check("настройки панели читаются", s == 200 and j["port"] == str(PORT), j)
         s, j = a.post("/api/web", {"port": "8443"})
         check("порт UniFi отклонён", s == 400, j)
-        s, j = a.post("/api/web", {"port": str(PORT), "allow": "0.0.0.0/0"})
-        check("панель в интернет не открыть", s == 400, j)
+        for bad in ("0.0.0.0/0", "0.0.0.0/1", "8.8.8.0/24", "192.168.0.0/15", "::/0"):
+            s, j = a.post("/api/web", {"port": str(PORT), "allow": bad})
+            check("панель в интернет не открыть: %s" % bad, s == 400, j)
         s, j = a.get("/api/system")
         check("канал по умолчанию — stable", j.get("channel") == "stable", j.get("channel"))
         s, j = a.post("/api/update/channel", {"channel": "beta"})

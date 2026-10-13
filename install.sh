@@ -162,7 +162,7 @@ read_paste(){ # read_paste ФАЙЛ — многострочный ввод до
 
 
 # ---------------------------------------------------------------- утилиты --
-is_ipv4(){ local IFS=.; local -a o; local x; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; o=($1); for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
+is_ipv4(){ local -a o; local x; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; IFS=. read -r -a o <<< "$1"; for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
 conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); split(line,a,"="); key=a[1]; gsub(/[ \t]/,"",key) } tolower(key)==k { sub(/^[^=]*=[ \t]*/,"",line); print line; exit }' "$1"; }
 resolve(){
   is_ipv4 "$1" && { echo "$1"; return; }
@@ -662,7 +662,7 @@ bring_up_and_test(){  # bring_up_and_test ИНТЕРФЕЙС "описание" 
 }
 
 diag_tunnel(){  # diag_tunnel ИНТЕРФЕЙС [порт_на_своём_VPS]
-  local ifc=$1 srvport=$2 cf host port epip cap out in hs rx wan srvcap sin=-1 sout=-1
+  local ifc=$1 srvport=$2 cf host port epip cap out in hs rx wan sin=-1 sout=-1
   cf=$(conf_of "$ifc")
   check_conf "$DD/$cf" >/dev/null 2>&1
   host=${CONF_EP%:*}; host=${host#[}; host=${host%]}; port=${CONF_EP##*:}
@@ -735,7 +735,8 @@ router_key_to_vps(){  # создать ключ роутера (если нет)
 }
 ssh_master(){  # одно подключение с паролем на весь сеанс
   ssh -O check -p "$VPS_SSHPORT" -o "ControlPath=$CTL" "$VPS_USER@$VPS_IP" >/dev/null 2>&1 && return 0
-  ssh -fN -p "$VPS_SSHPORT" $( [ -f "$RKEY" ] && printf -- "-o IdentityFile=%s" "$RKEY") -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ControlMaster=yes -o "ControlPath=$CTL" -o ControlPersist=900 "$VPS_USER@$VPS_IP"
+  local k=(); [ -f "$RKEY" ] && k=(-o "IdentityFile=$RKEY")
+  ssh -fN -p "$VPS_SSHPORT" "${k[@]}" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ControlMaster=yes -o "ControlPath=$CTL" -o ControlPersist=900 "$VPS_USER@$VPS_IP"
 }
 vssh(){ ssh "${SSHO[@]}" "$VPS_USER@$VPS_IP" "$@"; }
 vput(){ scp -q "${SCPO[@]}" "$@" "$VPS_USER@$VPS_IP:/root/"; }
@@ -1242,7 +1243,7 @@ do_verify(){
 do_selfupdate(){
   title "Обновление самого установщика"
   [ -n "$AWG_REPO" ] || die "не задан репозиторий (переменная AWG_REPO в начале install.sh)."
-  local base tmp="$WORK/install.new" sha want have newv
+  local base tmp="$WORK/install.new" want have newv
   resolve_ref || die "не удалось определить версию для скачивания"
   base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF"
   mkdir -p "$WORK"

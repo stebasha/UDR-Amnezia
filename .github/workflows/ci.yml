@@ -9,11 +9,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Синтаксис bash
         run: for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
-      - name: shellcheck (ошибки блокируют, предупреждения только показываются)
+      - name: shellcheck (предупреждения блокируют, #17)
         run: |
           shellcheck --version
-          shellcheck -S error install.sh awg/*.sh server/*.sh
-          shellcheck -S warning install.sh awg/*.sh server/*.sh || true
+          shellcheck -S warning install.sh awg/*.sh server/*.sh tests/*.sh
       - name: Тесты на заглушках (без роутера)
         run: bash tests/run.sh
       - name: Контрольная сумма install.sh для --self-update
@@ -25,3 +24,37 @@ jobs:
           ! grep -R -n -i "djgreez" install.sh awg server
       - name: Гайд index.html совпадает со скриптами
         run: python3 tools/sync-guide.py --check
+
+  # Панель, бот и Home Assistant на всех поддерживаемых Python (#16): на роутерах UniFi бывает 3.7–3.11
+  python:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Тесты панели, бота и Home Assistant на Python ${{ matrix.python }}
+        run: |
+          python3 --version
+          python3 tests/t_web.py
+          python3 tests/t_bot.py
+          python3 tests/t_ha.py
+
+  # Весь набор на aarch64, как на UDR7: Debian 11 и Python 3.9 (#16). Нативный ARM-раннер GitHub — быстрее эмуляции qemu.
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    container: debian:bullseye
+    timeout-minutes: 40
+    steps:
+      - name: 'Пакеты как на роутере — bash, python3, openssl, curl'
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates git python3 openssl curl procps iproute2 iptables hostname util-linux >/dev/null
+          uname -m; python3 --version
+      - uses: actions/checkout@v4
+      - name: Тесты на заглушках (aarch64)
+        run: bash tests/run.sh

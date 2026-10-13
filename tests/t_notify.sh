@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC1090  # переменные используются в строках для eval (проверки t/ck), источники — заглушки
 # notify.sh (#14): Telegram с резервированием, вебхук и ntfy, коды возврата, секреты не в аргументах curl.
 # Запуск: bash tests/t_notify.sh <папка со скриптами awg>
 H=$(cd "$(dirname "$0")" && pwd)

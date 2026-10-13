@@ -5,7 +5,6 @@
 #   mtu.sh [туннель] --apply    записать MTU в конфиг и перезапустить туннель (с резервной копией конфига)
 # ICMP на пути должен проходить. Если нет — скрипт скажет об этом и ничего не изменит.
 DD=${DD:-/data/awg}
-AWG=$DD/awg
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; WANIF=${WANIF:-}
 TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
@@ -16,7 +15,7 @@ for a in "$@"; do case "$a" in --apply) APPLY=1;; -h|--help) sed -n '2,8p' "$0";
 conf_for(){ case "$1" in "$MAIN") echo main.conf;; "${BACKUP:-awgbackup}") [ -f "$DD/backup.conf" ] && echo backup.conf || echo client.conf;; *) echo "$1.conf";; esac; }
 wan_if(){ [ -n "$WANIF" ] && { echo "$WANIF"; return; }; ip -4 route show table all 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | grep -v -E '^(awg|wg|lo|wgclt)' | head -n1; }
 WAN=$(wan_if)
-df_ping(){ ping -I "$WAN" -M do -c 1 -W 2 -s "$1" "$2" >/dev/null 2>&1; }   # 0 — пакет с payload $1 дошёл без фрагментации
+df_ping(){ ping -I "$WAN" -M "do" -c 1 -W 2 -s "$1" "$2" >/dev/null 2>&1; }   # 0 — пакет с payload $1 дошёл без фрагментации
 
 # максимальный payload, проходящий до цели, бинарным поиском
 maxpayload(){

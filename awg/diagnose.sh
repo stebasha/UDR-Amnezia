@@ -47,6 +47,7 @@ if "$AWG" --version >/dev/null 2>&1 && "$DD/amneziawg-go" --version >/dev/null 2
 else no "бинарники amneziawg-go/awg не запускаются" "$DD/install.sh → Компоненты → Туннели → Обновить бинарники"; fi
 if systemctl is-active --quiet awg-failover 2>/dev/null; then ok "сторож awg-failover работает"
 else no "сторож awg-failover не работает: маршрута в туннель нет, трафик PBR стоит" "systemctl restart awg-failover; journalctl -u awg-failover -n 30"; fi
+# shellcheck source=/dev/null
 if [ -r "$STATEF" ]; then u=$(. "$STATEF"; echo "$UPDATED"); a=$(( $(date +%s) - ${u:-0} ))
   [ "$a" -le 60 ] && ok "состояние сторожа свежее (${a} с)" || wa "состояние сторожа не обновлялось ${a} с" "сторож завис или долго ждёт ответа туннелей: journalctl -u awg-failover -n 30"
 fi
@@ -104,7 +105,7 @@ for t in $TUNS; do
   elif [ -n "$tip" ]; then ok "внешний адрес через туннель: $tip"; fi
   m=$(cat /sys/class/net/$t/mtu 2>/dev/null)
   if [ -n "$m" ]; then
-    if ping -I "$t" -M do -c 2 -W 2 -s $((m-28)) 1.1.1.1 >/dev/null 2>&1; then ok "пакет размером MTU ($m) проходит без фрагментации"
+    if ping -I "$t" -M "do" -c 2 -W 2 -s $((m-28)) 1.1.1.1 >/dev/null 2>&1; then ok "пакет размером MTU ($m) проходит без фрагментации"
     elif ping -I "$t" -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then no "$t: большие пакеты (MTU $m) не проходят, маленькие проходят — сайты будут «висеть» на загрузке" "$DD/mtu.sh $t (подбор), затем $DD/mtu.sh $t --apply"
     else inf "ICMP через туннель не ходит: MTU проверить нельзя"; fi
   fi
@@ -125,6 +126,7 @@ if [ -n "$TABLE" ] && [ -n "$MARK" ]; then
     st=$(hs_age "$ac"); [ "$st" -lt 0 ] || [ "$st" -gt 180 ] && no "активный в таблице туннель $ac не работает, а сторож его держит" "journalctl -u awg-failover -n 30; awgctl status"
   else no "в таблице $TABLE нет маршрута на туннель: устройства под PBR без интернета (утечки нет)" "systemctl restart awg-failover"; fi
   echo "$tb" | grep -q blackhole && ok "kill switch: blackhole в таблице $TABLE" || no "в таблице $TABLE нет blackhole: при падении туннеля трафик PBR может уйти мимо" "systemctl restart awg-failover"
+  # shellcheck source=/dev/null
   [ -r "$STATEF" ] && fo=$(. "$STATEF"; echo "$FORCED") && [ -n "$fo" ] && wa "канал выбран вручную: $fo" "вернуть автоматический выбор: awgctl auto"
   [ -e /tmp/awg-sim-down ] && no "включена имитация падения основного канала (/tmp/awg-sim-down)" "rm /tmp/awg-sim-down"
 

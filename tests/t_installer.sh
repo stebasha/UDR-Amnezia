@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC1090  # переменные используются в строках для eval (проверки t/ck), источники — заглушки
 # Тесты установщика на заглушках: без root и без роутера. Запуск: bash tests/t_installer.sh [путь/к/install.sh]
 H=$(cd "$(dirname "$0")" && pwd)
 INST=${1:-$H/../install.sh}

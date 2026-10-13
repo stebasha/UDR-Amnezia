@@ -41,7 +41,7 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
 }
 
 bring_up(){
-  local n=$1 conf raw tmp addr mtu k
+  local n=$1 conf raw tmp addr mtu
   conf=$(conf_of "$n")
   [ -z "$conf" ] && { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
@@ -61,7 +61,7 @@ bring_up(){
 
   ip link show "$n" >/dev/null 2>&1 && ip link del "$n"
   ./amneziawg-go "$n" >/dev/null 2>&1
-  for k in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" >/dev/null 2>&1 && break; sleep 0.3; done
+  for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" >/dev/null 2>&1 && break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then
     echo "ОШИБКА: awg setconf $n (строка, которую awg не понял, указана выше)"
     ip link del "$n" 2>/dev/null; rm -f "$tmp"; return 1

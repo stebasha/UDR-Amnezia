@@ -22,7 +22,7 @@ jobs:
       - name: Тесты
         run: |
           for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
-          shellcheck -S error install.sh awg/*.sh server/*.sh
+          shellcheck -S warning install.sh awg/*.sh server/*.sh tests/*.sh
           bash tests/run.sh
           [ "$(cut -d' ' -f1 install.sh.sha256)" = "$(sha256sum install.sh | cut -d' ' -f1)" ]
           python3 tools/sync-guide.py --check

@@ -94,7 +94,7 @@ for t in $TUNS; do
   [ "$c" = 1 ] && P "NAT MASQUERADE на $t: 1 правило" || W "NAT MASQUERADE на $t: $c (ожидается 1)" "systemctl restart awg-failover (сторож расставит правила)"
   m=$(cat /sys/class/net/$t/mtu 2>/dev/null)
   if [ -n "$m" ] && ip link show "$t" >/dev/null 2>&1; then
-    if ping -I "$t" -M do -c 2 -W 2 -s $((m-28)) 1.1.1.1 >/dev/null 2>&1; then P "$t: пакет размером MTU ($m) проходит без фрагментации"
+    if ping -I "$t" -M "do" -c 2 -W 2 -s $((m-28)) 1.1.1.1 >/dev/null 2>&1; then P "$t: пакет размером MTU ($m) проходит без фрагментации"
     elif ping -I "$t" -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then W "$t: пакеты размером MTU $m не проходят, а маленькие проходят" "$DD/mtu.sh $t (подбор MTU)"
     else I "$t: ICMP через туннель не отвечает, проверка MTU пропущена"; fi
   fi

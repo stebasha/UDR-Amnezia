@@ -25,7 +25,7 @@ DIRSET=AWG_DIRECT
 HASHF=/tmp/awg-guard.hash
 
 load(){
-  TABLE=""; MARK=""; MAIN=awgmain; BACKUP=""; WANIF=""; TUNNELS_EXTRA=""
+  TABLE=""; MARK=""; WANIF=""
   LEAK_GUARD=yes; LEAK_V6=block; TUN_DOMAINS=""; TUN_CLIENTS=""; DIRECT_DOMAINS=""; DIRECT_SUBNETS=""; EXTRA_SUBNETS=""
   [ -r "$DD/awg.env" ] && . "$DD/awg.env"
   MASK=${MARK#*/}; [ "$MASK" = "$MARK" ] && MASK=0xffffffff
