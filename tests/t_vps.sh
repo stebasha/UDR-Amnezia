@@ -79,6 +79,9 @@ V="$DD/vps.sh"
 hs(){ [ "$("$DD/awg" show awgbackup latest-handshakes | awk '{print $2}')" != 0 ]; }
 ck "исходно handshake есть" 'hs'
 ck "туннель к VPS найден, туннель провайдера — нет" '[ "$("$V" tunnels)" = awgbackup ]'
+printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"
+ck "адрес VPS не задан — туннелей к VPS нет (на роутере выдавался туннель провайдера)" '[ -z "$("$V" tunnels)" ]'
+printf 'MAIN=awgmain\nBACKUP=awgbackup\nVPS_IP=203.0.113.9\n' > "$DD/awg.env"
 ck "test: вход ключом" '"$V" test | grep -q "ключом роутера работает" && grep -q "BatchMode=yes" "$STUB/ssh.log" && grep -q "UserKnownHostsFile=$DD/ssh/known_hosts" "$STUB/ssh.log"'
 touch "$STUB/sshfail"
 ck "test: нет ключа на VPS → подсказка" '! "$V" test > "$T/o" && grep -q "ключа роутера нет на VPS" "$T/o"'
