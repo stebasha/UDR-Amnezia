@@ -722,7 +722,8 @@ window.AWG_EN = {
  "TLS: no, yes или insecure": "TLS: no, yes or insecure",
  "период: 10–600 с": "interval: 10–600 s",
  "префикс discovery: латиница, цифры, _ - /": "discovery prefix: latin letters, digits, _ - /",
- "сначала настройте брокер MQTT (Настройки → Home Assistant)": "configure the MQTT broker first (Settings → Home Assistant)"
+ "сначала настройте брокер MQTT (Настройки → Home Assistant)": "configure the MQTT broker first (Settings → Home Assistant)",
+ "Прошивка": "Firmware"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -754,6 +755,7 @@ window.AWG_EN = {
     [/^канал обновлений: (.*)$/, "update channel: $1"],
     [/^OK   опубликовано в (\S+) — сущностей: (\d+), устройство (\S+) \(префикс (\S+)\)$/, "OK   published to $1 — entities: $2, device $3 (prefix $4)"],
     [/^FAIL брокер (\S+): (.*)$/, "FAIL broker $1: $2"],
+    [/^прошивка: (.*?); службы восстановлены; самопроверка: (.*)$/, "firmware: $1; services restored; self-test: $2"],
     [/^Роутер: /, "Router: "],
     [/^пароль копии .*$/, "backup password must be at least 8 characters"],
     [/^сохранено: (.*)/, "saved: $1"]

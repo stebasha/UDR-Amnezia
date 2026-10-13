@@ -1190,6 +1190,8 @@ set_active 0
 if command -v conntrack &gt;/dev/null; then
   for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; a=$(tun_addr "${TUNS[$k]}"); [ -n "$a" ] &amp;&amp; conntrack -D -q "$a" &gt;/dev/null 2&gt;&amp;1; done
 fi
+<span class="c"># прошивка UniFi сменилась? (#9) — восстановление и самопроверка в фоне, сторож не ждёт</span>
+[ -x "$DD/awg-restore.sh" ] &amp;&amp; [ -z "${AWG_NO_FWCHECK:-}" ] &amp;&amp; { setsid "$DD/awg-restore.sh" --fw-check &gt;&gt; "$DD/restore.log" 2&gt;&amp;1 &lt; /dev/null &amp; }
 log "старт: основной $MAIN, запасной ${BACKUP:-нет}${TUNNELS_EXTRA:+, дополнительные $TUNNELS_EXTRA}, таблица $TABLE, возврат через ${RECOVER_SEC}с, качество: $QUALITY"
 ev start "основной $MAIN, всего туннелей $N"
 
@@ -1308,7 +1310,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 366 строк">Показать целиком · 366 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 368 строк">Показать целиком · 368 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1363,7 +1365,10 @@ blackhole default metric 200
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-restore.sh: вернуть службы и удобства после обновления прошивки UniFi (она может очистить /etc и /root).</span>
 <span class="c">#   awg-restore.sh              восстановить всё</span>
-<span class="c">#   awg-restore.sh --if-needed  только если чего-то не хватает (для автозапуска из on_boot.d)</span>
+<span class="c">#   awg-restore.sh --if-needed  только если чего-то не хватает или сменилась прошивка (автозапуск из on_boot.d)</span>
+<span class="c">#   awg-restore.sh --fw-check   только если сменилась прошивка UniFi OS или версия Network (запускает сторож при старте)</span>
+<span class="c"># Смена прошивки (#9): версии запоминаются в $DD/.fwver; при смене — полное восстановление, самопроверка,</span>
+<span class="c"># событие «Прошивка» в журнале и сообщение в Telegram (если настроен).</span>
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
@@ -1373,7 +1378,23 @@ if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $A
 need=0
 for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
 grep -q AWGS_SHOWN $BASHRC 2&gt;/dev/null || { [ -f "$D/.panel" ] &amp;&amp; need=1; }
+
+fw_now(){
+  local os net pk v
+  os=$(ubnt-device-info firmware 2&gt;/dev/null | head -n1)
+  for pk in unifi unifi-native unifi-network; do v=$(dpkg-query -W -f='${Version}' "$pk" 2&gt;/dev/null) &amp;&amp; [ -n "$v" ] &amp;&amp; { net=$v; break; }; done
+  echo "os=${os:-?} net=${net:-?}"
+}
+FWF=$D/.fwver; fw_changed=""; fw_cur=""
+if [ "$1" = --if-needed ] || [ "$1" = --fw-check ]; then
+  fw_cur=$(fw_now); fw_old=$(cat "$FWF" 2&gt;/dev/null)
+  if [ "$fw_cur" = "os=? net=?" ]; then :                         # не роутер или версии не читаются — ничего не решаем
+  elif [ -z "$fw_old" ]; then echo "$fw_cur" &gt; "$FWF"             # первый запуск: запомнить
+  elif [ "$fw_cur" != "$fw_old" ]; then fw_changed="$fw_old → $fw_cur"; need=1; fi
+fi
+[ "$1" = --fw-check ] &amp;&amp; [ -z "$fw_changed" ] &amp;&amp; exit 0
 if [ "$1" = --if-needed ] &amp;&amp; [ $need = 0 ]; then exit 0; fi
+[ -n "$fw_changed" ] &amp;&amp; echo "сменилась прошивка: $fw_changed — восстанавливаю"
 
 for u in $UNITS; do [ -f "$D/$u.service" ] &amp;&amp; cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
@@ -1401,9 +1422,22 @@ if [ -d "$BD" ] &amp;&amp; [ -w "$BD" ]; then
   done
 fi
 [ -f "$D/motd.orig" ] &amp;&amp; [ -f "$D/awg-motd.service" ] &amp;&amp; : &gt; /etc/motd 2&gt;/dev/null
+if [ -n "$fw_changed" ]; then
+  echo "$fw_cur" &gt; "$FWF"
+  sleep "${FW_SETTLE:-20}"      # дать сторожу поднять туннели и маршруты
+  sum=$(timeout 180 "$D/selftest.sh" 2&gt;/dev/null | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E '^Итог' | tail -n1)
+  sum=${sum#Итог: }
+  echo "$(date +%s)|firmware|прошивка: ${fw_changed}; службы восстановлены; самопроверка: ${sum:-не выполнена}" &gt;&gt; "$D/events.log"
+  if [ -r "$D/telegram.env" ] &amp;&amp; [ -x "$D/notify.sh" ]; then
+    "$D/notify.sh" --html "🔄 &lt;b&gt;Обновилась прошивка UniFi&lt;/b&gt; · $(hostname)
+$fw_changed
+Службы UDR-Amnezia восстановлены. Самопроверка: ${sum:-не выполнена}" &gt;/dev/null 2&gt;&amp;1
+  fi
+  echo "самопроверка после смены прошивки: ${sum:-не выполнена}"
+fi
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 45 строк">Показать целиком · 45 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 77 строк">Показать целиком · 77 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 

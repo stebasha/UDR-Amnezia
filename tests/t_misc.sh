@@ -64,6 +64,19 @@ ck "ping tcp: нет соединения — потери 100%, код 1" '[ $r
 out=$(DD=$T/nodd bash "$COMP/awgctl.sh" ping tcp eth3 1.1.1.1 99999); rc=$?
 ck "ping: неверный порт отклонён" '[ $rc = 2 ]'
 
+# --- смена прошивки UniFi (#9): первый запуск запоминает, смена — восстановление, событие, самопроверка
+F=$T/fw; mkdir -p "$F/dd" "$F/sys" "$F/bin"
+cp "$COMP/awg-restore.sh" "$F/dd/"; printf '#!/bin/bash\necho "Итог: OK: 29   WARN: 0   FAIL: 0"\n' > "$F/dd/selftest.sh"; chmod +x "$F/dd/"*.sh
+printf '#!/bin/bash\necho "${FWVER:-5.0.10}"\n' > "$F/bin/ubnt-device-info"
+printf '#!/bin/bash\n[ "$3" = unifi ] && { printf "10.0.1"; exit 0; }; exit 1\n' > "$F/bin/dpkg-query"
+printf '#!/bin/bash\nexit 0\n' > "$F/bin/systemctl"; chmod +x "$F/bin/"*
+fw(){ PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin FW_SETTLE=0 "$@" bash "$F/dd/awg-restore.sh" --fw-check; }
+out=$(fw); rc=$?
+ck "прошивка: первый запуск — только запомнить" '[ $rc = 0 ] && [ "$(cat "$F/dd/.fwver")" = "os=5.0.10 net=10.0.1" ] && [ ! -s "$F/dd/events.log" ]'
+out=$(fw); ck "прошивка: без смены — ничего" '[ -z "$out" ] && [ ! -s "$F/dd/events.log" ]'
+out=$(fw env FWVER=5.1.2)
+ck "прошивка: смена → восстановление, событие с самопроверкой" 'echo "$out" | grep -q "сменилась прошивка" && grep -q "|firmware|прошивка: os=5.0.10 net=10.0.1 → os=5.1.2 net=10.0.1; службы восстановлены; самопроверка: OK: 29" "$F/dd/events.log" && [ "$(cat "$F/dd/.fwver")" = "os=5.1.2 net=10.0.1" ]'
+
 # --- деинсталлятор
 mkdir -p "$T/dd" "$T/sys" "$T/boot"
 cp "$COMP"/*.sh "$COMP"/*.service "$T/dd/" 2>/dev/null

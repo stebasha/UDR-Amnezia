@@ -1,7 +1,10 @@
 #!/bin/bash
 # awg-restore.sh: вернуть службы и удобства после обновления прошивки UniFi (она может очистить /etc и /root).
 #   awg-restore.sh              восстановить всё
-#   awg-restore.sh --if-needed  только если чего-то не хватает (для автозапуска из on_boot.d)
+#   awg-restore.sh --if-needed  только если чего-то не хватает или сменилась прошивка (автозапуск из on_boot.d)
+#   awg-restore.sh --fw-check   только если сменилась прошивка UniFi OS или версия Network (запускает сторож при старте)
+# Смена прошивки (#9): версии запоминаются в $DD/.fwver; при смене — полное восстановление, самопроверка,
+# событие «Прошивка» в журнале и сообщение в Telegram (если настроен).
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
@@ -11,7 +14,23 @@ if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $A
 need=0
 for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
 grep -q AWGS_SHOWN $BASHRC 2>/dev/null || { [ -f "$D/.panel" ] && need=1; }
+
+fw_now(){
+  local os net pk v
+  os=$(ubnt-device-info firmware 2>/dev/null | head -n1)
+  for pk in unifi unifi-native unifi-network; do v=$(dpkg-query -W -f='${Version}' "$pk" 2>/dev/null) && [ -n "$v" ] && { net=$v; break; }; done
+  echo "os=${os:-?} net=${net:-?}"
+}
+FWF=$D/.fwver; fw_changed=""; fw_cur=""
+if [ "$1" = --if-needed ] || [ "$1" = --fw-check ]; then
+  fw_cur=$(fw_now); fw_old=$(cat "$FWF" 2>/dev/null)
+  if [ "$fw_cur" = "os=? net=?" ]; then :                         # не роутер или версии не читаются — ничего не решаем
+  elif [ -z "$fw_old" ]; then echo "$fw_cur" > "$FWF"             # первый запуск: запомнить
+  elif [ "$fw_cur" != "$fw_old" ]; then fw_changed="$fw_old → $fw_cur"; need=1; fi
+fi
+[ "$1" = --fw-check ] && [ -z "$fw_changed" ] && exit 0
 if [ "$1" = --if-needed ] && [ $need = 0 ]; then exit 0; fi
+[ -n "$fw_changed" ] && echo "сменилась прошивка: $fw_changed — восстанавливаю"
 
 for u in $UNITS; do [ -f "$D/$u.service" ] && cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
@@ -39,4 +58,17 @@ if [ -d "$BD" ] && [ -w "$BD" ]; then
   done
 fi
 [ -f "$D/motd.orig" ] && [ -f "$D/awg-motd.service" ] && : > /etc/motd 2>/dev/null
+if [ -n "$fw_changed" ]; then
+  echo "$fw_cur" > "$FWF"
+  sleep "${FW_SETTLE:-20}"      # дать сторожу поднять туннели и маршруты
+  sum=$(timeout 180 "$D/selftest.sh" 2>/dev/null | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E '^Итог' | tail -n1)
+  sum=${sum#Итог: }
+  echo "$(date +%s)|firmware|прошивка: ${fw_changed}; службы восстановлены; самопроверка: ${sum:-не выполнена}" >> "$D/events.log"
+  if [ -r "$D/telegram.env" ] && [ -x "$D/notify.sh" ]; then
+    "$D/notify.sh" --html "🔄 <b>Обновилась прошивка UniFi</b> · $(hostname)
+$fw_changed
+Службы UDR-Amnezia восстановлены. Самопроверка: ${sum:-не выполнена}" >/dev/null 2>&1
+  fi
+  echo "самопроверка после смены прошивки: ${sum:-не выполнена}"
+fi
 echo "готово; проверьте: awgctl selftest"

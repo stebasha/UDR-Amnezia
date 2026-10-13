@@ -244,6 +244,8 @@ set_active 0
 if command -v conntrack >/dev/null; then
   for k in "${!TUNS[@]}"; do [ "$k" = 0 ] && continue; a=$(tun_addr "${TUNS[$k]}"); [ -n "$a" ] && conntrack -D -q "$a" >/dev/null 2>&1; done
 fi
+# прошивка UniFi сменилась? (#9) — восстановление и самопроверка в фоне, сторож не ждёт
+[ -x "$DD/awg-restore.sh" ] && [ -z "${AWG_NO_FWCHECK:-}" ] && { setsid "$DD/awg-restore.sh" --fw-check >> "$DD/restore.log" 2>&1 < /dev/null & }
 log "старт: основной $MAIN, запасной ${BACKUP:-нет}${TUNNELS_EXTRA:+, дополнительные $TUNNELS_EXTRA}, таблица $TABLE, возврат через ${RECOVER_SEC}с, качество: $QUALITY"
 ev start "основной $MAIN, всего туннелей $N"
 
