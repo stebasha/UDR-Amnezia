@@ -235,7 +235,7 @@ python3 tools/sync-guide.py       # после правки скриптов: о
 sha256sum install.sh > install.sh.sha256   # после правки install.sh (иначе --self-update откажется)
 ```
 
-CI (GitHub Actions) проверяет синтаксис, shellcheck, тесты, актуальность `install.sh.sha256` и гайда.
+CI (GitHub Actions) проверяет синтаксис, shellcheck (предупреждения блокируют), тесты на Python 3.7–3.12 и на aarch64, актуальность `install.sh.sha256` и гайда. Подробнее — [CONTRIBUTING.md](CONTRIBUTING.md); об уязвимостях — приватно, см. [SECURITY.md](SECURITY.md). Об ошибке — issue по шаблону с обезличенным отчётом `awgctl report`.
 
 ## Безопасность
 

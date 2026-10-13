@@ -1,0 +1,58 @@
+name: Ошибка
+description: Что-то работает не так, как описано
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Перед отправкой: обновитесь (`install.sh --update`) и посмотрите `awgctl diagnose` — там часто уже есть причина и команда для исправления.
+        **Не вставляйте конфиги с ключами, токены и пароли.** Об уязвимостях — приватно, см. SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия набора
+      description: "`cat /data/awg/VERSION` или левый верхний угол панели"
+      placeholder: "1.5.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Роутер и прошивка
+      description: "Модель и версии UniFi OS / Network (Настройки UniFi → Система или `ubnt-device-info firmware`)"
+      placeholder: "UDR7, UniFi OS 5.1.33, Network 10.6.106"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло
+      description: Что ожидали и что получилось. Сообщения панели, бота или установщика — текстом.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+      placeholder: |
+        1. …
+        2. …
+  - type: textarea
+    id: selftest
+    attributes:
+      label: Вывод awgctl selftest и awgctl diagnose
+      description: Только строки WARN/FAIL и итог, если вывод длинный.
+      render: text
+  - type: textarea
+    id: report
+    attributes:
+      label: Обезличенный отчёт
+      description: |
+        `awgctl report` → файл `/tmp/awg-report-*.txt`. Ключи, токены, chat id и публичные IP в нём скрыты — всё равно просмотрите перед отправкой. Перетащите файл сюда.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверено
+      options:
+        - label: В тексте и вложениях нет PrivateKey, токенов и паролей
+          required: true

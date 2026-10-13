@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость — сообщить приватно
+    url: https://github.com/stebasha/UDR-Amnezia/security/advisories/new
+    about: Не в публичном issue. Подробнее — SECURITY.md.
+  - name: Гайд по установке и настройке
+    url: https://github.com/stebasha/UDR-Amnezia#readme
+    about: Установка, панель, бот, частые вопросы.
