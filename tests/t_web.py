@@ -175,6 +175,8 @@ def main():
         s, j = a.post("/api/tunnel/remove", {"name": "awgmain"})
         check("основной из панели не удаляется", s == 400, j)
         s, j = a.post("/api/tunnel/remove", {"name": "awgnl"})
+        check("удаление туннеля без пароля запрещено (#21)", s == 403 and "awgnl" in open(os.path.join(dd, "awg.env")).read(), j)
+        s, j = a.post("/api/tunnel/remove", {"name": "awgnl", "current": "Test-pass-123"})
         env = open(os.path.join(dd, "awg.env")).read()
         check("удаление доп. туннеля", s == 200 and "awgnl" not in env, (j, env))
         s, j = a.post("/api/tunnel/label", {"name": "awgmain", "label": "<script>"})
@@ -312,7 +314,7 @@ def main():
         check("порядок доп. туннелей", s == 200 and 'TUNNELS_EXTRA="awgimp awgalt1"' in open(os.path.join(dd, "awg.env")).read(), j)
         s, j = a.post("/api/tunnel/order", {"extra": ["awgimp", "awgmain"]})
         check("порядок: подмена списка отклонена", s == 400, j)
-        a.post("/api/tunnel/remove", {"name": "awgimp"})
+        a.post("/api/tunnel/remove", {"name": "awgimp", "current": "Test-pass-123"})
 
         # ---------- клиенты, сеансы, настройки, обновление
         s, j = a.get("/api/clients")
@@ -343,13 +345,58 @@ def main():
         other = [x["id"] for x in j["sessions"] if not x["me"]]
         s, j = a.post("/api/session/revoke", {"id": other[0]})
         check("сеансы: завершение по id", s == 200 and c5.get("/api/overview")[0] == 401 and a.get("/api/overview")[0] == 200, other)
+        # ---------- 1.5 (#21): время жизни сеансов, ротация журнала, частота запросов
+        s, j = a.post("/api/sessions/config", {"idle": "2", "max": "12", "current": "Test-pass-123"})
+        check("сеансы: границы времени проверяются", s == 400, j)
+        s, j = a.post("/api/sessions/config", {"idle": "30", "max": "12", "current": "nope"})
+        check("сеансы: настройка только с паролем", s == 403, j)
+        s, j = a.post("/api/sessions/config", {"idle": "30", "max": "12", "current": "Test-pass-123"})
+        s2, j2 = a.get("/api/sessions")
+        wc = open(os.path.join(dd, "web", "web.conf")).read()
+        check("сеансы: время жизни сохранено без перезапуска", s == 200 and "WEB_SESSION_IDLE" in wc and j2["idle"] == 30 and j2["max"] == 12, (j, j2))
+        c6 = C(); c6.login()
+        sid6 = hashlib.sha256(c6.cookie.split("=", 1)[1].encode()).hexdigest()
+
+        def age_c6():
+            sf = os.path.join(dd, "web", "sessions.json")
+            x = json.load(open(sf))
+            x["sessions"][sid6]["seen"] -= 31 * 60
+            open(sf, "w").write(json.dumps(x))
+        pid = restart_panel(pid, before=age_c6)
+        check("сеансы: простой дольше настройки — выход", c6.get("/api/overview")[0] == 401 and a.get("/api/overview")[0] == 200)
+        a.post("/api/sessions/config", {"idle": "120", "max": "12", "current": "Test-pass-123"})
+        af = os.path.join(dd, "web", "audit.log")
+        with open(af, "a") as f:
+            f.write(("2026-01-01 00:00:00 127.0.0.1 admin old-entry\n") * 13000)
+        a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        s, j = a.get("/api/logs?kind=audit&n=3000")
+        check("журнал действий: ротация в audit.log.1, просмотр видит оба", os.path.exists(af + ".1") and os.path.getsize(af) < 4096
+              and "old-entry" in j["text"] and " label " in j["text"].splitlines()[-1], (os.path.getsize(af), j["text"][-200:]))
+
+        def low_rate():
+            with open(os.path.join(dd, "web", "web.conf"), "a") as f:
+                f.write("WEB_RATE=30\n")
+        pid = restart_panel(pid, before=low_rate)
+        codes = [a.req("GET", "/api/overview", raw=True) for _ in range(35)]
+        lim = [r for st_, b_, r in codes if st_ == 429]
+        check("частота API: сверх лимита — 429 с Retry-After", len(lim) >= 4 and int(lim[0].getheader("Retry-After")) > 0, [c[0] for c in codes])
+
+        def norm_rate():
+            wf = os.path.join(dd, "web", "web.conf")
+            keep = "".join(x for x in open(wf) if not x.startswith("WEB_RATE="))
+            open(wf, "w").write(keep)
+        pid = restart_panel(pid, before=norm_rate)
+        check("частота API: после снятия лимита работает", a.get("/api/overview")[0] == 200)
         s, j = a.get("/api/settings/export")
         check("экспорт настроек без секретов", s == 200 and j["format"] == "udr-amnezia-settings" and "PrivateKey" not in json.dumps(j)
               and j["settings"]["RECOVER_SEC"] == "900", j)
         j["settings"]["RECOVER_SEC"] = "1200"
-        s, r = a.post("/api/settings/import", {"data": j})
+        s, r = a.post("/api/settings/import", {"data": j, "current": "wrong"})
+        check("импорт настроек без верного пароля запрещён (#21)", s == 403 and "RECOVER_SEC=1200" not in open(os.path.join(dd, "awg.env")).read(), r)
+        s, r = a.post("/api/settings/import", {"data": j, "current": "Test-pass-123"})
         check("импорт настроек", s == 200 and "RECOVER_SEC=1200" in open(os.path.join(dd, "awg.env")).read(), r)
-        s, j = a.post("/api/settings/import", {"data": {"format": "other"}})
+        s, j = a.post("/api/settings/import", {"data": {"format": "other"}, "current": "Test-pass-123"})
         check("импорт настроек: чужой файл", s == 400, j)
         s, j = a.get("/api/web")
         check("настройки панели читаются", s == 200 and j["port"] == str(PORT), j)

@@ -313,6 +313,14 @@ def if_ipv4(dev):
     return m.group(1) if m else ""
 
 
+AUDIT_MAX = int(os.environ.get("AWG_AUDIT_MAX", 512 * 1024))
+
+
+def audit_text():
+    """Журнал действий: предыдущий файл (после ротации) и текущий."""
+    return read_file(AUDIT_F + ".1") + read_file(AUDIT_F)
+
+
 def audit(user, ip, action, detail=""):
     line = "%s %s %s %s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), ip, user or "-", action,
                                   json.dumps(detail, ensure_ascii=False) if detail else "")
@@ -321,9 +329,8 @@ def audit(user, ip, action, detail=""):
         with open(AUDIT_F, "a", encoding="utf-8") as f:
             f.write(line)
         os.chmod(AUDIT_F, 0o600)
-        if os.path.getsize(AUDIT_F) > 512 * 1024:
-            lines = read_file(AUDIT_F).splitlines()[-2000:]
-            write_secure(AUDIT_F, "\n".join(lines) + "\n")
+        if os.path.getsize(AUDIT_F) > AUDIT_MAX:     # ротация (#21): прежний журнал целиком в audit.log.1
+            os.replace(AUDIT_F, AUDIT_F + ".1")
     except OSError:
         pass
 
@@ -551,9 +558,20 @@ def totp_ok(secret, code):
 class Sessions:
     """Сеансы панели. Хранятся в файле (600), чтобы перезапуск или обновление панели не выкидывали всех.
     В файле только SHA-256 от токена: утечка файла не даёт войти; сам токен живёт лишь в куке браузера."""
-    IDLE = 2 * 3600
+    IDLE = 2 * 3600          # по умолчанию; настраивается в web.conf: WEB_SESSION_IDLE (минуты), WEB_SESSION_MAX (часы) — #21
     ABS = 12 * 3600
     SAVE_EVERY = 60          # отметку «последняя активность» сбрасываем на диск не чаще раза в минуту
+    _lim = (0, None)
+
+    def limits(self):
+        t = now()
+        if t - self._lim[0] > 5:
+            c = parse_env_text(read_file(CONF_F))
+            idle, mx = c.get("WEB_SESSION_IDLE", ""), c.get("WEB_SESSION_MAX", "")
+            idle = int(idle) * 60 if idle.isdigit() and 5 <= int(idle) <= 1440 else self.IDLE
+            mx = int(mx) * 3600 if mx.isdigit() and 1 <= int(mx) <= 720 else self.ABS
+            self._lim = (t, (idle, max(mx, idle)))
+        return self._lim[1]
 
     def __init__(self, path=None):
         self.s = {}          # sha256(токен) → сведения о сеансе
@@ -568,7 +586,8 @@ class Sessions:
 
     def alive(self, x, t=None):
         t = t or now()
-        return t - x["seen"] <= self.IDLE and t - x["born"] <= self.ABS
+        idle, mx = self.limits()
+        return t - x["seen"] <= idle and t - x["born"] <= mx
 
     def load(self):
         if not self.path:
@@ -737,6 +756,46 @@ class Throttle:
 
 
 THR = Throttle()
+
+
+class Rate:
+    """Ограничение частоты API с одного адреса (#21): скользящее окно 60 с, отдельно все запросы и изменения (POST).
+    Лимиты — WEB_RATE и WEB_RATE_POST в web.conf (запросов в минуту), читаются при запуске панели."""
+
+    def __init__(self):
+        c = parse_env_text(read_file(CONF_F))
+        self.lim = int(c["WEB_RATE"]) if c.get("WEB_RATE", "").isdigit() and int(c["WEB_RATE"]) >= 10 else 1200
+        self.lim_post = int(c["WEB_RATE_POST"]) if c.get("WEB_RATE_POST", "").isdigit() and int(c["WEB_RATE_POST"]) >= 5 else 240
+        self.q = {}
+        self.lock = threading.Lock()
+
+    def allow(self, ip, post):
+        t = time.time()
+        with self.lock:
+            a, b = self.q.setdefault(ip, (collections.deque(), collections.deque()))
+            for d in (a, b):
+                while d and d[0] < t - 60:
+                    d.popleft()
+            if len(a) >= self.lim or (post and len(b) >= self.lim_post):
+                return int(61 - (t - (b[0] if post and len(b) >= self.lim_post else a[0])))
+            a.append(t)
+            if post:
+                b.append(t)
+            if len(self.q) > 1000:          # память: забыть адреса без запросов за минуту
+                for k in [k for k, (x, _) in self.q.items() if not x]:
+                    self.q.pop(k, None)
+        return 0
+
+
+RATE = Rate()
+
+
+def need_pw(h, d, what):
+    """Опасные действия — только с паролем текущего пользователя (как перезагрузка), #21."""
+    users = load_users()
+    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
+        h.act(what + "-denied")
+        raise ApiError(403, "текущий пароль неверен")
 
 
 # ======================================================================= здоровье роутера
@@ -1513,6 +1572,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self.send(200, data, ct)
             if not path.startswith("/api/"):
                 return self.send(404, {"error": "нет такой страницы"})
+            wait = RATE.allow(self.client_ip(), method == "POST")
+            if wait:
+                return self.send(429, {"error": "слишком много запросов: подождите %d с" % wait}, headers={"Retry-After": str(wait)})
             if path == "/api/login" and method == "POST":
                 if not self.same_origin():
                     return self.send(403, {"error": "запрос с чужой страницы"})
@@ -1766,6 +1828,7 @@ def api_tunnel_remove(h, d):
     e = env()
     if t not in e.get("TUNNELS_EXTRA", "").split():
         raise ValueError("удалять из панели можно только дополнительные туннели; основной и запасной — через установщик")
+    need_pw(h, d, "tunnel-remove")
     with LOCK:
         env_set({"TUNNELS_EXTRA": " ".join(x for x in e.get("TUNNELS_EXTRA", "").split() if x != t)})
         if svc_active("awg-failover"):
@@ -1920,7 +1983,7 @@ def api_logs(h, q):
         rc, out = run(["journalctl", "-u", "awg-*", "-n", str(n), "--no-pager", "-o", "short-iso"], timeout=20)
         return {"text": out}
     if k == "audit":
-        return {"text": "\n".join(read_file(AUDIT_F).splitlines()[-n:])}
+        return {"text": "\n".join(audit_text().splitlines()[-n:])}
     if k not in LOGS:
         raise ValueError("нет такого журнала")
     return {"text": "\n".join(read_file(os.path.join(DD, LOGS[k])).splitlines()[-n:])}
@@ -3069,7 +3132,26 @@ def sid(tok):
 
 
 def api_sessions(h, q):
-    return {"sessions": sorted(SESS.listing(h.cookie("awgsid")), key=lambda x: -x["seen"])}
+    idle, mx = SESS.limits()
+    return {"sessions": sorted(SESS.listing(h.cookie("awgsid")), key=lambda x: -x["seen"]), "idle": idle // 60, "max": mx // 3600}
+
+
+def api_sessions_config(h, d):
+    """Время жизни сеансов (#21): простой (минуты) и всего (часы). Без перезапуска панели."""
+    idle, mx = str(d.get("idle", "")).strip(), str(d.get("max", "")).strip()
+    if not idle.isdigit() or not 5 <= int(idle) <= 1440:
+        raise ValueError("без активности: 5–1440 минут")
+    if not mx.isdigit() or not 1 <= int(mx) <= 720:
+        raise ValueError("всего: 1–720 часов")
+    if int(mx) * 60 < int(idle):
+        raise ValueError("общее время не может быть меньше времени без активности")
+    need_pw(h, d, "sessions-config")
+    with LOCK:
+        lines = [x for x in read_file(CONF_F).splitlines() if not re.match(r"^\s*WEB_SESSION_(IDLE|MAX)=", x)]
+        write_secure(CONF_F, "\n".join(lines + [fmt_env("WEB_SESSION_IDLE", idle), fmt_env("WEB_SESSION_MAX", mx)]) + "\n")
+    SESS._lim = (0, None)
+    h.act("sessions-config", {"idle": idle, "max": mx})
+    return {"ok": True, "msg": "сеансы: без активности %s мин, всего %s ч" % (idle, mx)}
 
 
 def api_session_revoke(h, d):
@@ -3500,10 +3582,7 @@ def api_vps_run(h, d):
     a = str(d.get("action", ""))
     if a not in VPS_ACTIONS:
         raise ValueError("действие: update, rotate-keys или obfs")
-    users = load_users()
-    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
-        h.act("vps-denied", a)
-        raise ApiError(403, "текущий пароль неверен")
+    need_pw(h, d, "vps-" + a)
     if vps_job_running():
         raise ValueError("на VPS уже выполняется действие: дождитесь окончания")
     if update_running():
@@ -3533,10 +3612,7 @@ REBOOT_DELAY = 5
 
 def api_system_reboot(h, d):
     """Перезагрузка роутера целиком (UniFi тоже). Только с паролем текущего пользователя; не во время обновления."""
-    users = load_users()
-    if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
-        h.act("reboot-denied")
-        raise ApiError(403, "текущий пароль неверен")
+    need_pw(h, d, "reboot")
     if update_running():
         raise ValueError("идёт обновление набора: дождитесь его окончания, потом перезагружайте")
     rb = shutil.which("reboot") or "/sbin/reboot"
@@ -3586,6 +3662,7 @@ def api_settings_export(h, q):
 
 
 def api_settings_import(h, d):
+    need_pw(h, d, "settings-import")
     x = d.get("data") or {}
     if not isinstance(x, dict) or x.get("format") != "udr-amnezia-settings":
         raise ValueError("это не файл настроек UDR-Amnezia")
@@ -3714,13 +3791,14 @@ ROUTES = {
     ("GET", "/api/tokens"): api_tokens,
     ("POST", "/api/token/create"): api_token_create,
     ("POST", "/api/token/revoke"): api_token_revoke,
+    ("POST", "/api/sessions/config"): api_sessions_config,
 }
 def get_log_file(h, rest, q):
     k = (q.get("kind") or [""])[0]
     if k == "journal":
         text = run(["journalctl", "-u", "awg-*", "-n", "20000", "--no-pager", "-o", "short-iso"], timeout=30)[1]
     elif k == "audit":
-        text = read_file(AUDIT_F)
+        text = audit_text()
     elif k == "events":
         text = "\n".join("%s  %-8s %s" % (time.strftime("%F %T", time.localtime(e["t"])), e["type"], e["text"]) for e in events(3000))
     elif k in LOGS:

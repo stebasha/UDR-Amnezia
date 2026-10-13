@@ -1155,8 +1155,9 @@
         t.role === 'extra' ? [el('div', { class: 'spacer' }), el('h3', null, T('Удалить туннель')),
           el('p', { class: 'muted small' }, T('Туннель будет остановлен и убран из сторожа вместе с его правилами. Файл конфига и история версий останутся на роутере.')),
           el('button', { class: 'btn danger', onclick: async () => {
-            if (!await confirmBox(T('Удалить ') + t.name + '?', T('Туннель будет остановлен и убран из сторожа.'), T('Удалить'), true)) return;
-            try { ok((await api('/api/tunnel/remove', { name: t.name })).msg); m.close(); reload(); } catch (ex) { err(ex); }
+            const pw = await promptPw(T('Удалить ') + t.name + '?', T('Туннель будет остановлен и убран из сторожа.'));
+            if (pw == null) return;
+            try { ok((await api('/api/tunnel/remove', { name: t.name, current: pw })).msg); m.close(); reload(); } catch (ex) { err(ex); }
           } }, icon('trash', 'sm'), T('Удалить ') + t.name)]
           : el('p', { class: 'small muted' }, T('Основной и запасной туннели удаляются установщиком: install.sh → Компоненты → Туннели.'))]);
       add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, T('Закрыть'))]);
@@ -2168,7 +2169,9 @@
         dropZone(async (txt) => {
           let data;
           try { data = JSON.parse(txt); } catch (e) { err(T('это не JSON')); return; }
-          try { const x = await api('/api/settings/import', { data }); ok(x.msg.split('\n')[0]); m.close(); } catch (e) { err(e); }
+          const pw = await promptPw(T('Импортировать настройки?'), T('Текущие настройки маршрутизации и переключения будут заменены значениями из файла.'));
+          if (pw == null) return;
+          try { const x = await api('/api/settings/import', { data, current: pw }); ok(x.msg.split('\n')[0]); m.close(); } catch (e) { err(e); }
         }, 'udr-amnezia-settings.json')), []);
     });
     add(body, [
@@ -2218,8 +2221,11 @@
   }
   async function sessionsCard() {
     const tb = el('tbody');
+    const idle = el('input', { class: 'input mono', inputmode: 'numeric' });
+    const mx = el('input', { class: 'input mono', inputmode: 'numeric' });
     const load = async () => {
       const r = await api('/api/sessions');
+      if (document.activeElement !== idle && document.activeElement !== mx) { idle.value = r.idle; mx.value = r.max; }
       replace(tb, r.sessions.map((x) => el('tr', null,
         el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, T('этот')) : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
         el('td', null, el('span', { class: 'mono' }, x.ip)),
@@ -2228,7 +2234,17 @@
     };
     load().catch(err);
     const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok(T('Остальные сеансы завершены')); load(); } catch (e) { err(e); } } }, T('Завершить остальные'));
-    return card(T('Активные сеансы'), el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb)), { icon: 'key', flush: true, right: all });
+    // время жизни сеансов (#21)
+    const lsave = el('button', { class: 'btn sm' }, T('Сохранить'));
+    lsave.addEventListener('click', async () => {
+      const pw = await promptPw(T('Время жизни сеансов'), T('Сеансы, вышедшие за новые пределы, закроются (и этот тоже, если он старше).'));
+      if (pw == null) return;
+      try { ok((await api('/api/sessions/config', { idle: idle.value.trim(), max: mx.value.trim(), current: pw })).msg); load(); } catch (e) { err(e); }
+    });
+    idle.style.width = mx.style.width = '6em';
+    const lim = el('div', { class: 'row wrap small' }, T('Выход без активности через'), idle, T('мин; не дольше'), mx, T('ч с момента входа'), lsave);
+    lim.style.padding = '8px 16px';
+    return card(T('Активные сеансы'), el('div', null, lim, el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: all });
   }
 
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)
