@@ -3184,6 +3184,65 @@ def api_update_check(h, d):
             "cmd": "%s bash <(curl -fsSL https://raw.githubusercontent.com/%s/%s/install.sh) --update" % (env_, repo, ref)}
 
 
+BINS_CACHE = {"t": 0, "latest": {}}
+TAG_RE = re.compile(r"^v[0-9][0-9.]{0,30}$")
+
+
+def bins_installed(name):
+    """Тег установленной сборки: из .binsver (если сумма файла совпала), иначе из --version (#11)."""
+    path = os.path.join(DD, name)
+    for line in read_file(os.path.join(DD, ".binsver")).splitlines():
+        p = line.split()
+        if len(p) == 3 and p[0] == name and TAG_RE.match(p[1]):
+            try:
+                with open(path, "rb") as f:
+                    if hashlib.sha256(f.read()).hexdigest() == p[2]:
+                        return p[1]
+            except OSError:
+                pass
+    rc, out = run([path, "--version"], timeout=5)
+    m = re.search(r"v[0-9][0-9.]*", out or "")
+    return m.group(0) if rc == 0 and m else ""
+
+
+def bins_latest(repo):
+    rc, out = curl(["-f", "-H", "Accept: application/vnd.github+json", "https://api.github.com/repos/amnezia-vpn/%s/releases/latest" % repo], 20)
+    try:
+        x = json.loads(out) if rc == 0 else None
+        tag = x.get("tag_name", "") if isinstance(x, dict) else ""
+    except ValueError:
+        tag = ""
+    if not TAG_RE.match(tag or ""):
+        rc, out = curl(["-f", "https://api.github.com/repos/amnezia-vpn/%s/tags?per_page=30" % repo], 20)
+        try:
+            x = json.loads(out) if rc == 0 else []
+        except ValueError:
+            x = []
+        tags = [t.get("name", "") for t in x if isinstance(t, dict) and TAG_RE.match(t.get("name", ""))] if isinstance(x, list) else []
+        tag = max(tags, key=vkey) if tags else ""
+    return tag if TAG_RE.match(tag or "") else ""
+
+
+def vkey(v):
+    return tuple(int(x) for x in re.findall(r"[0-9]+", v))
+
+
+def api_bins_check(h, d):
+    """Сравнить amneziawg-go и awg с последними официальными релизами amnezia-vpn (#11). Ответ GitHub кешируется на час."""
+    now = time.time()
+    if d.get("force") or now - BINS_CACHE["t"] > 3600 or not all(BINS_CACHE["latest"].values()):
+        BINS_CACHE["latest"] = {"amneziawg-go": bins_latest("amneziawg-go"), "awg": bins_latest("amneziawg-tools")}
+        BINS_CACHE["t"] = now
+    items, upd = [], False
+    for name, src in (("amneziawg-go", "amneziawg-go"), ("awg", "amneziawg-tools")):
+        cur, new = bins_installed(name), BINS_CACHE["latest"][name]
+        st = "unknown" if not new else "nover" if not cur else "ok" if vkey(cur) >= vkey(new) else "update"
+        upd = upd or st == "update"
+        items.append({"name": name, "repo": "amnezia-vpn/" + src, "installed": cur, "latest": new, "state": st})
+    return {"items": items, "update": upd, "checked": int(BINS_CACHE["t"]),
+            "cmd": "%s/install.sh --bins-update" % DD}
+
+
 def api_update_channel(h, d):
     ch = str(d.get("channel", ""))
     repo, cur, br = channel()
@@ -3387,6 +3446,7 @@ ROUTES = {
     ("POST", "/api/totp/disable"): api_totp_disable,
     ("GET", "/api/system"): api_system,
     ("POST", "/api/update/check"): api_update_check,
+    ("POST", "/api/bins/check"): api_bins_check,
     ("POST", "/api/update/channel"): api_update_channel,
     ("GET", "/api/ha"): api_ha_get,
     ("POST", "/api/ha"): api_ha_set,

@@ -15,6 +15,8 @@
 #         --dry-run         показать, что есть на роутере и что сделает мастер (ничего не меняет)
 #         --verify          сверить файлы установки с манифестом
 #         --self-update     обновить сам install.sh (проверка sha256)
+#         --bins-check      сравнить amneziawg-go и awg с последними официальными релизами amnezia-vpn
+#         --bins-update [ПАПКА]   обновить их: сборка на своём VPS или готовые файлы с SHA256SUMS; без handshake — откат
 #         --channel stable|beta|ВЕТКА   сменить канал обновлений и обновиться: stable — релизы (по умолчанию),
 #                           beta — ветка main, ВЕТКА — своя ветка (можно вместе с --update)
 #         --record ФАЙЛ     записать ответы мастера (секреты и конфиги не записываются)
@@ -421,6 +423,7 @@ bins_install_from(){  # bins_install_from ПАПКА — найти amneziawg-go
     rm -f "$DD/amneziawg-go.new" "$DD/awg.new"; return 1
   fi
   mv -f "$DD/amneziawg-go.new" "$DD/amneziawg-go"; mv -f "$DD/awg.new" "$DD/awg"
+  bins_note "$(dirname "$fa")/BUILDINFO"
   ok "установлены: $("$DD/awg" --version 2>&1 | head -1); $("$DD/amneziawg-go" --version 2>&1 | head -1)"
   info "sha256: $(sha256sum "$DD/amneziawg-go" | cut -c1-16)… (amneziawg-go), $(sha256sum "$DD/awg" | cut -c1-16)… (awg)"
   [ -f "$DD/awg.prev" ] && hint "прежние версии сохранены: $DD/awg.prev, $DD/amneziawg-go.prev"
@@ -446,6 +449,88 @@ bins_manual_help(){
   say "    ssh root@$(lan_ip) mkdir -p /tmp/awgbin && scp /root/awgbuild/router/* root@$(lan_ip):/tmp/awgbin/${N}"
   say "  Скрипт клонирует только github.com/amnezia-vpn/amneziawg-go и amneziawg-tools, собирает статические файлы под arm64"
   say "  и пишет SHA256SUMS; установщик сверит суммы. Затем выберите пункт «Папка на роутере» → /tmp/awgbin."
+}
+# ---- проверка и обновление бинарников из официальных релизов amnezia-vpn (#11)
+bins_note(){  # запомнить теги сборки (из BUILDINFO) вместе с суммами файлов: --version не всегда показывает тег релиза
+  local bi=$1 tg tt
+  rm -f "$DD/.binsver"
+  [ -f "$bi" ] || return 0
+  tg=$(awk '$1=="amneziawg-go" {print $3; exit}' "$bi"); tt=$(awk '$1=="amneziawg-tools" {print $3; exit}' "$bi")
+  [[ $tg =~ ^v[0-9][0-9.]*$ ]] && [[ $tt =~ ^v[0-9][0-9.]*$ ]] || return 0
+  printf 'amneziawg-go %s %s\nawg %s %s\n' "$tg" "$(sha256sum "$DD/amneziawg-go" | cut -d' ' -f1)" "$tt" "$(sha256sum "$DD/awg" | cut -d' ' -f1)" > "$DD/.binsver"
+}
+bins_ver(){  # bins_ver amneziawg-go|awg — тег установленной сборки: из .binsver, если сумма файла совпала, иначе из --version
+  local v sum
+  if [ -f "$DD/.binsver" ]; then
+    read -r v sum < <(awk -v n="$1" '$1==n {print $2, $3; exit}' "$DD/.binsver")
+    [ -n "$sum" ] && [ "$sum" = "$(sha256sum "$DD/$1" 2>/dev/null | cut -d' ' -f1)" ] && { echo "$v"; return; }
+  fi
+  "$DD/$1" --version 2>&1 | grep -o 'v[0-9][0-9.]*' | head -n1
+}
+bins_latest(){  # bins_latest amneziawg-go|amneziawg-tools — последний релиз (или самый свежий тег) в github.com/amnezia-vpn
+  local r=$1 tag
+  tag=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$r/releases/latest" 2>/dev/null \
+    | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  [ -n "$tag" ] || tag=$(curl -fsSL -m 20 "https://api.github.com/repos/amnezia-vpn/$r/tags?per_page=30" 2>/dev/null \
+    | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
+  [[ $tag =~ ^v[0-9][0-9.]*$ ]] && echo "$tag"
+}
+do_bins_check(){  # код 0 — актуально, 10 — есть новее, 1 — не удалось узнать
+  local ig it lg lt rc=0
+  ig=$(bins_ver amneziawg-go); it=$(bins_ver awg)
+  lg=$(bins_latest amneziawg-go); lt=$(bins_latest amneziawg-tools)
+  if [ -z "$lg" ] || [ -z "$lt" ]; then err "не удалось узнать последние версии на github.com/amnezia-vpn"; return 1; fi
+  for x in "amneziawg-go|${ig:-нет}|$lg" "awg (amneziawg-tools)|${it:-нет}|$lt"; do
+    IFS='|' read -r n i l <<< "$x"
+    if [ "$i" = нет ]; then warn "$n: версию установленного файла определить не удалось (последний релиз $l)"
+    elif [ "$i" = "$l" ]; then ok "$n: $i — последняя версия"
+    elif [ "$(printf '%s\n%s\n' "$i" "$l" | sort -V | tail -n1)" = "$l" ]; then warn "$n: установлена $i, есть $l"; rc=10
+    else info "$n: установлена $i (новее последнего релиза $l)"; fi
+  done
+  [ $rc = 10 ] && hint "обновить: $DD/install.sh --bins-update (сборка на вашем VPS) или --bins-update ПАПКА (готовые файлы с SHA256SUMS)"
+  return $rc
+}
+tun_hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+bins_live(){ local t a; for t in $(list_tunnels); do a=$(tun_hs_age "$t"); [ "$a" -ge 0 ] 2>/dev/null && [ "$a" -le 180 ] && printf ' %s' "$t"; done; }
+bins_apply(){  # bins_apply "ТУННЕЛИ" — пересоздать туннели на новых бинарниках; если туннель из списка (был handshake) его не получил — вернуть *.prev
+  local before=$1 t a bad="" i
+  info "перезапускаю туннели на новых бинарниках (несколько секунд без PBR-трафика, kill-switch держит, утечки нет)…"
+  for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1 || bad="$bad $t"; done
+  systemctl restart awg-failover 2>/dev/null     # вернёт маршруты и начнёт проверки, а они вызывают handshake
+  [ -n "$bad" ] && err "не поднялись:$bad"
+  for i in $(seq 1 "${BINS_WAIT:-30}"); do
+    bad=""; for t in $before; do a=$(tun_hs_age "$t"); { [ "$a" -ge 0 ] && [ "$a" -le 180 ]; } 2>/dev/null || bad="$bad $t"; done
+    [ -z "$bad" ] && break; sleep 2
+  done
+  if [ -n "$bad" ]; then
+    err "на новых бинарниках нет handshake:$bad — возвращаю прежние"
+    if [ -f "$DD/awg.prev" ] && [ -f "$DD/amneziawg-go.prev" ]; then
+      cp -p "$DD/awg.prev" "$DD/awg" && cp -p "$DD/amneziawg-go.prev" "$DD/amneziawg-go"
+      for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1; done
+      systemctl restart awg-failover 2>/dev/null
+      ok "вернул прежние: $("$DD/awg" --version 2>&1 | head -1)"
+    else
+      err "прежних файлов (*.prev) нет, откатить нечем"
+    fi
+    return 1
+  fi
+  ok "туннели работают на новых бинарниках:${before:- (handshake до обновления не было ни у одного туннеля)}"
+}
+do_bins_update(){  # do_bins_update [ПАПКА] — из папки с SHA256SUMS или сборкой на своём VPS
+  local src=${1:-} t=$WORK/bin lg lt before
+  title "Обновление бинарников AmneziaWG"
+  before=$(bins_live)
+  if [ -z "$src" ]; then
+    lg=$(bins_latest amneziawg-go); lt=$(bins_latest amneziawg-tools)
+    [ -z "$lg" ] || [ -z "$lt" ] && die "не удалось узнать последние версии на github.com/amnezia-vpn"
+    AWG_GO_REF=$lg; AWG_TOOLS_REF=$lt
+    rm -rf "$t"; mkdir -p "$t"
+    get_kit; bins_build_on_vps "$t" || die "сборка на VPS не удалась; можно собрать вручную и указать папку: --bins-update ПАПКА"
+    src=$t
+  fi
+  bins_install_from "$src" || die "бинарники не установлены"
+  bins_apply "$before" || die "обновление отменено, работают прежние бинарники"
+  write_manifest
 }
 step_bins(){
   title "Бинарники AmneziaWG (amneziawg-go и awg)"
@@ -1917,7 +2002,7 @@ main(){
   done
   set -- "${ARGS[@]}"
   [ -n "${CHANNEL_SET:-}" ] && [ $# -eq 0 ] && set -- --update     # install.sh --channel beta — сменить канал и обновиться
-  case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest) ;; *) open_tty;; esac
+  case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest|--bins-check) ;; *) open_tty;; esac
   case "${1:-}" in
     --update)       need_root; do_update;;
     --web)          need_root; [ -f "$DD/awg.env" ] || die "сначала установите набор: запустите install.sh без ключей"; get_kit; install_files; step_web;;
@@ -1927,6 +2012,8 @@ main(){
     --dry-run|--plan) plan;;
     --verify)       do_verify;;
     --self-update)  need_root; do_selfupdate;;
+    --bins-check)   do_bins_check;;
+    --bins-update)  need_root; do_bins_update "${2:-}";;
     --rotate-keys)  need_root; get_kit; do_rotate_keys "$2";;
     --harden-vps)   need_root; get_kit; vps_harden;;
     --uninstall)    need_root; do_uninstall;;

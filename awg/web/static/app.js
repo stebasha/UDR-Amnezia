@@ -1958,6 +1958,24 @@
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
       } catch (e) { err(e); }
     }));
+    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11)
+    const bup = el('div');
+    const bchk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить AmneziaWG'));
+    bchk.addEventListener('click', () => busy(bchk, async () => {
+      try {
+        const b = await api('/api/bins/check', { force: true });
+        const row = (x) => el('li', null, el('b', null, x.name), ': ' + (x.installed || T('версия не определяется')) + ' → ',
+          x.state === 'unknown' ? T('релиз не узнать') : x.state === 'ok' ? T('последняя ') + x.latest : el('b', null, x.latest), ' ',
+          el('span', { class: 'muted small' }, '(' + x.repo + ')'));
+        const list = el('ul', { class: 'small blist' }, b.items.map(row));
+        replace(bup, b.items.some((x) => x.state === 'unknown')
+          ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последние релизы на github.com/amnezia-vpn (GitHub недоступен с роутера?)'), list))
+          : b.update
+            ? el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Есть новые официальные релизы AmneziaWG.'), list,
+              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd))))
+            : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Бинарники AmneziaWG актуальны.'), list)));
+      } catch (e) { err(e); }
+    }));
     const kv = (rows) => el('dl', { class: 'kv' }, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)]));
     const exp = el('button', { class: 'btn' }, icon('download', 'sm'), T('Экспорт настроек'));
     exp.addEventListener('click', async () => {
@@ -1979,7 +1997,7 @@
     add(body, [
       el('div', { class: 'grid g-2e' },
         card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')], [T('Канал обновлений'), chSel]]),
-          el('div', { class: 'spacer' }), upd, log), { icon: 'info', foot: chk }),
+          el('div', { class: 'spacer' }), upd, bup, log), { icon: 'info', foot: [chk, bchk] }),
         card(T('Перенос настроек'), el('div', null, el('p', { class: 'muted small' }, T('Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.'))),
           { icon: 'archive', foot: [exp, imp] }))]);
   }

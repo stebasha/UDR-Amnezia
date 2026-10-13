@@ -157,6 +157,48 @@ t "недопустимая ветка отклонена" '( AWG_REF=""; AWG_CH
 AWG_CHANNEL=beta; AWG_BRANCH=main; write_channel
 t "канал записывается с AWG_CHANNEL" 'grep -qx "AWG_CHANNEL=beta" "$DD/.channel" && grep -qx "AWG_BRANCH=main" "$DD/.channel"'
 
+# --- 1.5 (#11): проверка и обновление бинарников из официальных релизов amnezia-vpn
+BS=$T/binstub; HS=$T/hs; mkdir -p "$BS" "$HS" "$T/nb"; export HS
+cat > "$BS/curl" <<'C'
+#!/bin/bash
+url=""; for a; do case "$a" in http*) url=$a;; esac; done
+[ -e "$HS/offline" ] && exit 6
+case "$url" in
+  */amnezia-vpn/amneziawg-go/releases/latest) printf '{\n  "url": "x",\n  "tag_name": "v0.2.16",\n  "name": "v0.2.16"\n}\n';;
+  */amnezia-vpn/amneziawg-tools/releases/latest) exit 22;;
+  */amnezia-vpn/amneziawg-tools/tags*) printf '[\n  {\n    "name": "v1.0.20250706"\n  },\n  {\n    "name": "v1.0.20250901"\n  },\n  {\n    "name": "evil;rm"\n  }\n]\n';;
+  *) exit 22;;
+esac
+C
+mkbin(){  # mkbin ФАЙЛ ВЕРСИЯ [broken]
+  printf '#!/bin/bash\n# %s\ncase "$1" in --version) echo "%s %s";; show) f=$HS/$2; if [ -f "$f" ]; then echo "peer $(cat "$f")"; else echo "peer 0"; fi;; esac\n' "${3:-good}" "$(basename "$1")" "$2" > "$1"; chmod 755 "$1"; }
+mkbin "$DD/awg" v1.0.20240213; mkbin "$DD/amneziawg-go" v0.2.12
+cat > "$DD/up.sh" <<'U'
+#!/bin/bash
+if grep -q '^# broken' "$DD/amneziawg-go"; then rm -f "$HS/$1"; else date +%s > "$HS/$1"; fi
+U
+chmod 755 "$BS/curl" "$DD/up.sh"
+printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"
+t "bins: версия из --version" '[ "$(bins_ver amneziawg-go)" = v0.2.12 ] && [ "$(bins_ver awg)" = v1.0.20240213 ]'
+t "bins: последний релиз и самый свежий тег без мусора" '[ "$(PATH="$BS:$PATH" bins_latest amneziawg-go)" = v0.2.16 ] && [ "$(PATH="$BS:$PATH" bins_latest amneziawg-tools)" = v1.0.20250901 ]'
+t "bins-check: есть новее → код 10" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1; [ $? = 10 ])'
+touch "$HS/offline"
+t "bins-check: GitHub недоступен → код 1" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1; [ $? = 1 ])'
+rm -f "$HS/offline"
+mkbin "$T/nb/awg" "v1.0.20250901-dirty"; mkbin "$T/nb/amneziawg-go" "0.0.0"
+( cd "$T/nb" && sha256sum amneziawg-go awg > SHA256SUMS && printf 'amneziawg-go   https://github.com/amnezia-vpn/amneziawg-go   v0.2.16 (abc)\namneziawg-tools https://github.com/amnezia-vpn/amneziawg-tools v1.0.20250901 (def)\n' > BUILDINFO )
+date +%s > "$HS/awgmain"            # до обновления handshake есть только у основного
+t "bins: туннели с handshake до обновления" '[ "$(bins_live)" = " awgmain" ]'
+t "bins: установка из папки с SHA256SUMS" 'bins_install_from "$T/nb" >/dev/null 2>&1 && [ -f "$DD/awg.prev" ] && grep -q v0.2.12 "$DD/amneziawg-go.prev"'
+t "bins: тег сборки из BUILDINFO, а не из --version" '[ "$(bins_ver amneziawg-go)" = v0.2.16 ] && [ "$(bins_ver awg)" = v1.0.20250901 ]'
+t "bins-check: после обновления актуально → код 0" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1)'
+t "bins: handshake на новых → без отката" 'BINS_WAIT=3 bins_apply " awgmain" >/dev/null 2>&1 && grep -q v0.2.16 "$DD/.binsver" && ! grep -q "^# broken" "$DD/amneziawg-go"'
+mkbin "$T/nb/amneziawg-go" "0.0.1" broken; ( cd "$T/nb" && sha256sum amneziawg-go awg > SHA256SUMS )
+bins_install_from "$T/nb" >/dev/null 2>&1
+t "bins: нет handshake на новых → откат на прежние" '! BINS_WAIT=3 bins_apply " awgmain" >/dev/null 2>&1 && ! grep -q "^# broken" "$DD/amneziawg-go" && [ -f "$HS/awgmain" ]'
+echo "подмена" >> "$T/nb/awg"
+t "bins: сумма не совпала → не ставится" '! bins_install_from "$T/nb" >/dev/null 2>&1 && ! grep -q подмена "$DD/awg"'
+
 # --- удаление
 ipset(){ :; }
 printf 'д\n' >/dev/null

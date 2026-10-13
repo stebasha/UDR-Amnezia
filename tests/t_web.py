@@ -368,6 +368,20 @@ def main():
         s, j = a.post("/api/update/check", {})
         check("проверка обновлений: stable без релизов → ветка main", s == 200 and j["channel"] == "stable" and j["ref"] == "main" and j["kind"] == "branch"
               and "AWG_CHANNEL=stable" in j["cmd"], j)
+        s, j = a.post("/api/bins/check", {"force": True})
+        check("бинарники: GitHub недоступен → неизвестно, без ложного «обновить»", s == 200 and not j["update"] and all(x["state"] == "unknown" for x in j["items"]), j)
+        open(os.path.join(LAB, "stub", "gh"), "w").close()
+        s, j = a.post("/api/bins/check", {"force": True})
+        it = {x["name"]: x for x in j.get("items", [])}
+        check("бинарники: amneziawg-go устарел, awg актуален (тег из списка без мусора)", s == 200 and j["update"]
+              and it["amneziawg-go"]["state"] == "update" and it["amneziawg-go"]["latest"] == "v3.1.20260901"
+              and it["awg"]["state"] == "ok" and it["awg"]["installed"] == "v3.1.20260812" and "--bins-update" in j["cmd"], j)
+        go = os.path.join(dd, "amneziawg-go")
+        with open(os.path.join(dd, ".binsver"), "w") as f:
+            f.write("amneziawg-go v3.1.20260901 %s\n" % hashlib.sha256(open(go, "rb").read()).hexdigest())
+        s, j = a.post("/api/bins/check", {})
+        check("бинарники: тег сборки из .binsver (сумма совпала)", s == 200 and not j["update"] and j["items"][0]["installed"] == "v3.1.20260901", j)
+        os.remove(os.path.join(LAB, "stub", "gh")); os.remove(os.path.join(dd, ".binsver"))
         s, j = a.post("/api/update/run", {})
         check("обновление запускается отдельной службой", s == 200 and "awg-update" in open(os.path.join(LAB, "systemd-run.log")).read(), j)
         s, j = a.get("/api/update/log")
