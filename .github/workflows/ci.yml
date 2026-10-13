@@ -49,11 +49,17 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container: debian:bullseye
     timeout-minutes: 40
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
       - name: 'Пакеты как на роутере — bash, python3, openssl, curl'
         run: |
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends ca-certificates git python3 openssl curl procps iproute2 iptables hostname util-linux >/dev/null
+          # Debian 11 после окончания LTS переезжает в archive.debian.org — тогда берём пакеты оттуда
+          if ! apt-get update -qq; then
+            sed -i -e 's|deb.debian.org|archive.debian.org|g' -e 's|security.debian.org|archive.debian.org|g' -e '/bullseye-updates/d' /etc/apt/sources.list
+            apt-get -o Acquire::Check-Valid-Until=false update -qq
+          fi
+          apt-get install -y -qq --no-install-recommends ca-certificates git python3 openssl curl procps iproute2 iptables hostname util-linux
           uname -m; python3 --version
       - uses: actions/checkout@v4
       - name: Тесты на заглушках (aarch64)
