@@ -15,6 +15,10 @@
 #         --dry-run         показать, что есть на роутере и что сделает мастер (ничего не меняет)
 #         --verify          сверить файлы установки с манифестом
 #         --self-update     обновить сам install.sh (проверка sha256)
+#         --bins-check      сравнить amneziawg-go и awg с последними официальными релизами amnezia-vpn
+#         --bins-update [ПАПКА]   обновить их: сборка на своём VPS или готовые файлы с SHA256SUMS; без handshake — откат
+#         --channel stable|beta|ВЕТКА   сменить канал обновлений и обновиться: stable — релизы (по умолчанию),
+#                           beta — ветка main, ВЕТКА — своя ветка (можно вместе с --update)
 #         --record ФАЙЛ     записать ответы мастера (секреты и конфиги не записываются)
 #         --answers ФАЙЛ    повторить мастер по записанным ответам
 #         --rotate-keys [туннель]   сменить ключи туннеля до своего VPS
@@ -22,15 +26,28 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.4.3
-__AWG_NEW=1   # метка нового установщика (см. «площадки» ниже)
-# ветка и репозиторий, с которых ставились (install.sh --update и панель обновляются оттуда же)
-if [ -r "${DD:-/data/awg}/.channel" ]; then
-  [ -n "${AWG_REPO:-}" ] || AWG_REPO=$(sed -n 's/^AWG_REPO=//p' "${DD:-/data/awg}/.channel" | head -n1)
-  [ -n "${AWG_BRANCH:-}" ] || AWG_BRANCH=$(sed -n 's/^AWG_BRANCH=//p' "${DD:-/data/awg}/.channel" | head -n1)
+INSTALLER_VERSION=1.5.0
+# Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
+#   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
+#   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
+#   branch — своя ветка AWG_BRANCH (для проверки изменений до слияния).
+# Явные AWG_CHANNEL / AWG_BRANCH в окружении важнее файла; AWG_BRANCH=main без AWG_CHANNEL — это beta.
+_ch_f="${DD:-/data/awg}/.channel"; _ch_repo=""; _ch_chan=""; _ch_br=""
+if [ -r "$_ch_f" ]; then
+  _ch_repo=$(sed -n 's/^AWG_REPO=//p' "$_ch_f" | head -n1)
+  _ch_chan=$(sed -n 's/^AWG_CHANNEL=//p' "$_ch_f" | head -n1)
+  _ch_br=$(sed -n 's/^AWG_BRANCH=//p' "$_ch_f" | head -n1)
 fi
-AWG_REPO=${AWG_REPO:-stebasha/UDR-Amnezia}      # GitHub: владелец/репозиторий со скриптами (awg/, server/)
-AWG_BRANCH=${AWG_BRANCH:-main}
+AWG_REPO=${AWG_REPO:-${_ch_repo:-stebasha/UDR-Amnezia}}      # GitHub: владелец/репозиторий со скриптами (awg/, server/)
+if [ -n "${AWG_CHANNEL:-}" ]; then :
+elif [ -n "${AWG_BRANCH:-}" ]; then [ "$AWG_BRANCH" = main ] && AWG_CHANNEL=beta || AWG_CHANNEL=branch
+elif [ -n "$_ch_chan" ]; then AWG_CHANNEL=$_ch_chan
+elif [ -n "$_ch_br" ] && [ "$_ch_br" != main ]; then AWG_CHANNEL=branch      # .channel до 1.5: своя ветка
+else AWG_CHANNEL=stable; fi
+case "$AWG_CHANNEL" in stable|beta|branch) ;; *) AWG_CHANNEL=stable;; esac
+AWG_BRANCH=${AWG_BRANCH:-${_ch_br:-main}}
+[ "$AWG_CHANNEL" = beta ] && AWG_BRANCH=main
+AWG_REF=${AWG_REF:-}; AWG_REF_KIND=${AWG_REF_KIND:-}   # тег релиза или ветка: вычисляет resolve_ref
 # Бинарники AmneziaWG собираются только из официальных исходников AmneziaVPN (теги можно поменять здесь):
 #   https://github.com/amnezia-vpn/amneziawg-go  и  https://github.com/amnezia-vpn/amneziawg-tools
 AWG_GO_REF=${AWG_GO_REF:-v3.1.20260828}
@@ -145,7 +162,7 @@ read_paste(){ # read_paste ФАЙЛ — многострочный ввод до
 
 
 # ---------------------------------------------------------------- утилиты --
-is_ipv4(){ local IFS=.; local -a o; local x; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; o=($1); for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
+is_ipv4(){ local -a o; local x; [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1; IFS=. read -r -a o <<< "$1"; for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
 conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); split(line,a,"="); key=a[1]; gsub(/[ \t]/,"",key) } tolower(key)==k { sub(/^[^=]*=[ \t]*/,"",line); print line; exit }' "$1"; }
 resolve(){
   is_ipv4 "$1" && { echo "$1"; return; }
@@ -269,7 +286,8 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/bot.py awg/web/panel.py awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
+ awg/drift.sh awg/vps.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/awgweb/__init__.py awg/web/awgweb/account.py awg/web/awgweb/api.py awg/web/awgweb/backups.py awg/web/awgweb/clients.py awg/web/awgweb/configs.py awg/web/awgweb/core.py awg/web/awgweb/data.py awg/web/awgweb/importer.py awg/web/awgweb/server.py awg/web/awgweb/settings.py awg/web/awgweb/speed.py awg/web/awgweb/tools.py awg/web/awgweb/tunnels.py awg/web/awgweb/update.py awg/web/awgweb/vps.py awg/web/awgweb/webconf.py
+ awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
 kit_missing(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || printf '%s ' "$f"; done; }
@@ -281,8 +299,9 @@ get_kit(){
   local a p
   while :; do
     mkdir -p "$WORK"; rm -rf "$WORK/kit"; mkdir -p "$WORK/kit"
-    info "скачиваю $AWG_REPO ($AWG_BRANCH)…"
-    if curl -fsSL -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_BRANCH.tar.gz" -o "$WORK/kit.tgz" && tar xzf "$WORK/kit.tgz" -C "$WORK/kit" 2>/dev/null; then
+    resolve_ref || { err "не удалось определить версию для скачивания"; AWG_REF=""; }
+    info "скачиваю $AWG_REPO: $(ref_label)…"
+    if [ -n "$AWG_REF" ] && fetch_kit_archive "$WORK/kit.tgz" && tar xzf "$WORK/kit.tgz" -C "$WORK/kit" 2>/dev/null; then
       p=$(find "$WORK/kit" -path '*/awg/failover.sh' | head -1)
       if [ -n "$p" ] && kit_ok "$(dirname "$(dirname "$p")")"; then KIT=$(dirname "$(dirname "$p")"); ok "скрипты скачаны"; kit_verify; return; fi
       err "в архиве нет нужных файлов: $(kit_missing "$(dirname "$(dirname "${p:-$WORK/kit/x/awg/x}")")")"
@@ -293,16 +312,53 @@ get_kit(){
     choose a "Что делать?" "Повторить" "Указать папку с репозиторием на роутере" "Указать другой репозиторий (владелец/имя)" "Выйти"
     case $a in
       2) ask p "Путь к папке (в ней должны быть awg/ и server/)" ""; kit_ok "$p" && { KIT=$p; ok "беру скрипты из $KIT"; kit_verify; return; }; err "в $p нет нужных файлов";;
-      3) ask AWG_REPO "Репозиторий" "$AWG_REPO"; ask AWG_BRANCH "Ветка" "$AWG_BRANCH";;
+      3) ask AWG_REPO "Репозиторий" "$AWG_REPO"; ask AWG_BRANCH "Ветка" "$AWG_BRANCH"; AWG_CHANNEL=branch; AWG_REF="";;
       4) exit 1;;
     esac
   done
+}
+# ---- канал обновлений: тег релиза (stable) или ветка (beta/branch)
+valid_ref(){ [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_./-]{0,99}$ ]] && [[ $1 != *..* ]]; }
+resolve_ref(){
+  [ -n "$AWG_REF" ] && return 0
+  case "$AWG_CHANNEL" in
+    stable)
+      AWG_REF=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$AWG_REPO/releases/latest" 2>/dev/null \
+        | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+      if [ -n "$AWG_REF" ] && valid_ref "$AWG_REF"; then AWG_REF_KIND=tag
+      else warn "релиз в $AWG_REPO не найден (или GitHub API недоступен) — беру ветку main"; AWG_REF=main; AWG_REF_KIND=branch; fi;;
+    beta)   AWG_REF=main; AWG_REF_KIND=branch;;
+    branch) AWG_REF=$AWG_BRANCH; AWG_REF_KIND=branch;;
+  esac
+  valid_ref "$AWG_REF" || { err "недопустимое имя ветки или тега: $AWG_REF"; AWG_REF=""; return 1; }
+}
+ref_label(){ case "$AWG_REF_KIND" in tag) echo "релиз $AWG_REF (канал stable)";; *) echo "ветка $AWG_REF (канал $AWG_CHANNEL)";; esac; }
+fetch_kit_archive(){  # fetch_kit_archive ФАЙЛ — релиз: архив + SHA256SUMS со сверкой; ветка: архив GitHub
+  local out=$1 base name want have
+  if [ "$AWG_REF_KIND" = tag ]; then
+    base="https://github.com/$AWG_REPO/releases/download/$AWG_REF"; name="udr-amnezia-$AWG_REF.tar.gz"
+    curl -fsSL -m 120 "$base/$name" -o "$out" || { err "нет архива $name в релизе $AWG_REF"; return 1; }
+    want=$(curl -fsSL -m 30 "$base/SHA256SUMS" 2>/dev/null | awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}')
+    have=$(sha256sum "$out" | cut -d' ' -f1)
+    [ -n "$want" ] || { err "в релизе $AWG_REF нет SHA256SUMS для $name: архив не устанавливаю"; rm -f "$out"; return 1; }
+    [ "$want" = "$have" ] || { err "контрольная сумма архива НЕ совпала (ожидалась $want, получена $have): не устанавливаю"; rm -f "$out"; return 1; }
+    ok "контрольная сумма архива релиза совпала"
+  else
+    curl -fsSL -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_REF.tar.gz" -o "$out"
+  fi
+}
+write_channel(){
+  case "$AWG_REPO$AWG_BRANCH" in *[!A-Za-z0-9_./-]*) return 0;; esac
+  printf 'AWG_REPO=%s\nAWG_CHANNEL=%s\nAWG_BRANCH=%s\n' "$AWG_REPO" "$AWG_CHANNEL" "$AWG_BRANCH" > "$DD/.channel"
 }
 kit_verify(){
   local f bad=0
   for f in "$KIT"/awg/*.sh "$KIT"/server/*.sh; do bash -n "$f" 2>/dev/null || { err "синтаксическая ошибка в $f"; bad=1; }; done
   if command -v python3 >/dev/null && [ -f "$KIT/awg/web/panel.py" ]; then
-    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$KIT/awg/web/panel.py" 2>/dev/null || { err "синтаксическая ошибка в awg/web/panel.py"; bad=1; }
+    for f in "$KIT/awg/web/panel.py" "$KIT"/awg/web/awgweb/*.py; do
+      [ -f "$f" ] || continue
+      python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$f" 2>/dev/null || { err "синтаксическая ошибка в ${f#"$KIT"/}"; bad=1; }
+    done
   fi
   [ $bad = 0 ] && ok "скрипты прошли проверку синтаксиса" || die "скрипты повреждены, скачайте заново."
   [ -f "$KIT/VERSION" ] && info "версия набора: $(cat "$KIT/VERSION")"
@@ -319,8 +375,19 @@ install_files(){
   if [ -d "$KIT/awg/web" ]; then
     mkdir -p "$DD/web/static"; chmod 700 "$DD/web"
     put "$KIT/awg/web/panel.py" "$DD/web/panel.py"; chmod 700 "$DD/web/panel.py"
+    # код панели по модулям (#18): web/awgweb/*.py
+    if [ -d "$KIT/awg/web/awgweb" ]; then
+      mkdir -p "$DD/web/awgweb"; chmod 700 "$DD/web/awgweb"
+      for f in "$KIT"/awg/web/awgweb/*.py; do [ -f "$f" ] && put "$f" "$DD/web/awgweb/$(basename "$f")"; done
+      chmod 600 "$DD"/web/awgweb/*.py; rm -rf "$DD/web/awgweb/__pycache__"
+    fi
     for f in "$KIT"/awg/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
     chmod 644 "$DD"/web/static/*
+  fi
+  # скрипты для своего VPS: панель и vps.sh передают их на сервер (#13)
+  if [ -d "$KIT/server" ]; then
+    mkdir -p "$DD/server"; chmod 700 "$DD/server"
+    for f in vps-rotate.sh audit-server.sh awg-server-build.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
   fi
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh" "$DD/bot.sh"
   chmod 644 "$DD"/*.service
@@ -330,7 +397,7 @@ install_files(){
   elif [ -f "$0" ] && [ "$(basename "$0")" = install.sh ] && ! [ "$0" -ef "$DD/install.sh" ]; then put "$0" "$DD/install.sh"; fi
   [ -f "$DD/install.sh" ] && chmod 755 "$DD/install.sh"
   [ -f "$KIT/VERSION" ] && put "$KIT/VERSION" "$DD/VERSION"
-  case "$AWG_REPO$AWG_BRANCH" in *[!A-Za-z0-9_./-]*) ;; *) printf 'AWG_REPO=%s\nAWG_BRANCH=%s\n' "$AWG_REPO" "$AWG_BRANCH" > "$DD/.channel";; esac
+  write_channel
   ensure_aliases
   write_manifest
   touch "$DD/.installer"
@@ -371,6 +438,7 @@ bins_install_from(){  # bins_install_from ПАПКА — найти amneziawg-go
     rm -f "$DD/amneziawg-go.new" "$DD/awg.new"; return 1
   fi
   mv -f "$DD/amneziawg-go.new" "$DD/amneziawg-go"; mv -f "$DD/awg.new" "$DD/awg"
+  bins_note "$(dirname "$fa")/BUILDINFO"
   ok "установлены: $("$DD/awg" --version 2>&1 | head -1); $("$DD/amneziawg-go" --version 2>&1 | head -1)"
   info "sha256: $(sha256sum "$DD/amneziawg-go" | cut -c1-16)… (amneziawg-go), $(sha256sum "$DD/awg" | cut -c1-16)… (awg)"
   [ -f "$DD/awg.prev" ] && hint "прежние версии сохранены: $DD/awg.prev, $DD/amneziawg-go.prev"
@@ -389,13 +457,95 @@ bins_build_on_vps(){  # сборка из официальных исходни�
   ok "файлы перенесены с VPS"
 }
 bins_manual_help(){
-  local base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH/server"
+  local base; resolve_ref || return 1; base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF/server"
   say "  На любом компьютере или сервере с Ubuntu/Debian (x86_64 или arm64, подойдёт и WSL), под root:"
   say "${C}    curl -fsSL $base/awg-build-router.sh -o awg-build-router.sh"
   say "    AWG_GO_REF=$AWG_GO_REF AWG_TOOLS_REF=$AWG_TOOLS_REF bash awg-build-router.sh"
   say "    ssh root@$(lan_ip) mkdir -p /tmp/awgbin && scp /root/awgbuild/router/* root@$(lan_ip):/tmp/awgbin/${N}"
   say "  Скрипт клонирует только github.com/amnezia-vpn/amneziawg-go и amneziawg-tools, собирает статические файлы под arm64"
   say "  и пишет SHA256SUMS; установщик сверит суммы. Затем выберите пункт «Папка на роутере» → /tmp/awgbin."
+}
+# ---- проверка и обновление бинарников из официальных релизов amnezia-vpn (#11)
+bins_note(){  # запомнить теги сборки (из BUILDINFO) вместе с суммами файлов: --version не всегда показывает тег релиза
+  local bi=$1 tg tt
+  rm -f "$DD/.binsver"
+  [ -f "$bi" ] || return 0
+  tg=$(awk '$1=="amneziawg-go" {print $3; exit}' "$bi"); tt=$(awk '$1=="amneziawg-tools" {print $3; exit}' "$bi")
+  [[ $tg =~ ^v[0-9][0-9.]*$ ]] && [[ $tt =~ ^v[0-9][0-9.]*$ ]] || return 0
+  printf 'amneziawg-go %s %s\nawg %s %s\n' "$tg" "$(sha256sum "$DD/amneziawg-go" | cut -d' ' -f1)" "$tt" "$(sha256sum "$DD/awg" | cut -d' ' -f1)" > "$DD/.binsver"
+}
+bins_ver(){  # bins_ver amneziawg-go|awg — тег установленной сборки: из .binsver, если сумма файла совпала, иначе из --version
+  local v sum
+  if [ -f "$DD/.binsver" ]; then
+    read -r v sum < <(awk -v n="$1" '$1==n {print $2, $3; exit}' "$DD/.binsver")
+    [ -n "$sum" ] && [ "$sum" = "$(sha256sum "$DD/$1" 2>/dev/null | cut -d' ' -f1)" ] && { echo "$v"; return; }
+  fi
+  "$DD/$1" --version 2>&1 | grep -o 'v[0-9][0-9.]*' | head -n1
+}
+bins_latest(){  # bins_latest amneziawg-go|amneziawg-tools — последний релиз (или самый свежий тег) в github.com/amnezia-vpn
+  local r=$1 tag
+  tag=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$r/releases/latest" 2>/dev/null \
+    | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  [ -n "$tag" ] || tag=$(curl -fsSL -m 20 "https://api.github.com/repos/amnezia-vpn/$r/tags?per_page=30" 2>/dev/null \
+    | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
+  [[ $tag =~ ^v[0-9][0-9.]*$ ]] && echo "$tag"
+}
+do_bins_check(){  # код 0 — актуально, 10 — есть новее, 1 — не удалось узнать
+  local ig it lg lt rc=0
+  ig=$(bins_ver amneziawg-go); it=$(bins_ver awg)
+  lg=$(bins_latest amneziawg-go); lt=$(bins_latest amneziawg-tools)
+  if [ -z "$lg" ] || [ -z "$lt" ]; then err "не удалось узнать последние версии на github.com/amnezia-vpn"; return 1; fi
+  for x in "amneziawg-go|${ig:-нет}|$lg" "awg (amneziawg-tools)|${it:-нет}|$lt"; do
+    IFS='|' read -r n i l <<< "$x"
+    if [ "$i" = нет ]; then warn "$n: версию установленного файла определить не удалось (последний релиз $l)"
+    elif [ "$i" = "$l" ]; then ok "$n: $i — последняя версия"
+    elif [ "$(printf '%s\n%s\n' "$i" "$l" | sort -V | tail -n1)" = "$l" ]; then warn "$n: установлена $i, есть $l"; rc=10
+    else info "$n: установлена $i (новее последнего релиза $l)"; fi
+  done
+  [ $rc = 10 ] && hint "обновить: $DD/install.sh --bins-update (сборка на вашем VPS) или --bins-update ПАПКА (готовые файлы с SHA256SUMS)"
+  return $rc
+}
+tun_hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+bins_live(){ local t a; for t in $(list_tunnels); do a=$(tun_hs_age "$t"); [ "$a" -ge 0 ] 2>/dev/null && [ "$a" -le 180 ] && printf ' %s' "$t"; done; }
+bins_apply(){  # bins_apply "ТУННЕЛИ" — пересоздать туннели на новых бинарниках; если туннель из списка (был handshake) его не получил — вернуть *.prev
+  local before=$1 t a bad="" i
+  info "перезапускаю туннели на новых бинарниках (несколько секунд без PBR-трафика, kill-switch держит, утечки нет)…"
+  for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1 || bad="$bad $t"; done
+  systemctl restart awg-failover 2>/dev/null     # вернёт маршруты и начнёт проверки, а они вызывают handshake
+  [ -n "$bad" ] && err "не поднялись:$bad"
+  for i in $(seq 1 "${BINS_WAIT:-30}"); do
+    bad=""; for t in $before; do a=$(tun_hs_age "$t"); { [ "$a" -ge 0 ] && [ "$a" -le 180 ]; } 2>/dev/null || bad="$bad $t"; done
+    [ -z "$bad" ] && break; sleep 2
+  done
+  if [ -n "$bad" ]; then
+    err "на новых бинарниках нет handshake:$bad — возвращаю прежние"
+    if [ -f "$DD/awg.prev" ] && [ -f "$DD/amneziawg-go.prev" ]; then
+      cp -p "$DD/awg.prev" "$DD/awg" && cp -p "$DD/amneziawg-go.prev" "$DD/amneziawg-go"
+      for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1; done
+      systemctl restart awg-failover 2>/dev/null
+      ok "вернул прежние: $("$DD/awg" --version 2>&1 | head -1)"
+    else
+      err "прежних файлов (*.prev) нет, откатить нечем"
+    fi
+    return 1
+  fi
+  ok "туннели работают на новых бинарниках:${before:- (handshake до обновления не было ни у одного туннеля)}"
+}
+do_bins_update(){  # do_bins_update [ПАПКА] — из папки с SHA256SUMS или сборкой на своём VPS
+  local src=${1:-} t=$WORK/bin lg lt before
+  title "Обновление бинарников AmneziaWG"
+  before=$(bins_live)
+  if [ -z "$src" ]; then
+    lg=$(bins_latest amneziawg-go); lt=$(bins_latest amneziawg-tools)
+    [ -z "$lg" ] || [ -z "$lt" ] && die "не удалось узнать последние версии на github.com/amnezia-vpn"
+    AWG_GO_REF=$lg; AWG_TOOLS_REF=$lt
+    rm -rf "$t"; mkdir -p "$t"
+    get_kit; bins_build_on_vps "$t" || die "сборка на VPS не удалась; можно собрать вручную и указать папку: --bins-update ПАПКА"
+    src=$t
+  fi
+  bins_install_from "$src" || die "бинарники не установлены"
+  bins_apply "$before" || die "обновление отменено, работают прежние бинарники"
+  write_manifest
 }
 step_bins(){
   title "Бинарники AmneziaWG (amneziawg-go и awg)"
@@ -522,7 +672,7 @@ bring_up_and_test(){  # bring_up_and_test ИНТЕРФЕЙС "описание" 
 }
 
 diag_tunnel(){  # diag_tunnel ИНТЕРФЕЙС [порт_на_своём_VPS]
-  local ifc=$1 srvport=$2 cf host port epip cap out in hs rx wan srvcap sin=-1 sout=-1
+  local ifc=$1 srvport=$2 cf host port epip cap out in hs rx wan sin=-1 sout=-1
   cf=$(conf_of "$ifc")
   check_conf "$DD/$cf" >/dev/null 2>&1
   host=${CONF_EP%:*}; host=${host#[}; host=${host%]}; port=${CONF_EP##*:}
@@ -595,7 +745,8 @@ router_key_to_vps(){  # создать ключ роутера (если нет)
 }
 ssh_master(){  # одно подключение с паролем на весь сеанс
   ssh -O check -p "$VPS_SSHPORT" -o "ControlPath=$CTL" "$VPS_USER@$VPS_IP" >/dev/null 2>&1 && return 0
-  ssh -fN -p "$VPS_SSHPORT" $( [ -f "$RKEY" ] && printf -- "-o IdentityFile=%s" "$RKEY") -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ControlMaster=yes -o "ControlPath=$CTL" -o ControlPersist=900 "$VPS_USER@$VPS_IP"
+  local k=(); [ -f "$RKEY" ] && k=(-o "IdentityFile=$RKEY")
+  ssh -fN -p "$VPS_SSHPORT" "${k[@]}" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -o ControlMaster=yes -o "ControlPath=$CTL" -o ControlPersist=900 "$VPS_USER@$VPS_IP"
 }
 vssh(){ ssh "${SSHO[@]}" "$VPS_USER@$VPS_IP" "$@"; }
 vput(){ scp -q "${SCPO[@]}" "$@" "$VPS_USER@$VPS_IP:/root/"; }
@@ -707,7 +858,7 @@ vps_setup(){  # vps_setup ИМЯ_КОНФИГА(main.conf|backup.conf) — 0 е�
 }
 
 vps_manual(){
-  local cfg=$1 base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH/server"
+  local cfg=$1 base; resolve_ref || return 1; base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF/server"
   title "Ручная настройка VPS"
   say "  Выполните на VPS под root:"
   say "${C}    curl -fsSL $base/awg-server-build.sh -o /root/awg-server-build.sh"
@@ -893,60 +1044,6 @@ subnet_candidates(){  # «интерфейс подсеть» для интер�
   done
 }
 
-
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-# --- площадка безопасного обновления (не удалять, не менять строки «: : :» выше) ----------------------
-# Установщики 1.0.0 и 1.1.0 при --update копировали новый install.sh поверх себя, пока bash его выполнял.
-# Закончив, старый bash читает новый файл с позиции, где кончался старый (64854/64855/76237/76238 байт).
-# Эти позиции попадают в строки «: : :» выше (команда «:» ничего не делает), а строка ниже завершает старый процесс.
-# В новом установщике переменная __AWG_NEW задана в начале, и эта строка ни на что не влияет.
-[ -n "${__AWG_NEW:-}" ] || { echo; echo "  Скрипты обновлены. Запустите установщик заново: /data/awg/install.sh"; exit 0; }
-
 legacy_subnet_check(){  # старые самодельные решения, которые делают то же самое
   local f u s
   for f in awg-keep.sh wgsrv-pbr.sh; do
@@ -1050,61 +1147,6 @@ tg_api(){  # tg_api МЕТОД [аргументы curl] — запрос к Tel
   done
   return 1
 }
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-: : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :
-# --- площадка безопасного обновления (не удалять, не менять строки «: : :» выше) ----------------------
-# Установщики 1.0.0 и 1.1.0 при --update копировали новый install.sh поверх себя, пока bash его выполнял.
-# Закончив, старый bash читает новый файл с позиции, где кончался старый (64854/64855/76237/76238 байт).
-# Эти позиции попадают в строки «: : :» выше (команда «:» ничего не делает), а строка ниже завершает старый процесс.
-# В новом установщике переменная __AWG_NEW задана в начале, и эта строка ни на что не влияет.
-[ -n "${__AWG_NEW:-}" ] || { echo; echo "  Скрипты обновлены. Запустите установщик заново: /data/awg/install.sh"; exit 0; }
 
 # Команды и без интерактивной оболочки (ssh роутер awgctl status, plink, cron): алиасы из .bashrc там не читаются.
 # Ссылки в /usr/local/bin; чужой файл с тем же именем не трогаем. После обновления прошивки их вернёт awg-restore.sh.
@@ -1160,9 +1202,6 @@ step_telegram(){
   svc_active awg-notify && ok "служба awg-notify запущена (события, контроль раз в минуту, отчёт в ${t:0:2}:${t:2:2})" || err "awg-notify не запустилась: journalctl -u awg-notify -n 20"
 }
 
-
-
-
 # ============================================================ службы и манифест =====
 # Список включённых служб ведём в $DD/.units: по нему awg-restore.sh возвращает службы после обновления прошивки.
 unit_mark(){ grep -qx "$1" "$DD/.units" 2>/dev/null || echo "$1" >> "$DD/.units"; }
@@ -1190,7 +1229,7 @@ valid_domain(){ [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([
 list_tunnels(){ echo "$MAIN $(env_get BACKUP) $(env_get TUNNELS_EXTRA)" | tr -s ' ' '\n' | grep -v '^$'; }
 
 write_manifest(){
-  ( cd "$DD" && sha256sum ./*.sh ./*.service ./web/panel.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
+  ( cd "$DD" && sha256sum ./*.sh ./*.service ./server/*.sh ./web/panel.py ./web/awgweb/*.py ./web/static/* 2>/dev/null | sed 's#\./##' > .manifest ); chmod 600 "$DD/.manifest" 2>/dev/null
 }
 do_verify(){
   title "Проверка файлов установки"
@@ -1214,7 +1253,9 @@ do_verify(){
 do_selfupdate(){
   title "Обновление самого установщика"
   [ -n "$AWG_REPO" ] || die "не задан репозиторий (переменная AWG_REPO в начале install.sh)."
-  local base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_BRANCH" tmp="$WORK/install.new" sha want have newv
+  local base tmp="$WORK/install.new" want have newv
+  resolve_ref || die "не удалось определить версию для скачивания"
+  base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF"
   mkdir -p "$WORK"
   curl -fsSL -m 60 "$base/install.sh" -o "$tmp" || die "не удалось скачать $base/install.sh"
   bash -n "$tmp" || die "скачанный файл не проходит проверку синтаксиса"
@@ -1250,7 +1291,7 @@ plan(){
   say; say "  ${B}Текущая установка${N}"
   if [ -f "$DD/awg.env" ]; then
     info "найдена: $DD (версия набора $(cat "$DD/VERSION" 2>/dev/null || echo ?)), туннели: $(list_tunnels | tr '\n' ' ')"
-    for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics; do
+    for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha; do
       [ -f "$SYSD/$u.service" ] && info "служба $u: $(systemctl is-active $u 2>/dev/null)"
     done
     n=$(pbr_rules | grep -c .); info "PBR-правил VPN Client: $n; таблица $(env_get TABLE), метка $(env_get MARK)"
@@ -1613,7 +1654,7 @@ do_rotate_keys(){
 }
 
 # ============================================================ мастер ======
-ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-web awg-motd"
+ALL_UNITS="awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha awg-web awg-motd"
 seed_units(){  # установки до 1.2.0 не вели список служб: заполняем по включённым юнитам
   local u
   [ -s "$DD/.units" ] && return 0
@@ -1624,7 +1665,7 @@ seed_units(){  # установки до 1.2.0 не вели список слу
 }
 disable_service(){
   local a u opts=() x
-  for x in awg-web awg-bot awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
+  for x in awg-web awg-bot awg-ha awg-metrics awg-notify awg-guard awg-self awg-subnets; do [ -f "$SYSD/$x.service" ] && opts+=("$x"); done
   [ ${#opts[@]} -gt 0 ] || { info "дополнительных служб не включено"; return 0; }
   choose a "Какую службу выключить?" "${opts[@]}" "Отмена"
   [ "$a" -gt ${#opts[@]} ] && return 0
@@ -1712,7 +1753,7 @@ summary(){
   local t u act=""; t=$(env_get TABLE)
   say "  Установлено в ${B}$DD${N}. Таблица PBR ${B}$t${N}, туннели: ${B}$(list_tunnels | tr '\n' ' ')${N}."
   [ -n "$(env_get EXTRA_SUBNETS)" ] && say "  Через туннель идут и клиенты VPN-сервера роутера: ${B}$(env_get EXTRA_SUBNETS)${N} (проверка: $DD/subnets.sh check)."
-  for u in awg-guard awg-self awg-bot awg-metrics awg-notify awg-web; do svc_active "$u" && act="$act ${u#awg-}"; done
+  for u in awg-guard awg-self awg-bot awg-ha awg-metrics awg-notify awg-web; do svc_active "$u" && act="$act ${u#awg-}"; done
   [ -n "$act" ] && say "  Включены службы:${B}$act${N}."
   svc_active awg-web && say "  Веб-панель: ${C}$(web_url)${N}"
   [ -x "$DD/status.sh" ] && "$DD/status.sh" -s | sed 's/^/  /'
@@ -1796,6 +1837,8 @@ update_rollback(){  # вернуть код и службы из копии, с�
   for f in "$tmp"/*.sh "$tmp"/*.service "$tmp"/VERSION; do [ -f "$f" ] && put "$f" "$DD/$(basename "$f")"; done
   if [ -d "$tmp/web" ]; then
     [ -f "$tmp/web/panel.py" ] && put "$tmp/web/panel.py" "$DD/web/panel.py"
+    for f in "$tmp"/web/awgweb/*.py; do [ -f "$f" ] && put "$f" "$DD/web/awgweb/$(basename "$f")"; done
+    rm -rf "$DD/web/awgweb/__pycache__"
     for f in "$tmp"/web/static/*; do [ -f "$f" ] && put "$f" "$DD/web/static/$(basename "$f")"; done
   fi
   chmod 755 "$DD"/*.sh 2>/dev/null
@@ -1814,7 +1857,7 @@ do_uninstall(){
   yn "Удалить службы, маршруты и правила AWG с роутера?" N || return
   local purge="" v u s; v=$(env_get VPS_IP 2>/dev/null)
   yn "Удалить и папку $DD с конфигами и ключами?" N && purge=--purge
-  for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets; do
+  for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets; do
     [ -f "$SYSD/$u.service" ] && { systemctl disable --now "$u" >/dev/null 2>&1; rm -f "$SYSD/$u.service"; }
   done
   systemctl daemon-reload
@@ -1969,11 +2012,15 @@ main(){
     case "$1" in
       --record)  [ $# -ge 2 ] || { echo "--record требует имя файла"; exit 1; }; RECORD_FILE=$2; shift 2;;
       --answers) [ $# -ge 2 ] || { echo "--answers требует имя файла"; exit 1; }; ANS_FILE=$2; shift 2;;
+      --channel) [ $# -ge 2 ] || { echo "--channel требует stable, beta или имя ветки"; exit 1; }
+                 case "$2" in stable|beta) AWG_CHANNEL=$2; [ "$2" = beta ] && AWG_BRANCH=main;; *) AWG_CHANNEL=branch; AWG_BRANCH=$2;; esac
+                 AWG_REF=""; CHANNEL_SET=1; shift 2;;
       *) ARGS+=("$1"); shift;;
     esac
   done
   set -- "${ARGS[@]}"
-  case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest) ;; *) open_tty;; esac
+  [ -n "${CHANNEL_SET:-}" ] && [ $# -eq 0 ] && set -- --update     # install.sh --channel beta — сменить канал и обновиться
+  case "${1:-}" in --status|--help|-h|--verify|--dry-run|--plan|--selftest|--bins-check) ;; *) open_tty;; esac
   case "${1:-}" in
     --update)       need_root; do_update;;
     --web)          need_root; [ -f "$DD/awg.env" ] || die "сначала установите набор: запустите install.sh без ключей"; get_kit; install_files; step_web;;
@@ -1983,6 +2030,8 @@ main(){
     --dry-run|--plan) plan;;
     --verify)       do_verify;;
     --self-update)  need_root; do_selfupdate;;
+    --bins-check)   do_bins_check;;
+    --bins-update)  need_root; do_bins_update "${2:-}";;
     --rotate-keys)  need_root; get_kit; do_rotate_keys "$2";;
     --harden-vps)   need_root; get_kit; vps_harden;;
     --uninstall)    need_root; do_uninstall;;

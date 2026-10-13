@@ -16,6 +16,10 @@ rm -rf "$DD/web/__pycache__"
 for f in up.sh mtu.sh backup.sh awg-notify.sh; do printf '#!/bin/bash\necho "%s $*: ок"\n' "$f" > "$DD/$f"; done
 cat > "$DD/backup.sh" <<'EOF'
 #!/bin/bash
+case "$1" in
+  timer) echo "timer $(grep -o 'BK_AUTO="[a-z]*"' "$DD/backup.env")"; exit 0;;
+  vps-test) echo "VPS: вход ключом роутера работает"; exit 0;;
+esac
 mkdir -p "$DD/backups"; f=$DD/backups/awg-backup-$(date +%Y%m%d-%H%M%S).tgz.enc; head -c 4000 /dev/urandom > "$f"; echo "копия: $f"
 EOF
 cat > "$L/bin/conntrack" <<'CT'
@@ -109,7 +113,15 @@ for i in range(1440, 0, -1):
         "awgbackup": {"rx": int(9e6) if down_b else int(1e5 * random.random()), "tx": int(3e5 * random.random()), "hs": random.randint(1, 120),
                       "loss": "0", "rtt": str(int(60 + random.random() * 15))},
         "awgalt1": {"rx": 0, "tx": 0, "hs": -1, "loss": "100", "rtt": ""}}})
-json.dump({"points": pts}, open(sys.argv[1] + "/history.json", "w"))
+hours = []      # сводки часов за 30 дней (#10): ночью основной лежал раз в неделю
+h0 = now // 3600 * 3600
+for k in range(30 * 24, 0, -1):
+    hh = h0 - k * 3600; down = k % 168 in (3, 4)
+    hours.append({"t": hh, "n": 60, "active": "awgbackup" if down else "awgmain", "tun": {
+        "awgmain": {"rx": 0 if down else int(6e6 + 4e6 * math.sin(k / 12) ** 2), "tx": int(5e5), "rtt": None if down else 40.0 + k % 7, "loss": 100.0 if down else float(k % 3), "up": 0.0 if down else 100.0},
+        "awgbackup": {"rx": int(8e6) if down else int(5e4), "tx": int(2e5), "rtt": 62.0, "loss": 0.0, "up": 100.0},
+        "awgalt1": {"rx": 0, "tx": 0, "rtt": None, "loss": None, "up": 0.0}}, "sys": {"cpu": 20.0, "mem": 60.0, "temp": 55.0}})
+json.dump({"points": pts, "hours": hours}, open(sys.argv[1] + "/history.json", "w"))
 sp = [{"t": now - 7200, "iface": "awgmain", "mb": 10, "ping_ms": 41, "down_bps": 87_400_000, "up_bps": 41_200_000},
       {"t": now - 7100, "iface": "awgbackup", "mb": 10, "ping_ms": 63, "down_bps": 54_100_000, "up_bps": 38_900_000},
       {"t": now - 7000, "iface": "eth3", "mb": 10, "ping_ms": 9, "down_bps": 312_000_000, "up_bps": 95_000_000}]

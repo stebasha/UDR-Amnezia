@@ -362,7 +362,7 @@ remove(){
 
 check(){
   load
-  local rc=0 n wip ok d c fw ips code pid dir st mt up
+  local rc=0 n wip ok d c fw ips pid dir st mt up
   if [ "$(iptables -t mangle -S OUTPUT | grep '^-A OUTPUT' | head -n1)" = "-A OUTPUT -j $CH" ]; then echo "OK     цепочка $CH стоит первой в mangle OUTPUT"
   else echo "FAIL   переход в $CH не первый в mangle OUTPUT (служба awg-self запущена?)"; rc=1; fi
   # считаем только «корневые» процессы: подоболочки (циклы, конвейеры) самой службы — не копии

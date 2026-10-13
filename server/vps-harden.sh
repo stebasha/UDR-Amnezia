@@ -6,7 +6,7 @@
 SSH_PORT=${SSH_PORT:-22}; AWG_PORT=${AWG_PORT:-51823}
 MODE=${HARDEN_MODE:-report}
 DROP=/etc/ssh/sshd_config.d/00-awg-hardening.conf
-keys_count(){ local n=0 f; for f in /root/.ssh/authorized_keys; do [ -s "$f" ] && n=$(grep -c -E '^(ssh-|ecdsa-|sk-)' "$f"); done; echo "${n:-0}"; }
+keys_count(){ local f=/root/.ssh/authorized_keys; if [ -s "$f" ]; then grep -c -E '^(ssh-|ecdsa-|sk-)' "$f"; else echo 0; fi; }
 pkg(){ dpkg -s "$1" >/dev/null 2>&1 && echo yes || echo no; }
 
 report(){

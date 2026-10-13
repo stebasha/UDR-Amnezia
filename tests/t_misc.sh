@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC1090  # переменные используются в строках для eval (проверки t/ck), источники — заглушки
 # Проверки встроенных юнитов и деинсталлятора на заглушках. Запуск: bash tests/t_misc.sh <папка с выложенными скриптами>
 H=$(cd "$(dirname "$0")" && pwd)
 COMP=$(cd "${1:?укажите папку с выложенными скриптами}" && pwd)
@@ -44,6 +45,15 @@ ck "selftest: без LEAK_GUARD защита считается выключен
 echo 'LEAK_GUARD=yes' >> "$S/dd/awg.env"
 out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
 ck "selftest: LEAK_GUARD=yes без службы → WARN с подсказкой" 'echo "$out" | grep -q "WARN  LEAK_GUARD=yes, но служба awg-guard не включена"'
+ck "selftest: автокопия выключена — проверок нет" '! echo "$out" | grep -q автокопи'
+# автокопия (#12): таймер и итог последнего запуска
+printf 'BK_AUTO="weekly"\n' > "$S/dd/backup.env"; chmod 600 "$S/dd/backup.env"; mkdir -p "$S/dd/backups"; touch "$S/sys/awg-backup.timer"
+printf '%s|FAIL||VPS: Permission denied\n' "$(date +%s)" > "$S/dd/backups/auto.status"
+out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
+ck "selftest: неудачная автокопия → WARN с причиной" 'echo "$out" | grep -q "OK    автокопия по расписанию включена" && echo "$out" | grep -q "WARN  последняя автокопия не удалась: VPS: Permission denied"'
+printf '%s|OK|awg-auto-1.tgz.enc|ok\n' "$(( $(date +%s) - 10 * 86400 ))" > "$S/dd/backups/auto.status"; rm -f "$S/sys/awg-backup.timer"
+out=$(PATH="$H/stubs5:$PATH" DD=$S/dd SYSD=$S/sys AWG_RUN=$S/run NO_COLOR=1 timeout 120 bash "$S/dd/selftest.sh" 2>&1)
+ck "selftest: старая автокопия и нет таймера → WARN" 'echo "$out" | grep -q "старше 8 дн" && echo "$out" | grep -q "таймера нет"'
 
 # --- статистика: «auto» не заканчивает время на запасном, ручной выбор основного — заканчивает
 S2=$T/stats; mkdir -p "$S2"; n=$(date +%s)
@@ -63,6 +73,23 @@ out=$(PATH="$P:$PATH" COUNT=2 DD=$T/nodd bash "$COMP/awgctl.sh" ping tcp eth3 ba
 ck "ping tcp: нет соединения — потери 100%, код 1" '[ $rc = 1 ] && echo "$out" | grep -q "потери: 100%"'
 out=$(DD=$T/nodd bash "$COMP/awgctl.sh" ping tcp eth3 1.1.1.1 99999); rc=$?
 ck "ping: неверный порт отклонён" '[ $rc = 2 ]'
+
+# --- смена прошивки UniFi (#9): первый запуск запоминает, смена — восстановление, событие, самопроверка
+F=$T/fw; mkdir -p "$F/dd" "$F/sys" "$F/bin"
+cp "$COMP/awg-restore.sh" "$F/dd/"; printf '#!/bin/bash\necho "Итог: OK: 29   WARN: 0   FAIL: 0"\n' > "$F/dd/selftest.sh"; chmod +x "$F/dd/"*.sh
+printf '#!/bin/bash\necho "${FWVER:-5.0.10}"\n' > "$F/bin/ubnt-device-info"
+printf '#!/bin/bash\n[ "$3" = unifi ] && { printf "10.0.1"; exit 0; }; exit 1\n' > "$F/bin/dpkg-query"
+printf '#!/bin/bash\nexit 0\n' > "$F/bin/systemctl"; chmod +x "$F/bin/"*
+fw(){ PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin FW_SETTLE=0 "$@" bash "$F/dd/awg-restore.sh" --fw-check; }
+out=$(fw); rc=$?
+ck "прошивка: первый запуск — только запомнить" '[ $rc = 0 ] && [ "$(cat "$F/dd/.fwver")" = "os=5.0.10 net=10.0.1" ] && [ ! -s "$F/dd/events.log" ]'
+out=$(fw); ck "прошивка: без смены — ничего" '[ -z "$out" ] && [ ! -s "$F/dd/events.log" ]'
+out=$(fw env FWVER=5.1.2)
+ck "прошивка: смена → восстановление, событие с самопроверкой" 'echo "$out" | grep -q "сменилась прошивка" && grep -q "|firmware|прошивка: os=5.0.10 net=10.0.1 → os=5.1.2 net=10.0.1; службы восстановлены; самопроверка: OK: 29" "$F/dd/events.log" && [ "$(cat "$F/dd/.fwver")" = "os=5.1.2 net=10.0.1" ]'
+# автокопия (#12): прошивка стёрла таймер — on_boot.d (--if-needed) возвращает его по backup.env
+cp "$COMP/backup.sh" "$COMP/awg-backup.service" "$F/dd/"; printf 'BK_AUTO="daily"\n' > "$F/dd/backup.env"; touch "$F/bashrc"
+out=$(PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin bash "$F/dd/awg-restore.sh" --if-needed 2>&1)
+ck "восстановление: таймер автокопии возвращён" 'grep -q "^OnCalendar=\*-\*-\* 04:20" "$F/sys/awg-backup.timer" && [ -f "$F/sys/awg-backup.service" ]'
 
 # --- деинсталлятор
 mkdir -p "$T/dd" "$T/sys" "$T/boot"

@@ -134,7 +134,7 @@ wan=$(ip -4 -br addr show "$WANIF" 2>/dev/null | awk '{print $2, $3}')
 echo " Нагрузка : ${load:-?} · RAM ${mem:-?} · /data ${disk:-?}${temp}"
 echo " WAN $WANIF : ${wan:-нет данных}"
 if systemctl is-enabled awg-notify >/dev/null 2>&1; then echo " Telegram : awg-notify $(systemctl is-active awg-notify 2>/dev/null)"; fi
-sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics; do
+sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha; do
   [ -f "/etc/systemd/system/$u.service" ] && sv="$sv ${u#awg-}=$(systemctl is-active $u 2>/dev/null)"
 done
 [ -n "$sv" ] && echo " Службы   :$sv"

@@ -1,6 +1,12 @@
 #!/bin/bash
 S=${STUB:?}; i=""; u=""
 while [ $# -gt 0 ]; do case "$1" in --interface) i=$2; shift;; http*) u=$1;; esac; shift; done
+case "$u" in */VERSION) [ -z "$i" ] && [ -f "$S/ver" ] && { cat "$S/ver"; exit 0; };; esac   # версия в канале (тест «не предлагать откат»)
+if [ -z "$i" ] && [ -e "$S/gh" ]; then case "$u" in   # официальные релизы amnezia-vpn (#11)
+  */amnezia-vpn/amneziawg-go/releases/latest) echo '{"tag_name": "v3.1.20260901"}'; exit 0;;
+  */amnezia-vpn/amneziawg-tools/releases/latest) exit 22;;
+  */amnezia-vpn/amneziawg-tools/tags*) echo '[{"name": "v3.1.20260701"}, {"name": "v3.1.20260812"}, {"name": "x;rm"}]'; exit 0;;
+esac; fi
 [ "$i" = eth3 ] || [ -z "$i" ] && { [ -e "$S/wan_down" ] && exit 7; case "$u" in *ipify*|*ifconfig*) echo 203.0.113.5;; *) printf 200;; esac; exit 0; }
 [ -e "$S/up/$i" ] || { printf 000; exit 28; }
 case "$u" in *dns-query*) [ -e "$S/nodns" ] || echo '{"Status":0,"Answer":[]}';; *ipify*|*ifconfig*) [ -e "$S/leak" ] && echo 203.0.113.5 || echo 198.51.100.20;; *) printf 200;; esac

@@ -9,11 +9,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Синтаксис bash
         run: for f in install.sh awg/*.sh server/*.sh tests/*.sh; do bash -n "$f" || exit 1; done
-      - name: shellcheck (ошибки блокируют, предупреждения только показываются)
+      - name: shellcheck (предупреждения блокируют, #17)
         run: |
           shellcheck --version
-          shellcheck -S error install.sh awg/*.sh server/*.sh
-          shellcheck -S warning install.sh awg/*.sh server/*.sh || true
+          shellcheck -S warning install.sh awg/*.sh server/*.sh tests/*.sh
       - name: Тесты на заглушках (без роутера)
         run: bash tests/run.sh
       - name: Контрольная сумма install.sh для --self-update
@@ -25,3 +24,63 @@ jobs:
           ! grep -R -n -i "djgreez" install.sh awg server
       - name: Гайд index.html совпадает со скриптами
         run: python3 tools/sync-guide.py --check
+      - name: Панель по модулям (#18) — app.js собран из частей, у модулей Python нет ссылок вперёд
+        run: |
+          python3 tools/build-app.py --check
+          python3 tools/check-modules.py
+
+  # Панель, бот и Home Assistant на всех поддерживаемых Python (#16): на роутерах UniFi бывает 3.7–3.11
+  python:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.7', '3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Тесты панели, бота и Home Assistant на Python ${{ matrix.python }}
+        run: |
+          python3 --version
+          python3 tests/t_web.py
+          python3 tests/t_bot.py
+          python3 tests/t_ha.py
+
+  # Панель в настоящем браузере (#15): вход, страницы, редактор туннеля, перезагрузка, EN/RU; регрессии 1.4.2
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Playwright и Chromium
+        run: |
+          pip install playwright==1.56.0
+          python3 -m playwright install --with-deps chromium
+      - name: Тесты панели в Chromium
+        run: python3 tests/t_ui.py
+
+  # Весь набор на aarch64, как на UDR7 (#16): нативный ARM-раннер GitHub (быстрее эмуляции qemu);
+  # панель, бот и HA — ещё и на Python 3.9, как на роутере
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Тесты на заглушках (aarch64, системный Python)
+        run: |
+          uname -m; python3 --version
+          bash tests/run.sh
+      - uses: astral-sh/setup-uv@v6
+      - name: Панель, бот и HA на Python 3.9 (aarch64)
+        run: |
+          uv python install 3.9
+          mkdir -p "$RUNNER_TEMP/py39" && ln -sf "$(uv python find 3.9)" "$RUNNER_TEMP/py39/python3"
+          export PATH="$RUNNER_TEMP/py39:$PATH"
+          python3 --version
+          python3 tests/t_web.py
+          python3 tests/t_bot.py
+          python3 tests/t_ha.py

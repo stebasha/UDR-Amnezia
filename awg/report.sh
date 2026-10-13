@@ -52,7 +52,7 @@ s(){ echo; echo "===== $* ====="; }
     [ -f "$f" ] || continue; echo "--- $(basename "$f") (права $(stat -c %a "$f"))"; cat "$f"
   done
   s "Службы"
-  for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-motd; do
+  for u in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot awg-metrics awg-ha awg-motd; do
     [ -f "/etc/systemd/system/$u.service" ] && echo "$u: $(systemctl is-active $u 2>/dev/null) / $(systemctl is-enabled $u 2>/dev/null)"
   done
   s "Состояние сторожа"; cat /run/awg-state 2>/dev/null

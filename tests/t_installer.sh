@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC1090  # переменные используются в строках для eval (проверки t/ck), источники — заглушки
 # Тесты установщика на заглушках: без root и без роутера. Запуск: bash tests/t_installer.sh [путь/к/install.sh]
 H=$(cd "$(dirname "$0")" && pwd)
 INST=${1:-$H/../install.sh}
@@ -24,6 +25,7 @@ t "алиасы в BASHRC" 'grep -q "alias awgctl=" "$BASHRC" && grep -q "alias 
 t "awgctl и awg-selftest доступны без алиасов (ссылки)" '[ "$(readlink "$AWG_BINDIR/awgctl")" = "$DD/awgctl.sh" ] && [ "$(readlink "$AWG_BINDIR/awg-selftest")" = "$DD/selftest.sh" ]'
 t "чужой файл с тем же именем не тронут" '[ ! -L "$AWG_BINDIR/awgs" ] && grep -q "чужой" "$AWG_BINDIR/awgs"'
 t "install.sh скопирован в DD" '[ -x "$DD/install.sh" ]'
+t "скрипты для VPS скопированы (#13)" '[ -x "$DD/vps.sh" ] && [ -f "$DD/server/vps-rotate.sh" ] && [ -f "$DD/server/audit-server.sh" ] && [ -f "$DD/server/awg-server-build.sh" ] && [ "$(stat -c %a "$DD/server")" = 700 ]'
 
 # --- манифест и проверка
 echo 'MAIN=awgmain' > "$DD/awg.env"; chmod 600 "$DD/awg.env"
@@ -102,9 +104,9 @@ t "в установщике нет сторонних источников би
 t "ссылки на исходники только amnezia-vpn" '[ -z "$(grep -o "github.com/[A-Za-z0-9_-]*/amneziawg-[a-z]*" "$INST" "$KIT"/server/*.sh | grep -v "github.com/amnezia-vpn/")" ]'
 
 # --- 1.4: веб-панель, канал обновлений, откат
-t "веб-панель скопирована" '[ -x "$DD/web/panel.py" ] && [ -f "$DD/web/static/app.js" ] && [ -f "$DD/web/static/index.html" ] && [ "$(stat -c %a "$DD/web")" = 700 ]'
+t "веб-панель скопирована" '[ -x "$DD/web/panel.py" ] && [ -f "$DD/web/awgweb/server.py" ] && [ "$(stat -c %a "$DD/web/awgweb")" = 700 ] && [ -f "$DD/web/static/app.js" ] && [ -f "$DD/web/static/index.html" ] && [ "$(stat -c %a "$DD/web")" = 700 ]'
 t "канал обновлений записан" 'grep -qx "AWG_BRANCH=$AWG_BRANCH" "$DD/.channel" && grep -qx "AWG_REPO=$AWG_REPO" "$DD/.channel"'
-t "манифест включает панель" 'grep -q " web/panel.py$" "$DD/.manifest" && grep -q " web/static/app.js$" "$DD/.manifest"'
+t "манифест включает панель" 'grep -q " web/panel.py$" "$DD/.manifest" && grep -q " web/awgweb/core.py$" "$DD/.manifest" && grep -q " web/static/app.js$" "$DD/.manifest"'
 echo "свои пользователи" > "$DD/web/users.json"
 install_files >/dev/null 2>&1
 t "обновление не трогает пользователей панели" 'grep -q "свои пользователи" "$DD/web/users.json"'
@@ -118,6 +120,86 @@ echo 'MAIN=awgmain' > "$DD/awg.env"
 t "проверка после обновления: сторож работает → ок" 'TABLE= update_healthy 0 0 >/dev/null 2>&1'
 t "проверка после обновления: панель не встала → откат" '! (sleep(){ :; }; update_healthy 0 1 >/dev/null 2>&1)'
 t "неинтерактивный режим не ждёт ввода" '! ( AWG_YES=1; open_tty; ask x "вопрос" "" ) >/dev/null 2>&1'
+
+# --- 1.5 (#8): каналы обновлений
+chan(){  # chan [ПЕРЕМЕННЫЕ…] -- содержимое .channel → «канал ветка»
+  local d; d=$(mktemp -d "$T/ch.XXXX"); printf '%b' "$1" > "$d/.channel"; shift
+  env -i PATH="$PATH" HOME="$HOME" DD="$d" AWG_LIB=1 NO_COLOR=1 "$@" bash -c '. "$0"; echo "$AWG_CHANNEL $AWG_BRANCH"' "$INST"
+}
+t "канал: без .channel — stable" '[ "$(chan "")" = "stable main" ]'
+t "канал: старый .channel с main — stable" '[ "$(chan "AWG_REPO=a/b\nAWG_BRANCH=main\n")" = "stable main" ]'
+t "канал: старый .channel со своей веткой — branch" '[ "$(chan "AWG_REPO=a/b\nAWG_BRANCH=release/1.5\n")" = "branch release/1.5" ]'
+t "канал: записанный beta" '[ "$(chan "AWG_CHANNEL=beta\nAWG_BRANCH=main\n")" = "beta main" ]'
+t "канал: AWG_BRANCH=main в окружении — beta" '[ "$(chan "AWG_CHANNEL=stable\n" AWG_BRANCH=main)" = "beta main" ]'
+t "канал: AWG_CHANNEL в окружении важнее файла" '[ "$(chan "AWG_CHANNEL=beta\n" AWG_CHANNEL=stable)" = "stable main" ]'
+t "канал: мусор → stable" '[ "$(chan "AWG_CHANNEL=evil\n")" = "stable main" ]'
+# stable: тег из GitHub API, архив релиза со сверкой SHA256SUMS
+CS=$T/curlstub; mkdir -p "$CS/srv"
+printf 'архив релиза' > "$CS/srv/udr-amnezia-v1.5.0.tar.gz"
+( cd "$CS/srv" && sha256sum udr-amnezia-v1.5.0.tar.gz > SHA256SUMS )
+cat > "$CS/curl" <<'C'
+#!/bin/bash
+out=""; url=""; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift;; http*) url=$1;; esac; shift; done
+case "$url" in
+  *api.github.com/repos/*/releases/latest) [ -e "$CSRV/norelease" ] && exit 22; printf '{\n  "tag_name": "v1.5.0",\n  "name": "1.5.0"\n}\n';;
+  */releases/download/v1.5.0/*) f=$CSRV/${url##*/}; [ -f "$f" ] || exit 22; if [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi;;
+  */archive/refs/heads/*) [ -n "$out" ] && printf 'ветка' > "$out";;
+  *) exit 22;;
+esac
+C
+chmod +x "$CS/curl"
+rel(){ ( PATH="$CS:$PATH"; export CSRV=$CS/srv; AWG_REF=""; AWG_CHANNEL=$1; AWG_BRANCH=main; resolve_ref >/dev/null 2>&1; echo "$AWG_REF $AWG_REF_KIND"; fetch_kit_archive "$T/k.tgz" >/dev/null 2>&1 && cat "$T/k.tgz" ); }
+t "stable: последний релиз, сумма совпала" '[ "$(rel stable)" = "$(printf "v1.5.0 tag\nархив релиза")" ]'
+printf 'подменён' > "$CS/srv/udr-amnezia-v1.5.0.tar.gz"
+t "stable: подменённый архив отклонён" '[ "$(rel stable)" = "v1.5.0 tag" ] && [ ! -e "$T/k.tgz" ]'
+touch "$CS/srv/norelease"
+t "stable: релизов нет — ветка main" '[ "$(rel stable)" = "$(printf "main branch\nветка")" ]'
+t "beta: ветка main" '[ "$(rel beta | head -1)" = "main branch" ]'
+t "недопустимая ветка отклонена" '( AWG_REF=""; AWG_CHANNEL=branch; AWG_BRANCH="../x"; ! resolve_ref >/dev/null 2>&1 )'
+AWG_CHANNEL=beta; AWG_BRANCH=main; write_channel
+t "канал записывается с AWG_CHANNEL" 'grep -qx "AWG_CHANNEL=beta" "$DD/.channel" && grep -qx "AWG_BRANCH=main" "$DD/.channel"'
+
+# --- 1.5 (#11): проверка и обновление бинарников из официальных релизов amnezia-vpn
+BS=$T/binstub; HS=$T/hs; mkdir -p "$BS" "$HS" "$T/nb"; export HS
+cat > "$BS/curl" <<'C'
+#!/bin/bash
+url=""; for a; do case "$a" in http*) url=$a;; esac; done
+[ -e "$HS/offline" ] && exit 6
+case "$url" in
+  */amnezia-vpn/amneziawg-go/releases/latest) printf '{\n  "url": "x",\n  "tag_name": "v0.2.16",\n  "name": "v0.2.16"\n}\n';;
+  */amnezia-vpn/amneziawg-tools/releases/latest) exit 22;;
+  */amnezia-vpn/amneziawg-tools/tags*) printf '[\n  {\n    "name": "v1.0.20250706"\n  },\n  {\n    "name": "v1.0.20250901"\n  },\n  {\n    "name": "evil;rm"\n  }\n]\n';;
+  *) exit 22;;
+esac
+C
+mkbin(){  # mkbin ФАЙЛ ВЕРСИЯ [broken]
+  printf '#!/bin/bash\n# %s\ncase "$1" in --version) echo "%s %s";; show) f=$HS/$2; if [ -f "$f" ]; then echo "peer $(cat "$f")"; else echo "peer 0"; fi;; esac\n' "${3:-good}" "$(basename "$1")" "$2" > "$1"; chmod 755 "$1"; }
+mkbin "$DD/awg" v1.0.20240213; mkbin "$DD/amneziawg-go" v0.2.12
+cat > "$DD/up.sh" <<'U'
+#!/bin/bash
+if grep -q '^# broken' "$DD/amneziawg-go"; then rm -f "$HS/$1"; else date +%s > "$HS/$1"; fi
+U
+chmod 755 "$BS/curl" "$DD/up.sh"
+printf 'MAIN=awgmain\nBACKUP=awgbackup\n' > "$DD/awg.env"
+t "bins: версия из --version" '[ "$(bins_ver amneziawg-go)" = v0.2.12 ] && [ "$(bins_ver awg)" = v1.0.20240213 ]'
+t "bins: последний релиз и самый свежий тег без мусора" '[ "$(PATH="$BS:$PATH" bins_latest amneziawg-go)" = v0.2.16 ] && [ "$(PATH="$BS:$PATH" bins_latest amneziawg-tools)" = v1.0.20250901 ]'
+t "bins-check: есть новее → код 10" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1; [ $? = 10 ])'
+touch "$HS/offline"
+t "bins-check: GitHub недоступен → код 1" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1; [ $? = 1 ])'
+rm -f "$HS/offline"
+mkbin "$T/nb/awg" "v1.0.20250901-dirty"; mkbin "$T/nb/amneziawg-go" "0.0.0"
+( cd "$T/nb" && sha256sum amneziawg-go awg > SHA256SUMS && printf 'amneziawg-go   https://github.com/amnezia-vpn/amneziawg-go   v0.2.16 (abc)\namneziawg-tools https://github.com/amnezia-vpn/amneziawg-tools v1.0.20250901 (def)\n' > BUILDINFO )
+date +%s > "$HS/awgmain"            # до обновления handshake есть только у основного
+t "bins: туннели с handshake до обновления" '[ "$(bins_live)" = " awgmain" ]'
+t "bins: установка из папки с SHA256SUMS" 'bins_install_from "$T/nb" >/dev/null 2>&1 && [ -f "$DD/awg.prev" ] && grep -q v0.2.12 "$DD/amneziawg-go.prev"'
+t "bins: тег сборки из BUILDINFO, а не из --version" '[ "$(bins_ver amneziawg-go)" = v0.2.16 ] && [ "$(bins_ver awg)" = v1.0.20250901 ]'
+t "bins-check: после обновления актуально → код 0" '(PATH="$BS:$PATH"; do_bins_check >/dev/null 2>&1)'
+t "bins: handshake на новых → без отката" 'BINS_WAIT=3 bins_apply " awgmain" >/dev/null 2>&1 && grep -q v0.2.16 "$DD/.binsver" && ! grep -q "^# broken" "$DD/amneziawg-go"'
+mkbin "$T/nb/amneziawg-go" "0.0.1" broken; ( cd "$T/nb" && sha256sum amneziawg-go awg > SHA256SUMS )
+bins_install_from "$T/nb" >/dev/null 2>&1
+t "bins: нет handshake на новых → откат на прежние" '! BINS_WAIT=3 bins_apply " awgmain" >/dev/null 2>&1 && ! grep -q "^# broken" "$DD/amneziawg-go" && [ -f "$HS/awgmain" ]'
+echo "подмена" >> "$T/nb/awg"
+t "bins: сумма не совпала → не ставится" '! bins_install_from "$T/nb" >/dev/null 2>&1 && ! grep -q подмена "$DD/awg"'
 
 # --- удаление
 ipset(){ :; }

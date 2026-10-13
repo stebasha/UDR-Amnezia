@@ -333,7 +333,7 @@ def scr_tunnel(chat, name):
 
 def ev_line(e):
     m = {"start": "▶️", "stop": "⏹", "switch": "🔀", "degrade": "📉", "return": "✅", "force": "✋", "auto": "🤖",
-         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁"}.get(e["type"], "•")
+         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁", "firmware": "🔄", "backup": "💾", "vps": "🖥"}.get(e["type"], "•")
     return "%s <code>%s</code> %s" % (m, time.strftime("%d.%m %H:%M", time.localtime(e["t"])), esc(e["text"]))
 
 
@@ -687,7 +687,7 @@ def monitor():
             for c in h["checks"]:
                 if c["level"] in ("warn", "crit"):
                     cur["sys:" + c["key"]] = (c["level"], "%s %s%s" % (LV[c["level"]], c["text"], "\n↳ " + c["advice"] if c["advice"] else ""))
-            for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify"):
+            for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify", "awg-ha"):
                 if P.svc_installed(u) and u in P.units_list() and not P.svc_active(u):
                     cur["svc:" + u] = ("warn", "🛑 Служба %s остановлена" % u)
             for s in P.env().get("EXTRA_SUBNETS", "").split():

@@ -1,0 +1,20 @@
+name: Предложение
+description: Новая возможность или улучшение
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу решаем
+      description: Что сейчас неудобно или невозможно.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Как это могло бы работать
+      description: В панели, боте, awgctl или установщике. Если затрагивает UniFi — опишите, как не мешать ему.
+  - type: textarea
+    id: alt
+    attributes:
+      label: Как вы обходитесь сейчас

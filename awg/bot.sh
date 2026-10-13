@@ -30,7 +30,9 @@ send(){ "$DD/notify.sh" --html "$1" >/dev/null 2>&1; }
 reply(){ send "<b>$1</b> · $H"$'\n'"<pre>$(printf '%s' "$2" | esc | cut -c1-3300)</pre>"; }
 
 iface_order(){  # через какие интерфейсы ходить в Telegram: активный туннель, остальные, затем WAN
-  local a=""; [ -r "$STATEF" ] && a=$(. "$STATEF"; echo "$ACTIVE")
+  local a=""
+  # shellcheck source=/dev/null
+  [ -r "$STATEF" ] && a=$(. "$STATEF"; echo "$ACTIVE")
   { [ -n "$a" ] && echo "$a"; for t in $TUNS; do echo "$t"; done; [ "${TG_NO_WAN:-0}" = 1 ] || echo ""; } | awk '!s[$0]++'
 }
 api(){  # api МЕТОД?параметры [curl-аргументы] — токен только через stdin
@@ -114,15 +116,15 @@ chk(){  # chk имя плохо(1/0) "текст тревоги" "текст в�
   fi
 }
 events_watch(){  # события из events.log, о которых awg-notify не сообщает (деградацию и ручное переключение он шлёт сам)
-  local ts ty tx
-  tail -n0 -F "$DD/events.log" 2>/dev/null | while IFS='|' read -r ts ty tx; do
+  local ty tx
+  tail -n0 -F "$DD/events.log" 2>/dev/null | while IFS='|' read -r _ ty tx; do
     case "$ty" in
       refused) send "<b>⚠️ Ручное переключение отклонено</b> · $H"$'\n'"$(printf '%s' "$tx" | esc)";;
     esac
   done
 }
 monitor(){
-  local bad fr s i lastw=""
+  local bad fr s i
   while sleep 60; do
     fr=$(df -Pm "$DD" 2>/dev/null | awk 'NR==2{print $4}'); bad=0; [ -n "$fr" ] && [ "$fr" -lt "$BOT_DISK_MB" ] && bad=1
     chk disk "$bad" "⚠️ На /data мало места: ${fr} МБ" "✅ Место на /data в норме"

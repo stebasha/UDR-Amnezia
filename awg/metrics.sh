@@ -15,6 +15,7 @@ mkdir -p "$OUTD"; chmod 755 "$OUTD"
 
 collect(){
   local t a ts rx tx act l r n
+  # shellcheck source=/dev/null
   [ -r "$STATEF" ] && . "$STATEF"
   act=${ACTIVE:-}
   echo "# HELP awg_tunnel_up 1 если handshake свежее 180 с"

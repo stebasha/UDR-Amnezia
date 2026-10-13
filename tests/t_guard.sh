@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034,SC1090  # переменные используются в строках для eval (проверки t/ck), источники — заглушки
 COMP=${1:-comp}; HERE=$(cd "$(dirname "$0")" && pwd); COMP=$(cd "$COMP" && pwd)
 T=$(mktemp -d); export STUB=$T/stub DD=$T/dd; mkdir -p $STUB $DD
 export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"

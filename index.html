@@ -549,8 +549,19 @@ rm -f /tmp/rail.conf</code></pre><button class="more" type="button" aria-expande
 <span class="c">#   https://github.com/amnezia-vpn/amneziawg-tools   (утилита awg, C)</span>
 <span class="c"># Версии задаются тегами и совпадают с теми, что собираются для роутера (awg-build-router.sh):</span>
 <span class="c">#   AWG_GO_REF=v3.1.20260828 AWG_TOOLS_REF=v3.1.20260812 bash awg-server-build.sh</span>
-<span class="c"># Устанавливает /usr/local/bin/amneziawg-go и /usr/local/bin/awg.</span>
+<span class="c"># Устанавливает /usr/local/bin/amneziawg-go и /usr/local/bin/awg; прежние сохраняются как *.prev,</span>
+<span class="c"># теги сборки — в /usr/local/share/amnezia-build.txt.</span>
+<span class="c">#   RESTART=1 — перезапустить awg-server на новых файлах;  ROLLBACK_BINS=1 bash awg-server-build.sh — вернуть *.prev</span>
 set -euo pipefail
+BIN=${BIN:-/usr/local/bin}
+INFO=${INFO:-/usr/local/share/amnezia-build.txt}
+if [ "${ROLLBACK_BINS:-}" = 1 ]; then
+  [ -f "$BIN/amneziawg-go.prev" ] &amp;&amp; [ -f "$BIN/awg.prev" ] || { echo "ERROR нет $BIN/*.prev"; exit 1; }
+  cp -p "$BIN/amneziawg-go.prev" "$BIN/amneziawg-go"; cp -p "$BIN/awg.prev" "$BIN/awg"
+  [ -f "$INFO.prev" ] &amp;&amp; cp -p "$INFO.prev" "$INFO"
+  systemctl restart awg-server 2&gt;/dev/null || true
+  echo "ROLLED_BACK"; exit 0
+fi
 AWG_GO_REF=${AWG_GO_REF:-v3.1.20260828}
 AWG_TOOLS_REF=${AWG_TOOLS_REF:-v3.1.20260812}
 GO_FALLBACK=${GO_FALLBACK:-1.25.12}     # версия Go с go.dev, если нет snap (дальше GOTOOLCHAIN=auto скачает нужную)
@@ -578,15 +589,27 @@ rm -rf amneziawg-go amneziawg-tools
 git -c advice.detachedHead=false clone -q --depth 1 --branch "$AWG_GO_REF" https://github.com/amnezia-vpn/amneziawg-go
 git -c advice.detachedHead=false clone -q --depth 1 --branch "$AWG_TOOLS_REF" https://github.com/amnezia-vpn/amneziawg-tools
 printf 'package main\n\nconst Version = "%s"\n' "$AWG_GO_REF" &gt; amneziawg-go/version.go
-( cd amneziawg-go &amp;&amp; CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o /usr/local/bin/amneziawg-go . )
-( cd amneziawg-tools/src &amp;&amp; make -s clean &gt;/dev/null 2&gt;&amp;1 || true; make -s &amp;&amp; install -m 755 wg /usr/local/bin/awg )
+<span class="c"># сначала собрать всё во временную папку: при ошибке сборки работающие файлы не трогаются</span>
+( cd amneziawg-go &amp;&amp; CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o "$SRC/amneziawg-go.bin" . )
+( cd amneziawg-tools/src &amp;&amp; make -s clean &gt;/dev/null 2&gt;&amp;1 || true; make -s &amp;&amp; cp wg "$SRC/awg.bin" )
+"$SRC/amneziawg-go.bin" --version &gt;/dev/null &amp;&amp; "$SRC/awg.bin" --version &gt;/dev/null
+mkdir -p "$(dirname "$INFO")"
+if [ -f "$BIN/amneziawg-go" ] &amp;&amp; [ -f "$BIN/awg" ]; then
+  cp -p "$BIN/amneziawg-go" "$BIN/amneziawg-go.prev"; cp -p "$BIN/awg" "$BIN/awg.prev"
+  [ -f "$INFO" ] &amp;&amp; cp -p "$INFO" "$INFO.prev"
+fi
+install -m 755 "$SRC/amneziawg-go.bin" "$BIN/amneziawg-go"; install -m 755 "$SRC/awg.bin" "$BIN/awg"
+rm -f "$SRC/amneziawg-go.bin" "$SRC/awg.bin"
+printf 'amneziawg-go %s\namneziawg-tools %s\nbuilt %s\n' "$AWG_GO_REF" "$AWG_TOOLS_REF" "$(date -u '+%F %T')" &gt; "$INFO"
+[ "${RESTART:-}" = 1 ] &amp;&amp; systemctl restart awg-server
 echo
-amneziawg-go --version | head -1
-awg --version
+"$BIN/amneziawg-go" --version | head -1
+"$BIN/awg" --version
 echo "собрано из amnezia-vpn/amneziawg-go@$AWG_GO_REF и amnezia-vpn/amneziawg-tools@$AWG_TOOLS_REF"
+echo "BUILT_OK"
 EOF
 chmod 755 /root/awg-server-build.sh
-/root/awg-server-build.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 46 строк">Показать целиком · 46 строк</button></figure>
+/root/awg-server-build.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 69 строк">Показать целиком · 69 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">конец вывода</span></figcaption><pre><code>amneziawg-go 0.0.20250522
 amneziawg-tools v3.1.20260812 - https://amnezia.org</code></pre></figure>
     <div class="note n-check"><b>Проверка</b><p>Обе версии напечатались. Утилита собирается под именем <code>wg</code> и устанавливается как <code>/usr/local/bin/awg</code>, чтобы не путаться с обычным WireGuard.</p></div>
@@ -865,7 +888,7 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
 }
 
 bring_up(){
-  local n=$1 conf raw tmp addr mtu k
+  local n=$1 conf raw tmp addr mtu
   conf=$(conf_of "$n")
   [ -z "$conf" ] &amp;&amp; { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
@@ -885,7 +908,7 @@ bring_up(){
 
   ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link del "$n"
   ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
-  for k in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
+  for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then
     echo "ОШИБКА: awg setconf $n (строка, которую awg не понял, указана выше)"
     ip link del "$n" 2&gt;/dev/null; rm -f "$tmp"; return 1
@@ -1190,6 +1213,8 @@ set_active 0
 if command -v conntrack &gt;/dev/null; then
   for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; a=$(tun_addr "${TUNS[$k]}"); [ -n "$a" ] &amp;&amp; conntrack -D -q "$a" &gt;/dev/null 2&gt;&amp;1; done
 fi
+<span class="c"># прошивка UniFi сменилась? (#9) — восстановление и самопроверка в фоне, сторож не ждёт</span>
+[ -x "$DD/awg-restore.sh" ] &amp;&amp; [ -z "${AWG_NO_FWCHECK:-}" ] &amp;&amp; { setsid "$DD/awg-restore.sh" --fw-check &gt;&gt; "$DD/restore.log" 2&gt;&amp;1 &lt; /dev/null &amp; }
 log "старт: основной $MAIN, запасной ${BACKUP:-нет}${TUNNELS_EXTRA:+, дополнительные $TUNNELS_EXTRA}, таблица $TABLE, возврат через ${RECOVER_SEC}с, качество: $QUALITY"
 ev start "основной $MAIN, всего туннелей $N"
 
@@ -1308,7 +1333,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 366 строк">Показать целиком · 366 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 368 строк">Показать целиком · 368 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1363,21 +1388,43 @@ blackhole default metric 200
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-restore.sh: вернуть службы и удобства после обновления прошивки UniFi (она может очистить /etc и /root).</span>
 <span class="c">#   awg-restore.sh              восстановить всё</span>
-<span class="c">#   awg-restore.sh --if-needed  только если чего-то не хватает (для автозапуска из on_boot.d)</span>
+<span class="c">#   awg-restore.sh --if-needed  только если чего-то не хватает или сменилась прошивка (автозапуск из on_boot.d)</span>
+<span class="c">#   awg-restore.sh --fw-check   только если сменилась прошивка UniFi OS или версия Network (запускает сторож при старте)</span>
+<span class="c"># Смена прошивки (#9): версии запоминаются в $DD/.fwver; при смене — полное восстановление, самопроверка,</span>
+<span class="c"># событие «Прошивка» в журнале и сообщение в Telegram (если настроен).</span>
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
-ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics"
+ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha"
 <span class="c"># что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть</span>
 if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] &amp;&amp; UNITS="$UNITS $u"; done; fi
 need=0
 for u in $UNITS; do [ -f "$SYSD/$u.service" ] || need=1; done
 grep -q AWGS_SHOWN $BASHRC 2&gt;/dev/null || { [ -f "$D/.panel" ] &amp;&amp; need=1; }
+bk_auto(){ grep -qE '^BK_AUTO="?(daily|weekly)' "$D/backup.env" 2&gt;/dev/null; }
+bk_auto &amp;&amp; [ ! -f "$SYSD/awg-backup.timer" ] &amp;&amp; need=1
+
+fw_now(){
+  local os net pk v
+  os=$(ubnt-device-info firmware 2&gt;/dev/null | head -n1)
+  for pk in unifi unifi-native unifi-network; do v=$(dpkg-query -W -f='${Version}' "$pk" 2&gt;/dev/null) &amp;&amp; [ -n "$v" ] &amp;&amp; { net=$v; break; }; done
+  echo "os=${os:-?} net=${net:-?}"
+}
+FWF=$D/.fwver; fw_changed=""; fw_cur=""
+if [ "$1" = --if-needed ] || [ "$1" = --fw-check ]; then
+  fw_cur=$(fw_now); fw_old=$(cat "$FWF" 2&gt;/dev/null)
+  if [ "$fw_cur" = "os=? net=?" ]; then :                         # не роутер или версии не читаются — ничего не решаем
+  elif [ -z "$fw_old" ]; then echo "$fw_cur" &gt; "$FWF"             # первый запуск: запомнить
+  elif [ "$fw_cur" != "$fw_old" ]; then fw_changed="$fw_old → $fw_cur"; need=1; fi
+fi
+[ "$1" = --fw-check ] &amp;&amp; [ -z "$fw_changed" ] &amp;&amp; exit 0
 if [ "$1" = --if-needed ] &amp;&amp; [ $need = 0 ]; then exit 0; fi
+[ -n "$fw_changed" ] &amp;&amp; echo "сменилась прошивка: $fw_changed — восстанавливаю"
 
 for u in $UNITS; do [ -f "$D/$u.service" ] &amp;&amp; cp "$D/$u.service" "$SYSD/"; done
 systemctl daemon-reload
 for u in $UNITS; do [ -f "$D/$u.service" ] &amp;&amp; systemctl enable --now "$u" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; echo "служба $u восстановлена"; done
+bk_auto &amp;&amp; [ -x "$D/backup.sh" ] &amp;&amp; SYSD=$SYSD "$D/backup.sh" timer
 if ! grep -q AWGS_SHOWN $BASHRC 2&gt;/dev/null; then
   cat &gt;&gt; $BASHRC &lt;&lt;'RC'
 alias awgs='/data/awg/status.sh'
@@ -1401,9 +1448,22 @@ if [ -d "$BD" ] &amp;&amp; [ -w "$BD" ]; then
   done
 fi
 [ -f "$D/motd.orig" ] &amp;&amp; [ -f "$D/awg-motd.service" ] &amp;&amp; : &gt; /etc/motd 2&gt;/dev/null
+if [ -n "$fw_changed" ]; then
+  echo "$fw_cur" &gt; "$FWF"
+  sleep "${FW_SETTLE:-20}"      # дать сторожу поднять туннели и маршруты
+  sum=$(timeout 180 "$D/selftest.sh" 2&gt;/dev/null | tr -d '\033' | sed 's/\[[0-9;]*m//g' | grep -E '^Итог' | tail -n1)
+  sum=${sum#Итог: }
+  echo "$(date +%s)|firmware|прошивка: ${fw_changed}; службы восстановлены; самопроверка: ${sum:-не выполнена}" &gt;&gt; "$D/events.log"
+  if { [ -r "$D/telegram.env" ] || [ -r "$D/hooks.env" ]; } &amp;&amp; [ -x "$D/notify.sh" ]; then
+    "$D/notify.sh" --html "🔄 &lt;b&gt;Обновилась прошивка UniFi&lt;/b&gt; · $(hostname)
+$fw_changed
+Службы UDR-Amnezia восстановлены. Самопроверка: ${sum:-не выполнена}" &gt;/dev/null 2&gt;&amp;1
+  fi
+  echo "самопроверка после смены прошивки: ${sum:-не выполнена}"
+fi
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 45 строк">Показать целиком · 45 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 80 строк">Показать целиком · 80 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 
@@ -1736,7 +1796,7 @@ wan=$(ip -4 -br addr show "$WANIF" 2&gt;/dev/null | awk '{print $2, $3}')
 echo " Нагрузка : ${load:-?} · RAM ${mem:-?} · /data ${disk:-?}${temp}"
 echo " WAN $WANIF : ${wan:-нет данных}"
 if systemctl is-enabled awg-notify &gt;/dev/null 2&gt;&amp;1; then echo " Telegram : awg-notify $(systemctl is-active awg-notify 2&gt;/dev/null)"; fi
-sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics; do
+sv=""; for u in awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha; do
   [ -f "/etc/systemd/system/$u.service" ] &amp;&amp; sv="$sv ${u#awg-}=$(systemctl is-active $u 2&gt;/dev/null)"
 done
 [ -n "$sv" ] &amp;&amp; echo " Службы   :$sv"
@@ -1878,7 +1938,7 @@ st=$(systemctl is-active awg-failover 2&gt;/dev/null); en=$(systemctl is-enabled
 UL=$(cat "$DD/.units" 2&gt;/dev/null); [ -n "$UL" ] || UL="awg-failover awg-notify awg-motd"
 for u in $UL; do
   [ -f "$DD/$u.service" ] || continue
-  [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; continue   # Telegram не настраивался
+  [ $u = awg-notify ] &amp;&amp; [ ! -f "$DD/telegram.env" ] &amp;&amp; [ ! -f "$DD/hooks.env" ] &amp;&amp; continue   # уведомления не настраивались
   [ $u = awg-motd ] &amp;&amp; [ ! -f "$DD/motd.orig" ] &amp;&amp; continue        # баннер не отключался
   cmp -s "/etc/systemd/system/$u.service" "$DD/$u.service" &amp;&amp; P "$u.service совпадает с копией в $DD" \
     || W "$u.service в /etc отличается от копии в $DD или отсутствует" "cp $DD/$u.service /etc/systemd/system/ &amp;&amp; systemctl daemon-reload &amp;&amp; systemctl enable --now $u"
@@ -2012,19 +2072,29 @@ chmod 600 /data/awg/telegram.env; unset T C</code></pre></figure>
     <h4>Скрипты</h4>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
-<span class="c"># notify.sh — отправка в Telegram с резервированием: основной туннель -&gt; запасной -&gt; WAN.</span>
-<span class="c">#   notify.sh [--html] "текст"</span>
-<span class="c"># Не доставилось никуда — сообщение откладывается в notify.spool и уходит при следующей удачной отправке.</span>
+<span class="c"># notify.sh — уведомление: Telegram (с резервированием: основной туннель -&gt; запасной -&gt; WAN), вебхук и ntfy (#14).</span>
+<span class="c">#   notify.sh [--html] [--only telegram|hooks] "текст"</span>
+<span class="c"># Telegram: telegram.env. Не доставилось никуда — сообщение откладывается в notify.spool и уходит при следующей удачной отправке.</span>
+<span class="c"># Вебхук и ntfy: hooks.env (HOOK_URL, HOOK_HEADER, NTFY_URL, NTFY_TOKEN). Идут обычным маршрутом роутера (в LAN или через WAN).</span>
+<span class="c"># Код: 0 — доставлено, 1 — не доставлено (Telegram — отложено), 2 — ничего не настроено.</span>
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
-. "$DD/telegram.env" || exit 2
+TG=0; HK=0
+<span class="c"># shellcheck disable=SC1091</span>
+[ -r "$DD/telegram.env" ] &amp;&amp; . "$DD/telegram.env" &amp;&amp; [ -n "${TG_TOKEN:-}" ] &amp;&amp; TG=1
+<span class="c"># shellcheck disable=SC1091</span>
+[ -r "$DD/hooks.env" ] &amp;&amp; . "$DD/hooks.env" &amp;&amp; [ -n "${HOOK_URL:-}${NTFY_URL:-}" ] &amp;&amp; HK=1
+<span class="c"># shellcheck disable=SC1091</span>
 [ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
-MODE=""
-[ "$1" = "--html" ] &amp;&amp; { MODE=html; shift; }
+MODE=""; ONLY=""
+while :; do case "$1" in --html) MODE=html; shift;; --only) ONLY=$2; shift 2;; *) break;; esac; done
 TEXT="${1:0:3900}"
 [ -z "$TEXT" ] &amp;&amp; exit 0
+[ "$ONLY" = hooks ] &amp;&amp; TG=0
+[ "$ONLY" = telegram ] &amp;&amp; HK=0
+[ $TG = 0 ] &amp;&amp; [ $HK = 0 ] &amp;&amp; exit 2
 
 LOG=$DD/notify.log
 SPOOL=$DD/notify.spool
@@ -2038,6 +2108,33 @@ log() {
   if [ "$(wc -l &lt; "$LOG")" -gt 300 ]; then tail -n 200 "$LOG" &gt; "$LOG.t" &amp;&amp; mv "$LOG.t" "$LOG"; fi
 }
 
+<span class="c"># ---------- вебхук и ntfy (#14) ----------</span>
+plain(){ if [ "$MODE" = html ]; then printf '%s' "$1" | sed -e 's/&lt;[^&gt;]*&gt;//g' -e 's/&amp;lt;/&lt;/g' -e 's/&amp;gt;/&gt;/g' -e 's/&amp;amp;/\&amp;/g'; else printf '%s' "$1"; fi; }
+level(){ case "$1" in *🛑*) echo critical;; *⚠️*|*🔴*|*❌*|*🟠*) echo warning;; *✅*|*🟢*) echo ok;; *) echo info;; esac; }
+hook_send(){  # hook_send ТЕКСТ — 0, если доставлено хоть куда-то из настроенного
+  local t lv code rc=1 h ttl pr js
+  t=$(plain "$1"); lv=$(level "$1"); h=$(hostname)
+  if [ -n "${HOOK_URL:-}" ]; then
+    js=$(HOOK_T="$t" HOOK_LV="$lv" HOOK_H="$h" python3 -c 'import json,os,time; print(json.dumps({"source":"udr-amnezia","host":os.environ["HOOK_H"],"level":os.environ["HOOK_LV"],"time":int(time.time()),"text":os.environ["HOOK_T"]},ensure_ascii=False))')
+<span class="c">    # адрес и заголовок (там может быть секрет) — через stdin (-K -), в списке процессов их не видно</span>
+    code=$( { printf 'url = "%s"\n' "$HOOK_URL"; [ -n "${HOOK_HEADER:-}" ] &amp;&amp; printf 'header = "%s"\n' "$HOOK_HEADER"; } \
+      | curl -s -m 10 -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data-binary "$js" -K - 2&gt;/dev/null)
+    case "$code" in 2??) rc=0;; *) log "вебхук: HTTP ${code:-000}";; esac
+  fi
+  if [ -n "${NTFY_URL:-}" ]; then
+    case "$lv" in critical) pr=5;; warning) pr=4;; *) pr=3;; esac
+    ttl="UDR-Amnezia · $h"
+    code=$( { printf 'url = "%s"\n' "$NTFY_URL"; [ -n "${NTFY_TOKEN:-}" ] &amp;&amp; printf 'header = "Authorization: Bearer %s"\n' "$NTFY_TOKEN"; } \
+      | curl -s -m 10 -o /dev/null -w '%{http_code}' -H "Title: $ttl" -H "Priority: $pr" -H "Tags: $lv" --data-binary "$t" -K - 2&gt;/dev/null)
+    case "$code" in 2??) rc=0;; *) log "ntfy: HTTP ${code:-000}";; esac
+  fi
+  return $rc
+}
+
+HRC=1
+if [ $HK = 1 ]; then hook_send "$TEXT" &amp;&amp; HRC=0; fi
+[ $TG = 1 ] || exit $HRC
+
 <span class="c"># Получатели: TG_CHAT (администраторы) и TG_VIEWERS (только просмотр), через пробел или запятую.</span>
 <span class="c"># Чат может временно выключить уведомления кнопкой бота (файл bot.mute: «chat_id до_epoch»);</span>
 <span class="c"># сообщения о полной потере каналов (🛑) приходят всегда.</span>
@@ -2050,7 +2147,7 @@ for c in $(printf '%s %s' "${TG_CHAT:-}" "${TG_VIEWERS:-}" | tr ',;' '  '); do
   fi
   CHATS+=("$c")
 done
-[ ${#CHATS[@]} -gt 0 ] || exit 0
+[ ${#CHATS[@]} -gt 0 ] || { [ $HK = 1 ] &amp;&amp; exit $HRC; exit 0; }
 <span class="c"># кнопки под уведомлением, если работает бот (нажатие открывает его меню)</span>
 MARKUP=""
 systemctl is-active --quiet awg-bot 2&gt;/dev/null &amp;&amp; MARKUP='{"inline_keyboard":[[{"text":"📊 Состояние","callback_data":"m:main"},{"text":"🔀 Каналы","callback_data":"m:tun"}]]}'
@@ -2116,7 +2213,7 @@ log "ВСЕ КАНАЛЫ НЕДОСТУПНЫ, сообщение отложен
 spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
 exit 1
 EOF
-chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 107 строк">Показать целиком · 107 строк</button></figure>
+chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 144 строк">Показать целиком · 144 строк</button></figure>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-notify.sh — уведомления в Telegram о работе failover.</span>
@@ -2397,6 +2494,7 @@ awgctl ping auto awgmain 1.1.1.1<span class="c"> # задержка через �
 awgctl report<span class="c">                 # обезличенный отчёт для issue (ключи и IP скрыты)</span>
 awgctl web<span class="c">                    # адрес веб-панели</span>
 awgctl drift<span class="c">                  # сверка правил и служб с эталоном (repair — вернуть правила набора)</span></code></pre></figure>
+  <p><b>Каналы обновлений (с 1.5).</b> По умолчанию <code>--update</code> и кнопка в панели ставят последний <b>релиз</b> (канал stable) и проверяют SHA256 архива. Канал <b>beta</b> — ветка <code>main</code>, можно указать и свою ветку: <code>/data/awg/install.sh --channel beta</code>, <code>--channel stable</code>, <code>--channel имя-ветки</code>. Выбор есть в панели: «Настройки → Система и обновление».</p>
   <p>С версии 1.4.2 <code>awgctl</code>, <code>awg-selftest</code> и <code>awgs</code> работают и без интерактивной оболочки — например, <code>ssh root@192.168.1.1 awgctl status</code> или из PuTTY/plink: установщик кладёт ссылки в <code>/usr/local/bin</code> (чужие файлы с теми же именами не трогает), после обновления прошивки их возвращает <code>awg-restore.sh</code>.</p>
 
   <h3>Веб-панель управления</h3>
@@ -2414,6 +2512,9 @@ awgctl drift<span class="c">                  # сверка правил и с�
   <h3>Роутер, язык, загрузка файлов</h3>
   <p>Страница «Роутер» (или нажатие на плитку «Роутер» в обзоре): процессор, память, диск <code>/data</code>, температура, таблица соединений — кольцами и графиками за сутки; проверки железа с советами (мало места и прогноз заполнения, нехватка памяти, перегрев, переполнение таблицы соединений, OOM и ошибки ввода-вывода в журнале ядра); процессы, занимающие больше всего памяти. Замечания появляются и в обзоре, и в Telegram. Все плитки обзора нажимаются: состояние — список замечаний, канал — туннели, handshake — тест, скорость — график, основной канал — события.</p>
   <p>Переключатель EN/RU — в верхней строке и на странице входа (запоминается в браузере). Вывод скриптов на роутере остаётся русским. Вывод любой команды можно скопировать или скачать файлом, журналы — кнопкой «Скачать», отчёт для помощи скачивается сам после сбора.</p>
+  <h3>Home Assistant и токены API</h3>
+  <p>С версии 1.5 роутер появляется в Home Assistant сам, через MQTT discovery: «Настройки → Home Assistant» — адрес брокера (Mosquitto или встроенный брокер HA), логин, пароль, TLS — и «Проверить подключение». В HA появится устройство «UDR-Amnezia»: активный канал, состояние, kill switch, процессор, память, температура; по каждому туннелю — связь, handshake, RTT, потери, трафик; выбор канала (авто или туннель) и кнопки перезапуска туннелей. Кнопка перезагрузки роутера в HA выключена, пока её явно не включить. Служба — <code>awg-ha</code>, действия из HA попадают в журнал панели.</p>
+  <p>Для REST и скриптов — токены API: «Настройки → Пользователи и 2FA → Токены API». Права «только чтение» или «управление»; токен показывается один раз; пароли, сеансы, ключи туннелей, перезагрузка и настройки панели токену недоступны никогда. Пример: <code>curl -k -H "Authorization: Bearer awg_…" https://192.168.1.1:4443/api/overview</code>. Сеансы панели с 1.5 переживают её перезапуск и обновление.</p>
   <h3>Сертификат UniFi для панели</h3>
   <p>Если у веб-интерфейса роутера настоящий сертификат (свой домен, автообновление в UniFi), панель возьмёт его: «Настройки → Панель и сертификат → Источник: сертификат UniFi». Панель перечитывает файлы раз в минуту, поэтому продление подхватывается без перезапуска. Имена из сертификата разрешены для входа: открывайте <code>https://ваше.имя:4443/</code>. Файлы UniFi панель только читает.</p>
   <h3>Сверка правил и обновление с откатом</h3>
@@ -2531,10 +2632,11 @@ BASHRC=${BASHRC:-/root/.bashrc}
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}
 
 <span class="c"># 1. службы — сначала остановить: иначе их 5-секундный цикл вернёт правила, пока мы их убираем</span>
-for u in awg-web awg-bot awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
+for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-notify awg-failover awg-motd; do
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2&gt;/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
+systemctl disable --now awg-backup.timer &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/awg-backup.timer" "$SYSD/awg-backup.service"
 systemctl daemon-reload 2&gt;/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2&gt;/dev/null
 
@@ -2578,7 +2680,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 64 строк">Показать целиком · 64 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 65 строк">Показать целиком · 65 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 

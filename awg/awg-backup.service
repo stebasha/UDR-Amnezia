@@ -1,0 +1,8 @@
+[Unit]
+Description=AWG: резервная копия вне роутера (#12)
+After=awg-failover.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/data/awg/backup.sh auto
+Nice=10

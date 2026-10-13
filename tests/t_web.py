@@ -14,7 +14,7 @@ import tempfile
 import time
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PANEL_VERSION = re.search(r'^VERSION = "([^"]+)"', open(os.path.join(R, "awg/web/panel.py")).read(), re.M).group(1)
+PANEL_VERSION = re.search(r'^VERSION = "([^"]+)"', open(os.path.join(R, "awg/web/awgweb/core.py")).read(), re.M).group(1)
 PORT = int(os.environ.get("WEB_TEST_PORT", "18471"))
 LAB = tempfile.mkdtemp(prefix="awgweb-")
 FAILS = []
@@ -89,6 +89,29 @@ def job(c, payload, timeout=60):
     return 0, {"out": "timeout"}
 
 
+def restart_panel(pid, before=None):
+    """Перезапуск панели стенда с тем же окружением (как systemctl restart awg-web). Возвращает новый PID."""
+    env = dict(x.split("=", 1) for x in open("/proc/%s/environ" % pid).read().split("\0") if "=" in x)
+    cmd = [x for x in open("/proc/%s/cmdline" % pid).read().split("\0") if x]
+    cwd = os.readlink("/proc/%s/cwd" % pid)
+    subprocess.call(["kill", pid])
+    for _ in range(50):
+        if not os.path.exists("/proc/%s" % pid):
+            break
+        time.sleep(0.1)
+    if before:
+        before()
+    p = subprocess.Popen(cmd, env=env, cwd=cwd, stdout=open(os.path.join(LAB, "panel.log"), "a"), stderr=subprocess.STDOUT)
+    for _ in range(100):
+        try:
+            http.client.HTTPConnection("127.0.0.1", PORT, timeout=1).request("GET", "/")
+            break
+        except OSError:
+            time.sleep(0.1)
+    time.sleep(0.3)
+    return str(p.pid)
+
+
 def main():
     pid = subprocess.check_output([os.path.join(R, "tests/web_lab.sh"), LAB, str(PORT)]).decode().strip().splitlines()[-1]
     dd = os.path.join(LAB, "dd")
@@ -152,6 +175,8 @@ def main():
         s, j = a.post("/api/tunnel/remove", {"name": "awgmain"})
         check("основной из панели не удаляется", s == 400, j)
         s, j = a.post("/api/tunnel/remove", {"name": "awgnl"})
+        check("удаление туннеля без пароля запрещено (#21)", s == 403 and "awgnl" in open(os.path.join(dd, "awg.env")).read(), j)
+        s, j = a.post("/api/tunnel/remove", {"name": "awgnl", "current": "Test-pass-123"})
         env = open(os.path.join(dd, "awg.env")).read()
         check("удаление доп. туннеля", s == 200 and "awgnl" not in env, (j, env))
         s, j = a.post("/api/tunnel/label", {"name": "awgmain", "label": "<script>"})
@@ -289,7 +314,7 @@ def main():
         check("порядок доп. туннелей", s == 200 and 'TUNNELS_EXTRA="awgimp awgalt1"' in open(os.path.join(dd, "awg.env")).read(), j)
         s, j = a.post("/api/tunnel/order", {"extra": ["awgimp", "awgmain"]})
         check("порядок: подмена списка отклонена", s == 400, j)
-        a.post("/api/tunnel/remove", {"name": "awgimp"})
+        a.post("/api/tunnel/remove", {"name": "awgimp", "current": "Test-pass-123"})
 
         # ---------- клиенты, сеансы, настройки, обновление
         s, j = a.get("/api/clients")
@@ -303,20 +328,114 @@ def main():
         s2, j2 = c3.get("/api/overview")
         s3, j3 = a.get("/api/overview")
         check("завершить другие сеансы", s == 200 and s2 == 401 and s3 == 200, (s2, s3))
+        # ---------- 1.5 (#7): сеансы переживают перезапуск панели; в файле только хэши
+        sj = open(os.path.join(dd, "web", "sessions.json")).read()
+        tok = a.cookie.split("=", 1)[1]
+        check("сеансы: файл 600, токена в нём нет, есть хэш", oct(os.stat(os.path.join(dd, "web", "sessions.json")).st_mode & 0o777) == "0o600"
+              and tok not in sj and hashlib.sha256(tok.encode()).hexdigest() in sj, sj[:200])
+        pid = restart_panel(pid)
+        s, j = a.get("/api/overview")
+        check("сеансы: после перезапуска панели вход не нужен", s == 200, s)
+        s, j = a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        check("сеансы: CSRF после перезапуска тот же", s == 200, j)
+        s, j = a.post("/api/session/revoke", {"id": "../../x"})
+        check("сеансы: мусорный id отклонён", s == 400, j)
+        c5 = C(); c5.login()
+        s, j = a.get("/api/sessions")
+        other = [x["id"] for x in j["sessions"] if not x["me"]]
+        s, j = a.post("/api/session/revoke", {"id": other[0]})
+        check("сеансы: завершение по id", s == 200 and c5.get("/api/overview")[0] == 401 and a.get("/api/overview")[0] == 200, other)
+        # ---------- 1.5 (#21): время жизни сеансов, ротация журнала, частота запросов
+        s, j = a.post("/api/sessions/config", {"idle": "2", "max": "12", "current": "Test-pass-123"})
+        check("сеансы: границы времени проверяются", s == 400, j)
+        s, j = a.post("/api/sessions/config", {"idle": "30", "max": "12", "current": "nope"})
+        check("сеансы: настройка только с паролем", s == 403, j)
+        s, j = a.post("/api/sessions/config", {"idle": "30", "max": "12", "current": "Test-pass-123"})
+        s2, j2 = a.get("/api/sessions")
+        wc = open(os.path.join(dd, "web", "web.conf")).read()
+        check("сеансы: время жизни сохранено без перезапуска", s == 200 and "WEB_SESSION_IDLE" in wc and j2["idle"] == 30 and j2["max"] == 12, (j, j2))
+        c6 = C(); c6.login()
+        sid6 = hashlib.sha256(c6.cookie.split("=", 1)[1].encode()).hexdigest()
+
+        def age_c6():
+            sf = os.path.join(dd, "web", "sessions.json")
+            x = json.load(open(sf))
+            x["sessions"][sid6]["seen"] -= 31 * 60
+            open(sf, "w").write(json.dumps(x))
+        pid = restart_panel(pid, before=age_c6)
+        check("сеансы: простой дольше настройки — выход", c6.get("/api/overview")[0] == 401 and a.get("/api/overview")[0] == 200)
+        a.post("/api/sessions/config", {"idle": "120", "max": "12", "current": "Test-pass-123"})
+        af = os.path.join(dd, "web", "audit.log")
+        with open(af, "a") as f:
+            f.write(("2026-01-01 00:00:00 127.0.0.1 admin old-entry\n") * 13000)
+        a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        a.post("/api/tunnel/label", {"name": "awgmain", "label": ""})
+        s, j = a.get("/api/logs?kind=audit&n=3000")
+        check("журнал действий: ротация в audit.log.1, просмотр видит оба", os.path.exists(af + ".1") and os.path.getsize(af) < 4096
+              and "old-entry" in j["text"] and " label " in j["text"].splitlines()[-1], (os.path.getsize(af), j["text"][-200:]))
+
+        def low_rate():
+            with open(os.path.join(dd, "web", "web.conf"), "a") as f:
+                f.write("WEB_RATE=30\n")
+        pid = restart_panel(pid, before=low_rate)
+        codes = [a.req("GET", "/api/overview", raw=True) for _ in range(35)]
+        lim = [r for st_, b_, r in codes if st_ == 429]
+        check("частота API: сверх лимита — 429 с Retry-After", len(lim) >= 4 and int(lim[0].getheader("Retry-After")) > 0, [c[0] for c in codes])
+
+        def norm_rate():
+            wf = os.path.join(dd, "web", "web.conf")
+            keep = "".join(x for x in open(wf) if not x.startswith("WEB_RATE="))
+            open(wf, "w").write(keep)
+        pid = restart_panel(pid, before=norm_rate)
+        check("частота API: после снятия лимита работает", a.get("/api/overview")[0] == 200)
         s, j = a.get("/api/settings/export")
         check("экспорт настроек без секретов", s == 200 and j["format"] == "udr-amnezia-settings" and "PrivateKey" not in json.dumps(j)
               and j["settings"]["RECOVER_SEC"] == "900", j)
         j["settings"]["RECOVER_SEC"] = "1200"
-        s, r = a.post("/api/settings/import", {"data": j})
+        s, r = a.post("/api/settings/import", {"data": j, "current": "wrong"})
+        check("импорт настроек без верного пароля запрещён (#21)", s == 403 and "RECOVER_SEC=1200" not in open(os.path.join(dd, "awg.env")).read(), r)
+        s, r = a.post("/api/settings/import", {"data": j, "current": "Test-pass-123"})
         check("импорт настроек", s == 200 and "RECOVER_SEC=1200" in open(os.path.join(dd, "awg.env")).read(), r)
-        s, j = a.post("/api/settings/import", {"data": {"format": "other"}})
+        s, j = a.post("/api/settings/import", {"data": {"format": "other"}, "current": "Test-pass-123"})
         check("импорт настроек: чужой файл", s == 400, j)
         s, j = a.get("/api/web")
         check("настройки панели читаются", s == 200 and j["port"] == str(PORT), j)
         s, j = a.post("/api/web", {"port": "8443"})
         check("порт UniFi отклонён", s == 400, j)
-        s, j = a.post("/api/web", {"port": str(PORT), "allow": "0.0.0.0/0"})
-        check("панель в интернет не открыть", s == 400, j)
+        for bad in ("0.0.0.0/0", "0.0.0.0/1", "8.8.8.0/24", "192.168.0.0/15", "::/0"):
+            s, j = a.post("/api/web", {"port": str(PORT), "allow": bad})
+            check("панель в интернет не открыть: %s" % bad, s == 400, j)
+        s, j = a.get("/api/system")
+        check("канал по умолчанию — stable", j.get("channel") == "stable", j.get("channel"))
+        s, j = a.post("/api/update/channel", {"channel": "beta"})
+        chf = open(os.path.join(dd, ".channel")).read()
+        check("канал: переключение на beta записано", s == 200 and "AWG_CHANNEL=beta" in chf and "AWG_BRANCH=main" in chf, chf)
+        s, j = a.post("/api/update/channel", {"channel": "branch", "branch": "../../etc"})
+        check("канал: опасное имя ветки отклонено", s == 400, j)
+        s, j = a.post("/api/update/channel", {"channel": "stable"})
+        s, j = a.post("/api/update/check", {})
+        check("проверка обновлений: stable без релизов → ветка main", s == 200 and j["channel"] == "stable" and j["ref"] == "main" and j["kind"] == "branch"
+              and "AWG_CHANNEL=stable" in j["cmd"], j)
+        s, j = a.post("/api/bins/check", {"force": True})
+        check("бинарники: GitHub недоступен → неизвестно, без ложного «обновить»", s == 200 and not j["update"] and all(x["state"] == "unknown" for x in j["items"]), j)
+        open(os.path.join(LAB, "stub", "gh"), "w").close()
+        s, j = a.post("/api/bins/check", {"force": True})
+        it = {x["name"]: x for x in j.get("items", [])}
+        check("бинарники: amneziawg-go устарел, awg актуален (тег из списка без мусора)", s == 200 and j["update"]
+              and it["amneziawg-go"]["state"] == "update" and it["amneziawg-go"]["latest"] == "v3.1.20260901"
+              and it["awg"]["state"] == "ok" and it["awg"]["installed"] == "v3.1.20260812" and "--bins-update" in j["cmd"], j)
+        go = os.path.join(dd, "amneziawg-go")
+        with open(os.path.join(dd, ".binsver"), "w") as f:
+            f.write("amneziawg-go v3.1.20260901 %s\n" % hashlib.sha256(open(go, "rb").read()).hexdigest())
+        s, j = a.post("/api/bins/check", {})
+        check("бинарники: тег сборки из .binsver (сумма совпала)", s == 200 and not j["update"] and j["items"][0]["installed"] == "v3.1.20260901", j)
+        os.remove(os.path.join(LAB, "stub", "gh")); os.remove(os.path.join(dd, ".binsver"))
+        for v, upd, older in (("1.4.3", False, True), ("99.0.0", True, False), (PANEL_VERSION, False, False)):
+            open(os.path.join(LAB, "stub", "ver"), "w").write(v + "\n")
+            s, j = a.post("/api/update/check", {})
+            check("проверка обновлений: в канале %s — %s" % (v, "обновление" if upd else "старее, не предлагать" if older else "актуально"),
+                  s == 200 and j["update"] is upd and j["older"] is older, j)
+        os.remove(os.path.join(LAB, "stub", "ver"))
         s, j = a.post("/api/update/run", {})
         check("обновление запускается отдельной службой", s == 200 and "awg-update" in open(os.path.join(LAB, "systemd-run.log")).read(), j)
         s, j = a.get("/api/update/log")
@@ -353,6 +472,160 @@ def main():
         check("Telegram: мусор в chat id отклонён", s == 400, j)
         s, j = a.get("/api/telegram")
         check("Telegram: чтение без токена целиком", s == 200 and j["chat"] == "111 222" and j["viewers"] == "333" and "A" * 35 not in j["token"], j)
+
+        # ---------- 1.5 (#10): длинная история и CSV
+        h0 = int(time.time()) // 3600 * 3600
+        hrs = [{"t": h0 - k * 3600, "n": 60, "active": "awgmain", "tun": {"awgmain": {"rx": 1000, "tx": 100, "rtt": 40.0, "loss": 0.0, "up": 100.0},
+                "awgbackup": {"rx": 10, "tx": 1, "rtt": None, "loss": None, "up": 0.0}}, "sys": {"cpu": 5.0, "mem": 50.0, "temp": None}} for k in range(720, 0, -1)]
+        pid = restart_panel(pid, before=lambda: json.dump({"points": [], "hours": hrs}, open(os.path.join(dd, "web", "history.json"), "w")))
+        s, j = a.get("/api/history?range=7d")
+        check("история 7 дней: сводки часов", s == 200 and 160 <= len(j.get("hours", [])) <= 168 and "awgmain" in j["hours"][0]["tun"], len(j.get("hours", [])))
+        s, j = a.get("/api/history?range=30d")
+        check("история 30 дней", s == 200 and 700 <= len(j.get("hours", [])) <= 720, len(j.get("hours", [])))
+        s, j = a.get("/api/history?range=1y")
+        check("история: период проверяется", s == 400, j)
+        s, b, r = a.get("/api/history.csv?range=7d", raw=True)
+        lines = b.decode().splitlines()
+        check("CSV: заголовок, строки по туннелям, файл", s == 200 and lines[0].startswith("time,tunnel,active,rx_bps") and len(lines) > 300
+              and "attachment" in (r.getheader("Content-Disposition") or "") and ",awgbackup," in b.decode(), lines[:2])
+        code = ("import sys, os; sys.path.insert(0, %r); import panel as P\n"
+                "pts=[{'t':7200+i*60,'active':'m','tun':{'m':{'rx':100,'tx':10,'hs':30 if i<45 else 500,'loss':'2','rtt':'40'}}} for i in range(60)]\n"
+                "h=P.hour_summary(7200, pts, [{'cpu':10,'mem':50,'temp':60}])\n"
+                "print(h['tun']['m']['up'], h['tun']['m']['rtt'], h['tun']['m']['loss'], h['tun']['m']['rx'], h['active'], h['sys']['temp'])") % os.path.join(R, "awg/web")
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=dict(os.environ, DD=dd, AWG_WEBD=tempfile.mkdtemp())).stdout.strip()
+        check("сводка часа: доля handshake, средние RTT и потери", out == "75.0 40.0 2.0 100 m 60", out)
+
+        # ---------- 1.5 (#5): Home Assistant
+        s, j = a.post("/api/ha", {"host": "evil;rm", "port": "1883"})
+        check("HA: адрес брокера проверяется", s == 400, j)
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "port": "1883", "user": "ha", "pass": "mqtt-pass-1", "tls": "no",
+                                  "prefix": "homeassistant", "interval": "30", "allow_reboot": False, "enabled": False})
+        he = open(os.path.join(dd, "ha.env")).read()
+        check("HA: настройки сохранены, файл 600", s == 200 and 'MQTT_HOST="192.168.1.10"' in he and 'HA_ALLOW_REBOOT="no"' in he
+              and oct(os.stat(os.path.join(dd, "ha.env")).st_mode & 0o777) == "0o600", (j, he))
+        s, j = a.get("/api/ha")
+        check("HA: пароль в браузер не отдаётся", s == 200 and j["pass_set"] and "mqtt-pass-1" not in json.dumps(j), j)
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "port": "1883", "user": "ha", "pass": "", "tls": "no", "prefix": "homeassistant",
+                                  "interval": "30", "allow_reboot": False, "enabled": False})
+        check("HA: пустой пароль сохраняет прежний", 'MQTT_PASS="mqtt-pass-1"' in open(os.path.join(dd, "ha.env")).read())
+        s, j = a.post("/api/ha", {"host": "192.168.1.10", "pass": 'x"; reboot; "', "interval": "30"})
+        check("HA: опасный пароль отклонён", s == 400, j)
+
+        # ---------- 1.5 (#12): автокопия вне роутера
+        with open(os.path.join(dd, "awg.env"), "a") as f:
+            f.write("VPS_IP=203.0.113.9\n")
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "keep": "7", "vps": True, "vps_dir": "/root/bk", "vps_keep": "14"})
+        check("автокопия: без пароля расписание не включить", s == 400 and "пароль" in j.get("error", ""), j)
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "pass": "bk-pass-12345", "vps": True, "vps_dir": "/root/../etc", "vps_keep": "14"})
+        check("автокопия: папка с .. отклонена", s == 400, j)
+        s, j = a.post("/api/backup/auto", {"auto": "daily", "pass": "bk-pass-12345", "vps": True, "vps_host": "x;reboot"})
+        check("автокопия: адрес VPS проверяется", s == 400, j)
+        s, j = a.post("/api/backup/auto", {"auto": "weekly", "keep": "5", "pass": "bk-pass-12345", "vps": True, "vps_host": "", "vps_port": "2222",
+                                           "vps_user": "root", "vps_dir": "/root/udr-backups", "vps_keep": "10", "tg": True})
+        be, bp = os.path.join(dd, "backup.env"), os.path.join(dd, "backup.pass")
+        check("автокопия: настройки и пароль сохранены (600), расписание применено", s == 200 and 'BK_AUTO="weekly"' in open(be).read()
+              and 'BK_VPS_PORT="2222"' in open(be).read() and open(bp).read().strip() == "bk-pass-12345"
+              and oct(os.stat(bp).st_mode & 0o777) == "0o600" and "weekly" in j.get("msg", ""), j)
+        with open(os.path.join(dd, "backups", "auto.status"), "a") as f:
+            f.write("1791800000|OK|awg-auto-1.tgz.enc|VPS: ok\n1791900000|FAIL||VPS: Permission denied\n")
+        s, j = a.get("/api/backup/auto")
+        check("автокопия: пароль не отдаётся, история новыми сверху", s == 200 and j["pass_set"] and "bk-pass" not in json.dumps(j)
+              and j["auto"] == "weekly" and j["vps_host_default"] and j["history"][0]["ok"] is False and j["history"][1]["file"] == "awg-auto-1.tgz.enc", j)
+        s, j = a.post("/api/backup/auto", {"auto": "weekly", "keep": "5", "pass": "", "vps": False, "tg": False})
+        check("автокопия: пустой пароль сохраняет прежний", s == 200 and open(bp).read().strip() == "bk-pass-12345", j)
+        s, j = a.post("/api/backup/auto/run", {})
+        check("автокопия: «Сделать сейчас» — отдельной службой", s == 200 and "awg-backup-run" in open(os.path.join(LAB, "systemd-run.log")).read(), j)
+        s, j = a.post("/api/backup/auto/test", {})
+        check("автокопия: проверка VPS", s == 200 and j["ok"] and "VPS" in j["msg"], j)
+
+        # ---------- 1.5 (#13): свой VPS
+        s, j = a.post("/api/vps", {"host": "x;reboot", "port": "22", "user": "root"})
+        check("VPS: адрес проверяется", s == 400, j)
+        s, j = a.post("/api/vps", {"host": "", "port": "2222", "user": "root"})
+        vf = os.path.join(dd, "vps.env")
+        check("VPS: настройки сохранены (600)", s == 200 and 'VPS_PORT="2222"' in open(vf).read() and oct(os.stat(vf).st_mode & 0o777) == "0o600", j)
+        s, j = a.get("/api/vps")
+        check("VPS: адрес по умолчанию из awg.env, ключа нет", s == 200 and j["host_default"] == "203.0.113.9" and j["port"] == "2222" and not j["key"]
+              and isinstance(j["tunnels"], list), j)
+        s, j = a.post("/api/vps/test", {})
+        check("VPS: без ключа роутера — понятная причина", s == 200 and not j["ok"] and "нет ключа роутера" in j["msg"], j)
+        s, j = a.post("/api/vps/run", {"action": "rotate-keys", "current": "wrong"})
+        check("VPS: изменения только с паролем", s == 403, j)
+        s, j = a.post("/api/vps/run", {"action": "rm -rf", "current": "Test-pass-123"})
+        check("VPS: неизвестное действие отклонено", s == 400, j)
+        s, j = a.post("/api/vps/run", {"action": "obfs", "tunnel": "awg;x", "current": "Test-pass-123"})
+        check("VPS: имя туннеля проверяется", s == 400, j)
+        s, j = a.post("/api/vps/run", {"action": "update", "current": "Test-pass-123"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("VPS: действие запускается отдельной службой", s == 200 and "--unit=awg-vps-job" in srl and "vps.sh update" in srl, (j, srl[-300:]))
+        s, j = a.get("/api/vps/job")
+        check("VPS: журнал действия", s == 200 and "обновление AmneziaWG на VPS — запущено из панели" in j["text"], j)
+
+        # ---------- 1.5 (#14): вебхук и ntfy
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
+        check("хуки: опасный адрес отклонён", s == 400, j)
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/api/webhook/SECRETID", "header": 'X-Key: a"b'})
+        check("хуки: заголовок с кавычкой отклонён", s == 400, j)
+        s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/api/webhook/SECRETID", "header": "Authorization: Bearer hsec",
+                                     "ntfy": "https://ntfy.sh/udr-test", "ntfy_token": "tk_abc"})
+        hf = os.path.join(dd, "hooks.env")
+        check("хуки: сохранены (600)", s == 200 and 'HOOK_URL="https://hooks.example.com/api/webhook/SECRETID"' in open(hf).read()
+              and oct(os.stat(hf).st_mode & 0o777) == "0o600", j)
+        s, j = a.get("/api/hooks")
+        check("хуки: путь вебхука, заголовок и токен в браузер не отдаются", s == 200 and j["hook"] == "https://hooks.example.com/…" and j["header_set"]
+              and j["ntfy_token_set"] and "SECRETID" not in json.dumps(j) and "hsec" not in json.dumps(j) and "tk_abc" not in json.dumps(j), j)
+        s, j = a.post("/api/hooks", {"ntfy": "https://ntfy.sh/udr-test"})
+        hv = open(hf).read()
+        check("хуки: пустые поля сохраняют прежние значения", s == 200 and "SECRETID" in hv and "hsec" in hv and "tk_abc" in hv, hv)
+        s, j = a.post("/api/hooks/test", {})
+        check("хуки: тестовое сообщение (настоящий notify.sh, заглушка curl)", s == 200 and j["ok"] and j["msg"] == "отправлено", j)
+        s, j = a.post("/api/hooks", {"hook_clear": True, "ntfy": ""})
+        check("хуки: всё убрано — файл удалён", s == 200 and not os.path.exists(hf), j)
+
+        # ---------- 1.5 (#6): токены API
+        s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
+        check("токен: без пароля не создать", s == 403, j)
+        s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "Test-pass-123"})
+        rtok = j.get("token", "")
+        check("токен: создан, показан один раз", s == 200 and rtok.startswith("awg_"), j)
+        s, j = a.post("/api/token/create", {"name": "ops", "role": "admin", "days": 30, "current": "Test-pass-123"})
+        atok, atid = j.get("token", ""), j.get("id", "")
+        s, j = a.post("/api/token/create", {"name": "x" * 50, "role": "read", "days": 0, "current": "Test-pass-123"})
+        check("токен: название проверяется", s == 400, j)
+        s, j = a.post("/api/token/create", {"name": "bad", "role": "root", "days": 0, "current": "Test-pass-123"})
+        check("токен: роль проверяется", s == 400, j)
+        tj = open(os.path.join(dd, "web", "tokens.json")).read()
+        check("токен: в файле только хэш, права 600", rtok not in tj and hashlib.sha256(rtok.encode()).hexdigest() in tj
+              and oct(os.stat(os.path.join(dd, "web", "tokens.json")).st_mode & 0o777) == "0o600")
+        s, j = a.get("/api/tokens")
+        check("токен: список без хэшей", s == 200 and len(j["tokens"]) == 2 and "hash" not in json.dumps(j), j)
+        r_ = C(); bh = lambda t: {"Authorization": "Bearer " + t}
+        s, j = r_.get("/api/overview", headers=bh(rtok))
+        check("токен read: чтение работает", s == 200 and "tunnels" in j, s)
+        s, j = r_.req("POST", "/api/tunnel/auto", {}, headers=bh(rtok))
+        check("токен read: изменения запрещены", s == 403, j)
+        s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
+        check("токен admin: управление без CSRF", s == 200, j)
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET"), ("/api/vps", "GET")):
+            s, j = r_.req(m, path, headers=bh(atok))
+            check("токен admin: %s только по паролю" % path, s == 403, j)
+        s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))
+        s2, j2 = r_.req("POST", "/api/tunnel/export", {"name": "awgmain", "current": ""}, headers=bh(atok))
+        s3, b3, _ = r_.req("GET", "/api/backup/file/x.tgz", headers=bh(atok), raw=True)
+        check("токен admin: перезагрузка, ключи и копии недоступны", s == 403 and s2 == 403 and s3 == 403, (s, s2, s3))
+        s, j = r_.get("/api/overview", headers=bh("awg_" + "A" * 43))
+        check("токен: неверный → 401", s == 401, j)
+        s, j = a.get("/api/tokens")
+        used = {x["name"]: x for x in j["tokens"]}
+        check("токен: отмечено последнее использование", used["ha"]["last_used"] > 0 and used["ha"]["last_ip"] == "127.0.0.1", used)
+        s, j = a.post("/api/token/revoke", {"id": atid})
+        s2, j2 = r_.get("/api/overview", headers=bh(atok))
+        check("токен: отозванный не работает", s == 200 and s2 == 401, (j, s2))
+        pid = restart_panel(pid)
+        s, j = r_.get("/api/overview", headers=bh(rtok))
+        check("токен: работает после перезапуска панели", s == 200, s)
+        aud = open(os.path.join(dd, "web", "audit.log")).read()
+        check("токен: действия в журнале от имени token:…", "token:ops" in aud and "token-create" in aud and "token-revoke" in aud, aud[-400:])
 
         # ---------- 1.4.3: версия страницы, ping с выбором способа
         s, b, r = a.get("/app.js", raw=True)

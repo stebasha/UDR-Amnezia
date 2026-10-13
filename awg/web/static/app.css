@@ -420,3 +420,4 @@ details.fgroup[open] > summary { margin-bottom: 12px; }
   .side::-webkit-scrollbar { display: none; }
   .side .nav { flex: 0 0 auto; min-width: 68px; }
 }
+.blist { margin: 6px 0; padding-left: 18px; }

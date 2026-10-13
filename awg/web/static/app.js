@@ -1,4 +1,5 @@
-/* UDR-Amnezia — веб-панель. Без внешних библиотек; совместимо с CSP (без inline-скриптов и стилей). */
+/* UDR-Amnezia — веб-панель. Без внешних библиотек; совместимо с CSP (без inline-скриптов и стилей).
+   Файл собран из awg/web/src/*.js командой python3 tools/build-app.py: правьте части там, не этот файл. */
 'use strict';
 (function () {
   // ===================================================================== язык (ru по умолчанию, en — словарь lang-en.js)
@@ -481,7 +482,7 @@
     start: ['accent', 'power', T('Запуск')], stop: ['warn', 'power', T('Остановка')], switch: ['warn', 'switch', T('Переключение')],
     degrade: ['warn', 'activity', T('Качество')], return: ['ok', 'okc', T('Возврат')], force: ['accent', 'switch', T('Вручную')],
     auto: ['accent', 'refresh', T('Авто')], both: ['crit', 'alert', T('Нет каналов')], refused: ['warn', 'x', T('Отклонено')],
-    drift: ['crit', 'alert', T('PBR изменён')], reboot: ['warn', 'power', T('Перезагрузка')],
+    drift: ['crit', 'alert', T('PBR изменён')], reboot: ['warn', 'power', T('Перезагрузка')], firmware: ['accent', 'download', T('Прошивка')], backup: ['ok', 'archive', T('Копия')], vps: ['accent', 'server', 'VPS'],
   };
   function dotFor(st) { return { active: 'ok pulse', standby: 'ok', nohs: 'warn', down: 'crit' }[st] || ''; }
   function evRow(e) {
@@ -549,7 +550,8 @@
     for (let i = 0; i <= nx; i++) {
       const t = t0 + (t1 - t0) * i / nx;
       const d = new Date(t * 1000);
-      c.fillText(pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (t1 - t0 < 1200 ? ':' + pad2(d.getSeconds()) : ''), Math.min(Math.max(X(t), L + 20), W - R - 20), H - B + 7);
+      // больше двух суток — подписи датами (7 и 30 дней), иначе временем
+      c.fillText(t1 - t0 > 2 * 86400 ? pad2(d.getDate()) + '.' + pad2(d.getMonth() + 1) : pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + (t1 - t0 < 1200 ? ':' + pad2(d.getSeconds()) : ''), Math.min(Math.max(X(t), L + 20), W - R - 20), H - B + 7);
     }
     for (const s of series) {
       if (!s.points.length) continue;
@@ -672,7 +674,16 @@
     tunSel.style.width = 'auto'; tunSel.style.height = '30px';
     const seg = el('div', { class: 'seg' });
     const segBtn = (m, t) => el('button', { class: S.histMode === m ? 'on' : '', onclick: (e) => { S.histMode = m; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === e.currentTarget)); drawMain(); } }, t);
-    add(seg, [segBtn('live', T('10 мин')), segBtn('day', T('24 ч'))]);
+    add(seg, [segBtn('live', T('10 мин')), segBtn('day', T('24 ч')), segBtn('7d', T('7 дн')), segBtn('30d', T('30 дн'))]);
+    // выгрузка истории в CSV (#10): за выбранный период (10 минут — как сутки)
+    const csv = el('a', { class: 'btn sm ghost icon', title: T('Скачать CSV'), 'aria-label': T('Скачать CSV') }, icon('download', 'sm'));
+    csv.addEventListener('click', () => { csv.href = '/api/history.csv?range=' + ({ live: '24h', day: '24h' }[S.histMode] || S.histMode); });
+    S.histLong = S.histLong || {};
+    const longPts = async (rg) => {
+      const c = S.histLong[rg];
+      if (!c || Date.now() - c.at > 600000) S.histLong[rg] = { at: Date.now(), hours: (await api('/api/history?range=' + rg)).hours };
+      return S.histLong[rg].hours;
+    };
     tunSel.addEventListener('change', () => { S.chartTun = tunSel.value; drawMain(); });
     let hist = [];
     add(main, [
@@ -683,7 +694,7 @@
         card(T('События'), evs, { icon: 'activity', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/logs' }, T('Все')) })),
       el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-2' },
-        card(T('Трафик'), el('div', { class: 'stack' }, chartWrap, legend), { icon: 'activity', id: 'traffic', right: el('div', { class: 'row' }, tunSel, seg) }),
+        card(T('Трафик'), el('div', { class: 'stack' }, chartWrap, legend), { icon: 'activity', id: 'traffic', right: el('div', { class: 'row' }, tunSel, seg, csv) }),
         card(T('Службы'), svcs, { icon: 'cpu', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/settings/services' }, T('Управление')) })),
       el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-2' },
@@ -710,12 +721,22 @@
         drawChart(chartWrap, [
           { name: T('Получено'), color: '--chart-rx', fill: true, points: q.map((p) => [p[0], p[1]]) },
           { name: T('Отправлено'), color: '--chart-tx', points: q.map((p) => [p[0], p[2]]) }]);
-      } else {
+      } else if (S.histMode === 'day') {
         const pts = hist.filter((p) => p.tun && p.tun[t]);
         drawChart(chartWrap, [
           { name: T('Получено'), color: '--chart-rx', fill: true, points: pts.map((p) => [p.t, p.tun[t].rx]) },
           { name: T('Отправлено'), color: '--chart-tx', points: pts.map((p) => [p.t, p.tun[t].tx]) }],
         { empty: T('История копится раз в минуту — загляните позже') });
+      } else {
+        const mode = S.histMode;
+        longPts(mode).then((hs) => {
+          if (S.histMode !== mode || S.chartTun !== t) return;
+          const pts = hs.filter((p) => p.tun && p.tun[t]);
+          drawChart(chartWrap, [
+            { name: T('Получено'), color: '--chart-rx', fill: true, points: pts.map((p) => [p.t, p.tun[t].rx]) },
+            { name: T('Отправлено'), color: '--chart-tx', points: pts.map((p) => [p.t, p.tun[t].tx]) }],
+          { empty: T('Сводки копятся раз в час — загляните позже') });
+        }).catch(err);
       }
       const r = lastRate(t);
       replace(legend, el('span', null, el('i', null), T('Получено '), el('b', null, r ? fmtBits(r[1]) : '—')),
@@ -1135,8 +1156,9 @@
         t.role === 'extra' ? [el('div', { class: 'spacer' }), el('h3', null, T('Удалить туннель')),
           el('p', { class: 'muted small' }, T('Туннель будет остановлен и убран из сторожа вместе с его правилами. Файл конфига и история версий останутся на роутере.')),
           el('button', { class: 'btn danger', onclick: async () => {
-            if (!await confirmBox(T('Удалить ') + t.name + '?', T('Туннель будет остановлен и убран из сторожа.'), T('Удалить'), true)) return;
-            try { ok((await api('/api/tunnel/remove', { name: t.name })).msg); m.close(); reload(); } catch (ex) { err(ex); }
+            const pw = await promptPw(T('Удалить ') + t.name + '?', T('Туннель будет остановлен и убран из сторожа.'));
+            if (pw == null) return;
+            try { ok((await api('/api/tunnel/remove', { name: t.name, current: pw })).msg); m.close(); reload(); } catch (ex) { err(ex); }
           } }, icon('trash', 'sm'), T('Удалить ') + t.name)]
           : el('p', { class: 'small muted' }, T('Основной и запасной туннели удаляются установщиком: install.sh → Компоненты → Туннели.'))]);
       add(foot, [el('span', { class: 'grow' }), el('button', { class: 'btn', onclick: () => m.close() }, T('Закрыть'))]);
@@ -1617,13 +1639,13 @@
   }
 
   // ===================================================================== НАСТРОЙКИ
-  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['system', T('Система и обновление')]];
+  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['vps', T('Свой VPS')], ['system', T('Система и обновление')]];
   PAGES.settings = function (main, sub) {
     const cur = SET_TABS.some((t) => t[0] === sub) ? sub : 'failover';
     add(main, [head(T('Настройки')), tabs(SET_TABS, cur, (id) => { location.hash = '#/settings/' + id; })]);
     const body = el('div', { class: 'stack' });
     main.appendChild(body);
-    ({ failover: setFailover, services: setServices, telegram: setTelegram, users: setUsers, web: setWeb, backups: setBackups, system: setSystem })[cur](body);
+    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, vps: setVps, system: setSystem })[cur](body);
   };
   async function setFailover(body) {
     try {
@@ -1690,6 +1712,153 @@
       r.muted && r.muted.length ? el('div', { class: 'small muted' }, T('Уведомления временно выключены в чатах: ') + r.muted.join(', ')) : null,
       sw(nw, T('Не слать напрямую через WAN'), T('Если туннели лежат, уведомления не пойдут мимо VPN (тише, но можно не узнать о сбое).')),
       res), { icon: 'tg', foot: [test, save] }));
+    const hc = await hooksCard();
+    if (hc) body.appendChild(hc);
+  }
+  // вебхук и ntfy (#14): те же события, что в Telegram. Адрес вебхука, заголовок и токен ntfy в браузер не возвращаются.
+  async function hooksCard() {
+    let r;
+    try { r = await api('/api/hooks'); } catch (e) { err(e); return null; }
+    const keep = T('задан — оставьте пустым, чтобы не менять');
+    const hook = el('input', { class: 'input mono', placeholder: r.hook_set ? r.hook + ' (' + keep + ')' : 'https://example.com/hook', spellcheck: 'false', autocomplete: 'off' });
+    const hdr = el('input', { class: 'input mono', placeholder: r.header_set ? keep : 'Authorization: Bearer …', spellcheck: 'false', autocomplete: 'off' });
+    const ntfy = el('input', { class: 'input mono', value: r.ntfy, placeholder: 'https://ntfy.sh/my-udr-topic', spellcheck: 'false' });
+    const ntok = el('input', { class: 'input mono', type: 'password', placeholder: r.ntfy_token_set ? keep : T('если тема закрыта'), autocomplete: 'off' });
+    const clr = (label, key) => r[key] ? el('label', { class: 'small muted' }, el('input', { type: 'checkbox', 'data-k': key }), ' ' + label) : null;
+    const c1 = clr(T('убрать вебхук'), 'hook_set'), c2 = clr(T('убрать заголовок'), 'header_set'), c3 = clr(T('убрать токен'), 'ntfy_token_set');
+    const on = (c) => !!(c && c.querySelector('input').checked);
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => {
+      try {
+        const x = await api('/api/hooks', { hook: hook.value.trim(), header: hdr.value.trim(), ntfy: ntfy.value.trim(), ntfy_token: ntok.value.trim(),
+          hook_clear: on(c1), header_clear: on(c2), ntfy_token_clear: on(c3) });
+        ok(x.msg.split('\n')[0]); hook.value = hdr.value = ntok.value = '';
+      } catch (e) { err(e); }
+    }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Тестовое сообщение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/hooks/test', {}); (x.ok ? ok : err)(x.msg); } catch (e) { err(e); } }));
+    return card(T('Вебхук и ntfy'), el('div', null,
+      el('p', { class: 'muted small' }, T('Те же события, что в Telegram: переключения, падения, возвраты, отчёт, перезагрузка, прошивка, сбой автокопии. Отправляются обычным маршрутом роутера — подойдут адреса в LAN (Home Assistant, свой ntfy).')),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Вебхук (POST, JSON)')), hook, c1, el('span', { class: 'hint' }, T('Тело: {"source","host","level","time","text"}; level — critical, warning, ok или info.'))),
+        el('div', { class: 'field' }, el('label', null, T('Заголовок вебхука')), hdr, c2, el('span', { class: 'hint' }, T('Необязательно, например для авторизации.'))),
+        el('div', { class: 'field' }, el('label', null, T('ntfy: адрес темы')), ntfy, el('span', { class: 'hint' }, T('ntfy.sh или свой сервер; приоритет по важности события.'))),
+        el('div', { class: 'field' }, el('label', null, T('ntfy: токен')), ntok, c3))), { icon: 'bell', foot: [test, save] });
+  }
+  // свой VPS (#13): состояние сервера, обновление AmneziaWG, смена ключей и обфускации на обеих сторонах с откатом
+  async function setVps(body) {
+    let r;
+    try { r = await api('/api/vps'); } catch (e) { err(e); return; }
+    const host = el('input', { class: 'input mono', value: r.host, placeholder: r.host_default || '203.0.113.10', spellcheck: 'false' });
+    const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
+    const user = el('input', { class: 'input mono', value: r.user, spellcheck: 'false' });
+    const out = el('div', { class: 'out hidden' });
+    const show = (text) => { paint(out, text); out.classList.remove('hidden'); };
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => { try { ok((await api('/api/vps', { host: host.value.trim(), port: port.value.trim(), user: user.value.trim() })).msg); } catch (e) { err(e); } }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Проверить подключение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/vps/test', {}); (x.ok ? ok : err)(x.ok ? T('VPS доступен') : T('VPS недоступен')); show(x.msg); } catch (e) { err(e); } }));
+    const st = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Состояние сервера'));
+    st.addEventListener('click', () => busy(st, async () => { try { const x = await api('/api/vps/status', {}); show(x.text); } catch (e) { err(e); } }));
+    const ver = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить версии'));
+    ver.addEventListener('click', () => busy(ver, async () => { try { const x = await api('/api/vps/versions', {}); show(x.text); if (x.update) toast(T('На VPS есть что обновить')); } catch (e) { err(e); } }));
+    const log = el('div', { class: 'out' + (r.log ? '' : ' hidden') });
+    if (r.log) paint(log, r.log);
+    const btns = [];
+    async function follow() {
+      btns.forEach((b) => { b.disabled = true; });
+      log.classList.remove('hidden');
+      for (let i = 0; i < 300; i++) {
+        let x;
+        try { x = await api('/api/vps/job'); } catch (e) { await new Promise((ok2) => setTimeout(ok2, 3000)); continue; }
+        paint(log, x.text); log.scrollTop = log.scrollHeight;
+        if (!x.running) {
+          const good = /\[код 0\]/.test(x.text);
+          (good ? ok : err)(good ? T('Готово') : T('Не удалось — подробности в журнале ниже'));
+          break;
+        }
+        await new Promise((ok2) => setTimeout(ok2, 3000));
+      }
+      btns.forEach((b) => { b.disabled = false; });
+    }
+    const lab = (n) => { const t = S.ov && S.ov.tunnels.find((x) => x.name === n); return t && t.label ? t.label + ' (' + n + ')' : n; };
+    const tun = el('select', { class: 'input' }, r.tunnels.map((t) => el('option', { value: t }, lab(t))));
+    const job = (action, title, text) => {
+      const b = el('button', { class: 'btn' + (action === 'update' ? '' : ' danger') }, title);
+      b.addEventListener('click', async () => {
+        const pw = await promptPw(title + '?', text);
+        if (pw == null) return;
+        try { ok((await api('/api/vps/run', { action, tunnel: tun.value, current: pw })).msg); follow(); } catch (e) { err(e); }
+      });
+      btns.push(b);
+      return b;
+    };
+    const upd = job('update', T('Обновить AmneziaWG на VPS'), T('Последние релизы amnezia-vpn собираются на VPS из исходников (3–7 минут), сервер перезапускается. Если туннели к VPS не получат handshake — вернутся прежние файлы.'));
+    const rk = job('rotate-keys', T('Сменить ключи'), T('Новые ключи сервера и роутера одновременно. Туннель будет недоступен 10–30 секунд (kill switch держит трафик). Не заработает — обе стороны откатятся.'));
+    const ob = job('obfs', T('Новые параметры обфускации'), T('Новые Jc, Jmin, Jmax, S1, S2, H1–H4 на VPS и роутере одновременно — если провайдер начал узнавать трафик. Туннель будет недоступен 10–30 секунд; не заработает — откат.'));
+    const noTun = !r.tunnels.length;
+    if (noTun) { rk.disabled = true; ob.disabled = true; }
+    add(body, [
+      el('div', { class: 'grid g-2e' },
+        card(T('Подключение к VPS'), el('div', null,
+          el('p', { class: 'muted small' }, T('Роутер входит на ваш VPS по SSH своим ключом, без пароля. Ключ создаёт установщик при настройке VPS.')),
+          el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.key ? 'ok' : 'warn') }, r.key ? T('ключ роутера есть') : T('ключа роутера нет'))),
+          el('div', { class: 'form-grid' },
+            el('div', { class: 'field' }, el('label', null, T('Адрес VPS')), host, el('span', { class: 'hint' }, r.host_default ? T('Пусто — ваш VPS из настройки: ') + r.host_default : T('IP или имя сервера'))),
+            el('div', { class: 'field' }, el('label', null, T('Порт SSH')), port),
+            el('div', { class: 'field' }, el('label', null, T('Пользователь')), user)),
+          r.pub ? el('details', { class: 'fgroup' }, el('summary', null, T('Открытый ключ роутера (для ~/.ssh/authorized_keys на VPS)')), el('pre', { class: 'res' }, r.pub)) : null,
+          out), { icon: 'server', foot: [test, save] }),
+        card(T('Сервер и AmneziaWG'), el('div', null,
+          el('p', { class: 'muted small' }, T('Состояние — только чтение: служба awg-server, handshake роутера, NAT, файрвол, права на ключи, нагрузка и место. Обновление — только из официальных исходников amnezia-vpn.'))),
+        { icon: 'activity', foot: [st, ver, upd] })),
+      card(T('Ключи и обфускация'), el('div', null,
+        el('p', { class: 'muted small' }, noTun ? T('Нет туннеля, у которого Endpoint — этот VPS: менять можно только свой сервер, не сервер провайдера.')
+          : T('Меняется туннель к вашему VPS одновременно на обеих сторонах; перед изменением делаются копии, при неудаче всё откатывается само.')),
+        noTun ? null : el('div', { class: 'field' }, el('label', null, T('Туннель')), tun),
+        log), { icon: 'key', foot: [rk, ob] })]);
+    if (r.running) follow();
+  }
+  // Home Assistant (#5): MQTT discovery — HA сам находит устройство, датчики, выбор канала и кнопки
+  async function setHa(body) {
+    let r;
+    try { r = await api('/api/ha'); } catch (e) { err(e); return; }
+    const host = el('input', { class: 'input mono', value: r.host, placeholder: '192.168.1.10', spellcheck: 'false' });
+    const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
+    const user = el('input', { class: 'input mono', value: r.user, autocomplete: 'off', spellcheck: 'false' });
+    const pass = el('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: r.pass_set ? T('задан — оставьте пустым, чтобы не менять') : '' });
+    const tls = el('select', { class: 'input' }, el('option', { value: 'no' }, T('без TLS (1883)')), el('option', { value: 'yes' }, T('TLS с проверкой сертификата (8883)')), el('option', { value: 'insecure' }, T('TLS без проверки (самоподписанный)')));
+    tls.value = r.tls;
+    const prefix = el('input', { class: 'input mono', value: r.prefix });
+    const interval = el('input', { class: 'input mono', value: r.interval, inputmode: 'numeric' });
+    const en = el('input', { type: 'checkbox', checked: r.enabled || !r.host });
+    const rb = el('input', { type: 'checkbox', checked: r.allow_reboot });
+    const logBox = el('pre', { class: 'res' + (r.log ? '' : ' hidden') }, r.log || '');
+    const sw = (inp, t, h) => el('div', { class: 'setting' }, el('div', { class: 'txt' }, el('b', null, t), el('span', null, h)), el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, inp, el('span', { class: 'knob' }))));
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => {
+      try {
+        const x = await api('/api/ha', { host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), pass: pass.value, tls: tls.value,
+          prefix: prefix.value.trim(), interval: interval.value.trim(), allow_reboot: rb.checked, enabled: en.checked });
+        (x.ok ? ok : err)(x.msg); pass.value = '';
+      } catch (e) { err(e); }
+    }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Проверить подключение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/ha/test', {}); (x.ok ? ok : err)(x.msg); logBox.textContent = x.msg; logBox.classList.remove('hidden'); } catch (e) { err(e); } }));
+    body.appendChild(card('Home Assistant', el('div', null,
+      el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.active ? 'ok' : '') }, r.active ? T('работает') : r.enabled ? T('не работает') : T('выкл'))),
+      el('p', { class: 'muted small' }, T('Через MQTT discovery: в Home Assistant с интеграцией MQTT появится устройство «UDR-Amnezia» — активный канал, связь, handshake, RTT, потери и трафик туннелей, kill switch, процессор, память, температура; выбор канала (авто или туннель) и перезапуск туннелей.')),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Брокер MQTT')), host, el('span', { class: 'hint' }, T('Адрес Mosquitto или брокера Home Assistant в LAN'))),
+        el('div', { class: 'field' }, el('label', null, T('Порт')), port),
+        el('div', { class: 'field' }, el('label', null, T('Логин')), user),
+        el('div', { class: 'field' }, el('label', null, T('Пароль')), pass),
+        el('div', { class: 'field' }, el('label', null, 'TLS'), tls),
+        el('div', { class: 'field' }, el('label', null, T('Префикс discovery')), prefix, el('span', { class: 'hint' }, T('Как в настройках MQTT в HA (обычно homeassistant)'))),
+        el('div', { class: 'field' }, el('label', null, T('Период, с')), interval, el('span', { class: 'hint' }, T('Как часто отправлять состояние: 10–600')))),
+      sw(en, T('Служба awg-ha'), T('Публикует состояние и принимает команды из Home Assistant.')),
+      sw(rb, T('Кнопка «Перезагрузить роутер» в HA'), T('Выключено по умолчанию: любой, кто может писать в брокер MQTT, сможет перезагрузить роутер.')),
+      logBox), { icon: 'activity', foot: [test, save] }));
   }
   async function setUsers(body) {
     let r;
@@ -1756,7 +1925,80 @@
         el('div', { class: 'field' }, el('label', null, T('Новый пароль')), p1, el('span', { class: 'hint' }, T('Не короче 10 символов'))),
         el('div', { class: 'field' }, el('label', null, T('Повторите')), p2),
         el('div', { class: 'field' }, el('label', null, T('Ваш текущий пароль')), cur)), { icon: 'lock', foot: save }),
-      await sessionsCard()]);
+      await sessionsCard(), await tokensCard()]);
+  }
+  // токены API (#6): для Home Assistant, скриптов, мониторинга. Сам токен показывается один раз.
+  const tokHint = (p) => { p.style.padding = '0 16px'; return p; };   // через CSSOM: атрибут style запрещён CSP
+  async function tokensCard() {
+    const tb = el('tbody');
+    const ROLE_T = { read: T('только чтение'), admin: T('управление') };
+    const load = async () => {
+      const r = await api('/api/tokens');
+      replace(tb, r.tokens.length ? r.tokens.map((x) => el('tr', null,
+        el('td', null, el('b', null, x.name), ' ', el('span', { class: 'badge ' + (x.role === 'admin' ? 'warn' : 'outline') }, ROLE_T[x.role] || x.role),
+          x.expired ? el('span', { class: 'badge crit' }, T('истёк')) : null,
+          el('div', { class: 'small muted' }, T('создал ') + x.user + ' · ' + fmtTime(x.created) + (x.expires ? T(' · до ') + fmtTime(x.expires) : T(' · бессрочно')))),
+        el('td', { class: 'nowrap' }, x.last_used ? [fmtAge(Math.floor(Date.now() / 1000) - x.last_used), el('div', { class: 'small muted mono' }, x.last_ip)] : el('span', { class: 'muted' }, T('не использовался'))),
+        el('td', { class: 'r' }, el('button', { class: 'btn sm danger', onclick: async () => {
+          if (!await confirmBox(T('Отозвать токен?'), T('Всё, что пользуется токеном «') + x.name + T('», перестанет получать доступ.'), T('Отозвать'), true)) return;
+          try { await api('/api/token/revoke', { id: x.id }); ok(T('Токен отозван')); load(); } catch (e) { err(e); }
+        } }, T('Отозвать'))))) : el('tr', null, el('td', { class: 'muted' }, T('Токенов нет'))));
+    };
+    load().catch(err);
+    const add = el('button', { class: 'btn sm primary', onclick: () => {
+      const nm = el('input', { class: 'input', maxlength: 40, placeholder: 'home-assistant' });
+      const role = el('select', { class: 'input' }, el('option', { value: 'read' }, T('только чтение')), el('option', { value: 'admin' }, T('управление (переключение каналов, службы, инструменты)')));
+      const days = el('select', { class: 'input' }, [[0, T('бессрочно')], [30, T('30 дней')], [90, T('90 дней')], [365, T('1 год')]].map(([v, t]) => el('option', { value: v }, t)));
+      const pw = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
+      const go = el('button', { class: 'btn primary' }, T('Создать'));
+      const m = modal(T('Новый токен API'), el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Название')), nm, el('span', { class: 'hint' }, T('Кто будет пользоваться: home-assistant, grafana…'))),
+        el('div', { class: 'field' }, el('label', null, T('Права')), role, el('span', { class: 'hint' }, T('Пароли, сеансы, токены, ключи туннелей, перезагрузка и настройки панели недоступны токену никогда.'))),
+        el('div', { class: 'field' }, el('label', null, T('Срок')), days),
+        el('div', { class: 'field' }, el('label', null, T('Ваш текущий пароль')), pw)), [el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), go]);
+      go.addEventListener('click', () => busy(go, async () => {
+        try {
+          const x = await api('/api/token/create', { name: nm.value.trim(), role: role.value, days: +days.value, current: pw.value });
+          m.close(); load();
+          const box = el('input', { class: 'input mono', readonly: 'readonly', value: x.token });
+          const cp = el('button', { class: 'btn primary', onclick: async () => { try { await navigator.clipboard.writeText(x.token); ok(T('Скопировано')); } catch (e) { box.select(); } } }, icon('copy', 'sm'), T('Копировать'));
+          modal(T('Токен создан'), el('div', { class: 'stack' },
+            el('div', { class: 'alert warn' }, icon('key'), el('div', null, T('Скопируйте токен сейчас: повторно он не показывается. Храните как пароль.'))), box,
+            el('p', { class: 'small muted' }, T('Пример: '), el('code', null, 'curl -k -H "Authorization: Bearer ' + x.token.slice(0, 8) + '…" https://' + location.host + '/api/overview'))),
+          [cp], { sticky: true });
+          setTimeout(() => box.select(), 50);
+        } catch (e) { err(e); }
+      }));
+    } }, icon('plus', 'sm'), T('Создать токен'));
+    return card(T('Токены API'), el('div', null, tokHint(el('p', { class: 'muted small' }, T('Для Home Assistant, скриптов и мониторинга: заголовок Authorization: Bearer <токен>. Доступ только из локальной сети.'))),
+      el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: add });
+  }
+  async function sessionsCard() {
+    const tb = el('tbody');
+    const idle = el('input', { class: 'input mono', inputmode: 'numeric' });
+    const mx = el('input', { class: 'input mono', inputmode: 'numeric' });
+    const load = async () => {
+      const r = await api('/api/sessions');
+      if (document.activeElement !== idle && document.activeElement !== mx) { idle.value = r.idle; mx.value = r.max; }
+      replace(tb, r.sessions.map((x) => el('tr', null,
+        el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, T('этот')) : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
+        el('td', null, el('span', { class: 'mono' }, x.ip)),
+        el('td', { class: 'nowrap' }, T('вход ') + fmtTime(x.born), el('div', { class: 'small muted' }, T('активность ') + fmtAge(Math.floor(Date.now() / 1000) - x.seen))),
+        el('td', { class: 'r' }, x.me ? null : el('button', { class: 'btn sm danger', onclick: async () => { try { await api('/api/session/revoke', { id: x.id }); load(); } catch (e) { err(e); } } }, T('Завершить'))))));
+    };
+    load().catch(err);
+    const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok(T('Остальные сеансы завершены')); load(); } catch (e) { err(e); } } }, T('Завершить остальные'));
+    // время жизни сеансов (#21)
+    const lsave = el('button', { class: 'btn sm' }, T('Сохранить'));
+    lsave.addEventListener('click', async () => {
+      const pw = await promptPw(T('Время жизни сеансов'), T('Сеансы, вышедшие за новые пределы, закроются (и этот тоже, если он старше).'));
+      if (pw == null) return;
+      try { ok((await api('/api/sessions/config', { idle: idle.value.trim(), max: mx.value.trim(), current: pw })).msg); load(); } catch (e) { err(e); }
+    });
+    idle.style.width = mx.style.width = '6em';
+    const lim = el('div', { class: 'row wrap small' }, T('Выход без активности через'), idle, T('мин; не дольше'), mx, T('ч с момента входа'), lsave);
+    lim.style.padding = '8px 16px';
+    return card(T('Активные сеансы'), el('div', null, lim, el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb))), { icon: 'key', flush: true, right: all });
   }
   async function setBackups(body) {
     const tb = el('tbody');
@@ -1792,8 +2034,79 @@
     add(body, [
       card(T('Новая копия'), el('div', null, el('p', { class: 'muted' }, T('В копию входят конфиги туннелей с ключами, awg.env, Telegram и пользователи панели. Она шифруется паролем — храните его отдельно. Восстановление: install.sh → Резервная копия.')),
         el('div', { class: 'form-grid' }, el('div', { class: 'field' }, el('label', null, T('Пароль копии')), p1), el('div', { class: 'field' }, el('label', null, T('Повторите')), p2)), res), { icon: 'archive', foot: mk }),
+      await autoBackupCard(load),
       card(T('Копии на роутере'), el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Файл')), el('th', null, T('Создана')), el('th', null, T('Размер')), el('th', null, ''), el('th', null, ''))), tb)), { icon: 'archive', flush: true })]);
     load().catch(err);
+  }
+  // автокопия вне роутера (#12): по расписанию, шифрованная, на свой VPS (scp ключом роутера) и/или документом в Telegram
+  async function autoBackupCard(reloadList) {
+    let r;
+    try { r = await api('/api/backup/auto'); } catch (e) { err(e); return null; }
+    const sched = el('select', { class: 'input' }, el('option', { value: 'no' }, T('выключена')), el('option', { value: 'daily' }, T('ежедневно, ночью')), el('option', { value: 'weekly' }, T('еженедельно, в воскресенье ночью')));
+    sched.value = r.auto;
+    const keep = el('input', { class: 'input mono', value: r.keep, inputmode: 'numeric' });
+    const pass = el('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: r.pass_set ? T('задан — оставьте пустым, чтобы не менять') : T('не короче 8 символов') });
+    const pass2 = el('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
+    const vps = el('input', { type: 'checkbox', checked: r.vps });
+    const host = el('input', { class: 'input mono', value: r.vps_host, placeholder: r.vps_host_default || 'vps.example.com', spellcheck: 'false' });
+    const port = el('input', { class: 'input mono', value: r.vps_port, inputmode: 'numeric' });
+    const user = el('input', { class: 'input mono', value: r.vps_user, spellcheck: 'false' });
+    const dir = el('input', { class: 'input mono', value: r.vps_dir, spellcheck: 'false' });
+    const vkeep = el('input', { class: 'input mono', value: r.vps_keep, inputmode: 'numeric' });
+    const tg = el('input', { type: 'checkbox', checked: r.tg, disabled: !r.tg_ready && !r.tg });
+    const out = el('pre', { class: 'res hidden' });
+    const hist = el('tbody');
+    const paintHist = (h) => replace(hist, h.length ? h.map((x) => el('tr', null,
+      el('td', { class: 'nowrap' }, fmtTime(x.time, true)),
+      el('td', null, el('span', { class: 'badge ' + (x.ok ? 'ok' : 'crit') }, x.ok ? T('успешно') : T('ошибка'))),
+      el('td', { class: 'small' }, x.msg))) : el('tr', null, el('td', { class: 'empty', colspan: 3 }, T('Автокопия ещё не запускалась'))));
+    paintHist(r.history);
+    const vpsBox = el('div', { class: 'form-grid' + (r.vps ? '' : ' hidden') },
+      el('div', { class: 'field' }, el('label', null, T('Адрес VPS')), host, el('span', { class: 'hint' }, r.vps_host_default ? T('Пусто — ваш VPS из настройки: ') + r.vps_host_default : T('IP или имя сервера'))),
+      el('div', { class: 'field' }, el('label', null, T('Порт SSH')), port),
+      el('div', { class: 'field' }, el('label', null, T('Пользователь')), user),
+      el('div', { class: 'field' }, el('label', null, T('Папка на VPS')), dir),
+      el('div', { class: 'field' }, el('label', null, T('Хранить на VPS, копий')), vkeep));
+    vps.addEventListener('change', () => vpsBox.classList.toggle('hidden', !vps.checked));
+    const sw = (inp, t, h) => el('div', { class: 'setting' }, el('div', { class: 'txt' }, el('b', null, t), el('span', null, h)), el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, inp, el('span', { class: 'knob' }))));
+    const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
+    save.addEventListener('click', () => busy(save, async () => {
+      if (pass.value !== pass2.value) { err(T('пароли не совпадают')); return; }
+      try {
+        const x = await api('/api/backup/auto', { auto: sched.value, keep: keep.value.trim(), pass: pass.value, vps: vps.checked, vps_host: host.value.trim(), vps_port: port.value.trim(),
+          vps_user: user.value.trim(), vps_dir: dir.value.trim(), vps_keep: vkeep.value.trim(), tg: tg.checked });
+        (x.ok ? ok : err)(x.msg); if (pass.value) r.pass_set = true; pass.value = pass2.value = '';
+      } catch (e) { err(e); }
+    }));
+    const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Проверить VPS'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/backup/auto/test', {}); (x.ok ? ok : err)(x.ok ? T('VPS доступен') : T('VPS недоступен')); out.textContent = x.msg; out.classList.remove('hidden'); } catch (e) { err(e); } }));
+    const now = el('button', { class: 'btn' }, icon('archive', 'sm'), T('Сделать сейчас'));
+    now.addEventListener('click', () => busy(now, async () => {
+      try {
+        ok((await api('/api/backup/auto/run', {})).msg);
+        const before = r.history.length ? r.history[0].time : 0;
+        for (let i = 0; i < 45; i++) {
+          await new Promise((ok2) => setTimeout(ok2, 2000));
+          const x = await api('/api/backup/auto');
+          if (x.history.length && x.history[0].time !== before && !x.running) { r.history = x.history; paintHist(x.history); (x.history[0].ok ? ok : err)(x.history[0].ok ? T('Автокопия готова') : T('Автокопия не удалась')); reloadList().catch(err); return; }
+        }
+      } catch (e) { err(e); }
+    }));
+    return card(T('Автокопия вне роутера'), el('div', null,
+      el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.timer ? 'ok' : '') }, r.timer ? T('по расписанию') : T('расписание выключено')),
+        el('span', { class: 'badge ' + (r.pass_set ? 'ok' : 'warn') }, r.pass_set ? T('пароль задан') : T('пароль не задан'))),
+      el('p', { class: 'muted small' }, T('Копия шифруется паролем автокопии, после создания проверяется расшифровкой и отправляется на ваш VPS и/или в Telegram администраторам. Пароль хранится на роутере (файл 600) — запишите его отдельно: без него копию не открыть, а при потере роутера он пропадёт вместе с ним.')),
+      el('div', { class: 'form-grid' },
+        el('div', { class: 'field' }, el('label', null, T('Расписание')), sched, el('span', { class: 'hint' }, T('Около 04:20–05:00; пропущенный запуск выполнится после включения роутера'))),
+        el('div', { class: 'field' }, el('label', null, T('Хранить на роутере, копий')), keep),
+        el('div', { class: 'field' }, el('label', null, T('Пароль автокопии')), pass),
+        el('div', { class: 'field' }, el('label', null, T('Повторите')), pass2)),
+      sw(vps, T('На свой VPS'), r.key ? T('По SSH ключом роутера (создаётся установщиком при настройке VPS). Сумма файла сверяется на сервере.') : T('Ключа роутера нет: запустите install.sh → VPS или добавьте ключ вручную.')),
+      vpsBox,
+      sw(tg, T('В Telegram'), r.tg_ready ? T('Файлом администраторам бота (TG_CHAT); «только просмотр» копии не получают.') : T('Сначала настройте Telegram.')),
+      out,
+      el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Запуск')), el('th', null, ''), el('th', null, T('Итог')))), hist))),
+    { icon: 'archive', foot: [now, test, save] });
   }
   async function setSystem(body) {
     let r;
@@ -1801,6 +2114,18 @@
     const upd = el('div');
     const log = el('div', { class: 'out hidden' });
     const chk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить обновления'));
+    // канал обновлений (#8): stable — релизы с проверкой SHA256, beta — ветка main, своя ветка — для проверки до слияния
+    const chanLabel = (u) => (u.channel === 'stable' ? T('канал stable') + (u.kind === 'tag' ? ', ' + T('релиз ') + u.ref : ', ' + T('релизов нет — ветка main'))
+      : u.channel === 'beta' ? T('канал beta, ветка main') : T('ветка ') + u.branch);
+    const chSel = el('select', { class: 'input', 'aria-label': T('Канал обновлений') },
+      el('option', { value: 'stable' }, T('stable — проверенные релизы')), el('option', { value: 'beta' }, T('beta — ветка main')));
+    chSel.style.width = 'auto';
+    if (r.channel === 'branch') chSel.appendChild(el('option', { value: 'branch' }, T('ветка ') + r.branch));
+    chSel.value = r.channel || 'stable';
+    chSel.addEventListener('change', async () => {
+      if (chSel.value === 'branch') return;
+      try { ok((await api('/api/update/channel', { channel: chSel.value })).msg); replace(upd); } catch (e) { err(e); }
+    });
     async function followUpdate() {
       log.classList.remove('hidden');
       let lost = 0;
@@ -1832,11 +2157,30 @@
           if (!await confirmBox(T('Обновить до ') + u.latest + '?', T('Перед обновлением делается копия скриптов. Службы перезапустятся (несколько секунд без трафика PBR). Если после обновления сторож, маршрут или панель не заработают — автоматически вернётся прежняя версия.'), T('Обновить'))) return;
           try { ok((await api('/api/update/run', {})).msg); go.disabled = true; followUpdate(); } catch (e) { err(e); }
         });
-        replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Доступна версия '), el('b', null, u.latest), T(' (у вас ') + u.current + T(', ветка ') + u.branch + ').')),
+        replace(upd, u.latest ? (u.update ? el('div', null, el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Доступна версия '), el('b', null, u.latest), T(' (у вас ') + u.current + ', ' + chanLabel(u) + ').')),
           u.notes ? el('details', { class: 'fgroup' }, el('summary', null, T('Что нового')), el('pre', { class: 'res' }, u.notes)) : null,
           el('div', { class: 'spacer' }), go, el('div', { class: 'small muted' }, T('Или по SSH: '), el('code', null, u.cmd)))
-          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Установлена последняя версия ') + u.current + T(' (ветка ') + u.branch + ').')))
+          : u.older ? el('div', null, el('div', { class: 'alert info' }, icon('info'), el('div', null, T('У вас ') + u.current + T(' — новее, чем в выбранном канале (') + chanLabel(u) + ', ' + u.latest + T('). Обновлять нечего; откат на старую версию — только вручную по SSH: '), el('code', null, u.cmd))))
+          : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Установлена последняя версия ') + u.current + ' (' + chanLabel(u) + ').')))
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
+      } catch (e) { err(e); }
+    }));
+    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11)
+    const bup = el('div');
+    const bchk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить AmneziaWG'));
+    bchk.addEventListener('click', () => busy(bchk, async () => {
+      try {
+        const b = await api('/api/bins/check', { force: true });
+        const row = (x) => el('li', null, el('b', null, x.name), ': ' + (x.installed || T('версия не определяется')) + ' → ',
+          x.state === 'unknown' ? T('релиз не узнать') : x.state === 'ok' ? T('последняя ') + x.latest : el('b', null, x.latest), ' ',
+          el('span', { class: 'muted small' }, '(' + x.repo + ')'));
+        const list = el('ul', { class: 'small blist' }, b.items.map(row));
+        replace(bup, b.items.some((x) => x.state === 'unknown')
+          ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последние релизы на github.com/amnezia-vpn (GitHub недоступен с роутера?)'), list))
+          : b.update
+            ? el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Есть новые официальные релизы AmneziaWG.'), list,
+              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd))))
+            : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Бинарники AmneziaWG актуальны.'), list)));
       } catch (e) { err(e); }
     }));
     const kv = (rows) => el('dl', { class: 'kv' }, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)]));
@@ -1854,13 +2198,15 @@
         dropZone(async (txt) => {
           let data;
           try { data = JSON.parse(txt); } catch (e) { err(T('это не JSON')); return; }
-          try { const x = await api('/api/settings/import', { data }); ok(x.msg.split('\n')[0]); m.close(); } catch (e) { err(e); }
+          const pw = await promptPw(T('Импортировать настройки?'), T('Текущие настройки маршрутизации и переключения будут заменены значениями из файла.'));
+          if (pw == null) return;
+          try { const x = await api('/api/settings/import', { data, current: pw }); ok(x.msg.split('\n')[0]); m.close(); } catch (e) { err(e); }
         }, 'udr-amnezia-settings.json')), []);
     });
     add(body, [
       el('div', { class: 'grid g-2e' },
-        card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')]]),
-          el('div', { class: 'spacer' }), upd, log), { icon: 'info', foot: chk }),
+        card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')], [T('Канал обновлений'), chSel]]),
+          el('div', { class: 'spacer' }), upd, bup, log), { icon: 'info', foot: [chk, bchk] }),
         card(T('Перенос настроек'), el('div', null, el('p', { class: 'muted small' }, T('Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.'))),
           { icon: 'archive', foot: [exp, imp] }))]);
   }
@@ -1901,20 +2247,6 @@
           r.cert_warn ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, r.cert_warn)) : null,
           certKv, el('div', { class: 'spacer' }), found), { icon: 'shield' })),
       el('div', { class: 'row end' }, save)]);
-  }
-  async function sessionsCard() {
-    const tb = el('tbody');
-    const load = async () => {
-      const r = await api('/api/sessions');
-      replace(tb, r.sessions.map((x) => el('tr', null,
-        el('td', null, el('b', null, x.user), x.me ? el('span', { class: 'badge accent' }, T('этот')) : null, el('div', { class: 'small muted' }, (x.ua || '').replace(/\(.*?\)/g, '').slice(0, 60))),
-        el('td', null, el('span', { class: 'mono' }, x.ip)),
-        el('td', { class: 'nowrap' }, T('вход ') + fmtTime(x.born), el('div', { class: 'small muted' }, T('активность ') + fmtAge(Math.floor(Date.now() / 1000) - x.seen))),
-        el('td', { class: 'r' }, x.me ? null : el('button', { class: 'btn sm danger', onclick: async () => { try { await api('/api/session/revoke', { id: x.id }); load(); } catch (e) { err(e); } } }, T('Завершить'))))));
-    };
-    load().catch(err);
-    const all = el('button', { class: 'btn sm', onclick: async () => { try { await api('/api/session/revoke', { id: 'others' }); ok(T('Остальные сеансы завершены')); load(); } catch (e) { err(e); } } }, T('Завершить остальные'));
-    return card(T('Активные сеансы'), el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb)), { icon: 'key', flush: true, right: all });
   }
 
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)

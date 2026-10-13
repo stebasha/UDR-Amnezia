@@ -16,6 +16,7 @@
 #   awgctl report             обезличенный отчёт для issue (ключи и IP скрыты)
 #   awgctl drift [save|repair]   сверка правил и служб с эталоном; repair — вернуть правила набора
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
+#   awgctl vps [test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh)
 DD=${DD:-/data/awg}
 AWG=$DD/awg
 FORCEF=${FORCEF:-/run/awg-force}
@@ -33,6 +34,7 @@ active_from_table(){ ip route show table "$TABLE" 2>/dev/null | awk '$1=="defaul
 
 cmd_status(){
   local a t forced upd
+  # shellcheck source=/dev/null
   [ -r "$STATEF" ] && . "$STATEF"
   a=${ACTIVE:-$(active_from_table)}; forced=${FORCED:-}
   echo "Активный канал : ${a:-нет (трафик PBR блокируется)}${forced:+ (выбран вручную)}"
@@ -55,12 +57,14 @@ cmd_switch(){
   local i
   for i in $(seq 1 30); do
     sleep 1
+    # shellcheck source=/dev/null
     [ -r "$STATEF" ] && . "$STATEF"
     [ "$ACTIVE" = "$n" ] && { echo "переключено: активен $n (вручную). Вернуть автомат: awgctl auto"; return 0; }
     [ -s "$FORCEF" ] || { echo "отклонено: канал $n не отвечает (см. $DD/failover.log)"; return 1; }
   done
   echo "не переключилось за 30 с: сторож не запущен или занят (см. $DD/failover.log)"; return 1
 }
+# shellcheck source=/dev/null
 cmd_auto(){ rm -f "$FORCEF"; sleep 7; [ -r "$STATEF" ] && . "$STATEF"; echo "автоматический режим. Сейчас активен: ${ACTIVE:-?}. Возврат на приоритетный канал — после RECOVER_SEC=${RECOVER_SEC:-600} с стабильной работы."; }
 
 # ping через интерфейс: ICMP, TCP (время подключения, как у сторожа при проверке качества) или auto —
@@ -166,6 +170,7 @@ case "${1:-status}" in
   domain|domain-check) exec "$DD/domain-check.sh" "$2";;
   report)  shift; exec "$DD/report.sh" "$@";;
   drift)   shift; exec "$DD/drift.sh" "$@";;
+  vps)     shift; exec "$DD/vps.sh" "$@";;
   web)     shift
            case "${1:-url}" in
              url) p=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null); b=$(ip -4 -br addr show br0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
