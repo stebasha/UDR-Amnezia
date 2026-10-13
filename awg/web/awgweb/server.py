@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTTP-сервер: обработчик запросов, таблица маршрутов API, запуск и командная строка."""
-from .tools import *  # noqa: F401,F403  (всё из предыдущих модулей)
+from .xui import *  # noqa: F401,F403  (всё из предыдущих модулей)
 from .data import _OV  # noqa: F401
 
 STATIC_FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -269,6 +269,11 @@ ROUTES = {
     ("POST", "/api/backup/auto"): api_backup_auto_set,
     ("POST", "/api/backup/auto/run"): api_backup_auto_run,
     ("POST", "/api/backup/auto/test"): api_backup_auto_test,
+    ("GET", "/api/xui"): api_xui_get,
+    ("POST", "/api/xui"): api_xui_set,
+    ("POST", "/api/xui/test"): api_xui_test,
+    ("POST", "/api/xui/create"): api_xui_create,
+    ("POST", "/api/xui/remove"): api_xui_remove,
     ("GET", "/api/vps"): api_vps_get,
     ("POST", "/api/vps"): api_vps_set,
     ("POST", "/api/vps/test"): api_vps_test,

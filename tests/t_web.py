@@ -112,6 +112,70 @@ def restart_panel(pid, before=None):
     return str(p.pid)
 
 
+class FakeXui:
+    """Поддельная 3x-ui (#30): /secret/panel/api/inbounds/{list,add,del/ID}, Bearer-токен, ответ {success,msg,obj}."""
+
+    def __init__(self, token="xui-token-123456"):
+        import http.server
+        import threading
+        self.token, self.inbounds, self.added, self.next_id = token, [{"id": 1, "port": 2053, "protocol": "vless"}], [], 10
+        fx = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def reply(self, code, obj):
+                b = json.dumps(obj).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def auth(self):
+                if self.headers.get("Authorization") != "Bearer " + fx.token:
+                    self.reply(401, {"success": False, "msg": "unauthorized"})
+                    return False
+                return True
+
+            def do_GET(self):
+                if self.path != "/secret/panel/api/inbounds/list":
+                    return self.reply(404, {})
+                if self.auth():
+                    self.reply(200, {"success": True, "msg": "", "obj": fx.inbounds})
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                if not self.path.startswith("/secret/panel/api/inbounds/"):
+                    return self.reply(404, {})
+                if not self.auth():
+                    return
+                if self.path.endswith("/add"):
+                    ib = json.loads(body)
+                    fx.added.append(ib)
+                    st = json.loads(ib["settings"])
+                    st["server"] = {"privateKey": "c2VydmVyLXByaXZhdGUta2V5LWZvci10ZXN0cy0xMjM=", "publicKey": "U0VSVkVSLVBVQkxJQy1LRVktRk9SLVRFU1RTLTEyMzQ=",
+                                    "subnetIp": "10.8.1.0", "subnetCidr": 24, "mtu": 0, "jc": 4, "jmin": 50, "jmax": 200, "s1": 40, "s2": 120,
+                                    "s3": 20, "s4": 16, "h1": "100000-200000", "h2": "300000-400000", "h3": "500000-600000", "h4": "700000-800000",
+                                    "i1": "<r 64>", "headerProtectionKey": "aGVhZGVyLXByb3RlY3Rpb24ta2V5LTMyLWJ5dGVzLTAxMjM=",
+                                    "contentPaddingAddition": "10-30", "rekeyAfterTime": "110-130", "rejectAfterTime": "170-220",
+                                    "rekeyTimeout": "4-6", "randomTrailers": True, "disableCookies": False}
+                    fx.next_id += 1
+                    rec = dict(ib, id=fx.next_id, settings=json.dumps(st))
+                    fx.inbounds.append(rec)
+                    return self.reply(200, {"success": True, "msg": "ok", "obj": rec})
+                m = re.match(r".*/del/(\d+)$", self.path)
+                if m:
+                    fx.inbounds = [x for x in fx.inbounds if x["id"] != int(m.group(1))]
+                    return self.reply(200, {"success": True, "msg": "ok", "obj": int(m.group(1))})
+                self.reply(404, {})
+
+        self.srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
 def main():
     pid = subprocess.check_output([os.path.join(R, "tests/web_lab.sh"), LAB, str(PORT)]).decode().strip().splitlines()[-1]
     dd = os.path.join(LAB, "dd")
@@ -595,6 +659,51 @@ def main():
         check("panel.py tunnel-add: повтор — отказ с кодом 2", p_.returncode == 2 and "уже есть" in p_.stdout, p_.stdout)
         a.post("/api/tunnel/remove", {"name": "awgcli", "current": "Test-pass-123"})
 
+        # ---------- 1.6 (#30): туннель через 3x-ui (AmneziaWG 3.1)
+        fx = FakeXui()
+        base = "http://127.0.0.1:%d/secret" % fx.port
+        s, j = a.post("/api/xui", {"url": base + "/x\nPostUp=evil", "token": "xui-token-123456"})
+        check("3x-ui: опасный адрес отклонён", s == 400, j)
+        s, j = a.post("/api/xui", {"url": base, "token": "wrong-token-1", "host": "203.0.113.50"})
+        s, j = a.post("/api/xui/test", {})
+        check("3x-ui: неверный токен → понятная ошибка 401", s == 400 and "401" in j.get("error", ""), j)
+        s, j = a.post("/api/xui", {"url": base, "token": "xui-token-123456", "host": "203.0.113.50"})
+        xe = open(os.path.join(dd, "xui.env")).read()
+        check("3x-ui: настройки сохранены (600)", s == 200 and "xui-token-123456" in xe and oct(os.stat(os.path.join(dd, "xui.env")).st_mode & 0o777) == "0o600", j)
+        s, j = a.get("/api/xui")
+        check("3x-ui: токен в браузер не отдаётся, amneziawg-go v3 подходит", s == 200 and j["token_set"] and "xui-token" not in json.dumps(j) and j["go_ok"], j)
+        s, j = a.post("/api/xui/test", {})
+        check("3x-ui: проверка подключения", s == 200 and "подключений 1" in j["msg"], j)
+        s, j = a.post("/api/xui/create", {"name": "awgxui", "current": "wrong"})
+        check("3x-ui: создание только с паролем", s == 403 and not fx.added, j)
+        open(os.path.join(LAB, "stub", "hs", "awgxui"), "w").write("5")       # заглушка awg: в файле — возраст handshake
+        s, j = a.post("/api/xui/create", {"name": "awgxui", "port": "2053", "current": "Test-pass-123"})
+        check("3x-ui: занятый порт отклонён до создания", s == 400 and "занят" in j.get("error", "") and not fx.added, j)
+        s, j = a.post("/api/xui/create", {"name": "awgxui", "current": "Test-pass-123"})
+        sent = fx.added[-1] if fx.added else {}
+        cl = json.loads(sent.get("settings", "{}")).get("clients", [{}])[0]
+        check("3x-ui: подключение amneziawg создано, в 3x-ui ушёл только открытый ключ", s == 200 and j["ok"] and sent.get("protocol") == "amneziawg"
+              and 20000 <= sent.get("port", 0) < 60000 and cl.get("publicKey") and "privateKey" not in cl, (j, sent))
+        conf = open(os.path.join(dd, "awgxui.conf")).read() if os.path.exists(os.path.join(dd, "awgxui.conf")) else ""
+        check("3x-ui: конфиг AWG 3.1 из ответа API (ключ сервера, S3/S4, H-диапазоны, I1, защита заголовков, Endpoint)",
+              "PublicKey = U0VSVkVSLVBVQkxJQy1LRVktRk9SLVRFU1RTLTEyMzQ=" in conf and "S4 = 16" in conf and "H1 = 100000-200000" in conf
+              and "I1 = <r 64>" in conf and "HeaderProtectionKey = " in conf and "RandomTrailers = on" in conf and "DisableCookies" not in conf
+              and "MTU = 1404" in conf and "Endpoint = 203.0.113.50:%d" % sent.get("port", 0) in conf and "DNS" not in conf, conf)
+        ev = open(os.path.join(dd, "awg.env")).read()
+        s, j = a.get("/api/xui")
+        check("3x-ui: туннель добавлен и запомнен", "awgxui" in ev and j["tunnels"] and j["tunnels"][0]["name"] == "awgxui"
+              and json.load(open(os.path.join(dd, "web", "labels.json"))).get("awgxui") == "3x-ui", (ev, j))
+        s, j = a.post("/api/xui/remove", {"name": "awgxui", "current": "Test-pass-123"})
+        check("3x-ui: удаление — туннель убран, подключение в 3x-ui удалено", s == 200 and "awgxui" not in open(os.path.join(dd, "awg.env")).read()
+              and not [x for x in fx.inbounds if x.get("protocol") == "amneziawg"], (j, fx.inbounds))
+        go = os.path.join(dd, "amneziawg-go")
+        keep_go = open(go).read()
+        open(go, "w").write('#!/bin/bash\necho "amneziawg-go 0.0.20250522"\n')
+        s, j = a.post("/api/xui/create", {"name": "awgxui2", "current": "Test-pass-123"})
+        check("3x-ui: старый amneziawg-go — отказ с подсказкой обновить", s == 400 and "Обновить на роутере" in j.get("error", ""), j)
+        open(go, "w").write(keep_go)
+        fx.srv.shutdown()
+
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
         check("хуки: опасный адрес отклонён", s == 400, j)
@@ -640,7 +749,7 @@ def main():
         check("токен read: изменения запрещены", s == 403, j)
         s, j = r_.req("POST", "/api/tunnel/label", {"name": "awgmain", "label": ""}, headers=bh(atok))
         check("токен admin: управление без CSRF", s == 200, j)
-        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET"), ("/api/vps", "GET")):
+        for path, m in (("/api/tokens", "GET"), ("/api/users", "GET"), ("/api/sessions", "GET"), ("/api/web", "GET"), ("/api/ha", "GET"), ("/api/backup/auto", "GET"), ("/api/hooks", "GET"), ("/api/vps", "GET"), ("/api/xui", "GET")):
             s, j = r_.req(m, path, headers=bh(atok))
             check("токен admin: %s только по паролю" % path, s == 403, j)
         s, j = r_.req("POST", "/api/system/reboot", {"current": ""}, headers=bh(atok))

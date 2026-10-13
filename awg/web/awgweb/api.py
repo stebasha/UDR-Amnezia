@@ -168,18 +168,25 @@ def api_tunnel_add(h, d):
     return {"ok": rc == 0, "msg": out.strip()}
 
 
-def api_tunnel_remove(h, d):
-    t = get_tunnel(str(d.get("name", "")))
+def tunnel_remove(t):
+    """Убрать дополнительный туннель из сторожа вместе с правилами (конфиг остаётся). Общая для API и 3x-ui."""
     e = env()
     if t not in e.get("TUNNELS_EXTRA", "").split():
         raise ValueError("удалять из панели можно только дополнительные туннели; основной и запасной — через установщик")
-    need_pw(h, d, "tunnel-remove")
     with LOCK:
         env_set({"TUNNELS_EXTRA": " ".join(x for x in e.get("TUNNELS_EXTRA", "").split() if x != t)})
         if svc_active("awg-failover"):
             run(["systemctl", "restart", "awg-failover"], timeout=60)
         run(["ip", "link", "del", t], timeout=10)
         run([os.path.join(DD, "failover.sh"), "forget", t], timeout=60)
+
+
+def api_tunnel_remove(h, d):
+    t = get_tunnel(str(d.get("name", "")))
+    if t not in env().get("TUNNELS_EXTRA", "").split():
+        raise ValueError("удалять из панели можно только дополнительные туннели; основной и запасной — через установщик")
+    need_pw(h, d, "tunnel-remove")
+    tunnel_remove(t)
     h.act("tunnel-remove", t)
     return {"ok": True, "msg": "%s убран вместе с его правилами; конфиг %s.conf оставлен" % (t, t)}
 
