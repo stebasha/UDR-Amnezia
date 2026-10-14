@@ -197,3 +197,135 @@ def api_lists_update(h, d):
         raise ValueError("не удалось запустить: " + out.strip()[:300])
     h.act("lists-update", env().get("LISTS_MODE", ""))
     return {"ok": True, "msg": "обновление списков запущено"}
+
+
+# ======================================================================= отчёт за неделю / месяц (#41)
+def hours_since(since):
+    """Часовые сводки: из сборщика панели, а вне панели (бот) — из сохранённой истории."""
+    if SAMPLER.is_alive():
+        return SAMPLER.hours(since)
+    try:
+        h = json.loads(read_file(HIST_F, "{}")).get("hours") or []
+    except ValueError:
+        h = []
+    return [x for x in h if isinstance(x, dict) and x.get("t", 0) >= since]
+
+
+def _wavg(pairs):
+    pairs = [(v, w) for v, w in pairs if v is not None and w]
+    s = sum(w for _, w in pairs)
+    return round(sum(v * w for v, w in pairs) / s, 1) if s else None
+
+
+def report_data(days=7):
+    days = 30 if int(days) >= 30 else 7
+    since = now() - days * 86400
+    hrs = hours_since(since)
+    e = env()
+    lb = labels()
+    tl = tunnels(e)
+    names = sorted(set(tl) | {t for h in hrs for t in h.get("tun", {})}, key=lambda x: (x not in tl, tl.index(x) if x in tl else 0, x))
+    tun = []
+    for t in names:
+        xs = [(h["tun"][t], h.get("n", 60)) for h in hrs if t in h.get("tun", {})]
+        if not xs:
+            continue
+        act = sum((h.get("am") or {}).get(t, 0) if "am" in h else (h.get("n", 60) if h.get("active") == t else 0) for h in hrs)
+        tun.append({"name": t, "label": lb.get(t, ""), "minutes": sum(n for _, n in xs), "avail": _wavg([(x.get("up"), n) for x, n in xs]),
+                    "rtt": _wavg([(x.get("rtt"), n) for x, n in xs]), "loss": _wavg([(x.get("loss"), n) for x, n in xs]),
+                    "bytes": int(sum((x.get("rx", 0) + x.get("tx", 0)) / 8.0 * 60 * n for x, n in xs)), "active_min": act})
+    sp = {}
+    for r in speed_hist():
+        if r.get("t", 0) >= since and r.get("down_bps"):
+            a = sp.setdefault(r["iface"], {"iface": r["iface"], "n": 0, "down": 0, "up": 0, "ping": []})
+            a["n"] += 1
+            a["down"] += r["down_bps"]
+            a["up"] += r.get("up_bps", 0)
+            if r.get("ping_ms"):
+                a["ping"].append(r["ping_ms"])
+    speed = [{"iface": a["iface"], "n": a["n"], "down_bps": a["down"] // a["n"], "up_bps": a["up"] // a["n"],
+              "ping_ms": int(sum(a["ping"]) / len(a["ping"])) if a["ping"] else None} for a in sp.values()]
+    routes = []
+    for rid in sorted(route_states()):
+        rf = parse_env_text(read_file(os.path.join(DD, "route.d", rid + ".env")))
+        chain = rf.get("TUNNELS", "").split()
+        mins = collections.Counter()
+        for h in hrs:
+            mins.update((h.get("ra") or {}).get(rid, {}))
+        tot = sum(mins.values())
+        st = stats_from_events(days, rid)
+        routes.append({"id": rid, "label": rf.get("LABEL", ""), "chain": chain, "minutes": tot,
+                       "on": [{"tunnel": t or "", "minutes": m} for t, m in mins.most_common()],
+                       "first_pct": round(100.0 * mins.get(chain[0], 0) / tot, 1) if tot and chain else None,
+                       "switch": st["switch"] + st["degrade"], "both": st["both"]})
+    tr = traffic_load()
+    d0 = time.strftime("%Y-%m-%d", time.localtime(since))
+    dev = collections.defaultdict(lambda: [0, 0])
+    for day, v in (tr.get("days") or {}).items():
+        if day >= d0:
+            for k, (dn, up) in v.items():
+                dev[k][0] += dn
+                dev[k][1] += up
+    nm = tr.get("names") or {}
+    devices = sorted(({"key": k, "name": (nm.get(k) or {}).get("name", ""), "ip": (nm.get(k) or {}).get("ip", k), "mac": (nm.get(k) or {}).get("mac", ""),
+                       "down": v[0], "up": v[1]} for k, v in dev.items()), key=lambda x: -(x["down"] + x["up"]))[:25]
+    return {"days": days, "since": since, "hours": len(hrs), "coverage": round(100.0 * len(hrs) / (days * 24), 1),
+            "main": stats_from_events(days), "main_name": e.get("MAIN", "awgmain"), "tunnels": tun, "speed": speed, "routes": routes,
+            "acct": e.get("TRAFFIC_ACCT") == "yes", "devices": devices}
+
+
+def fmt_dur(sec):
+    sec = int(sec or 0)
+    d, h, m = sec // 86400, sec % 86400 // 3600, sec % 3600 // 60
+    if d:
+        return "%d д %d ч" % (d, h)
+    if h:
+        return "%d ч %d мин" % (h, m)
+    return "%d мин" % m
+
+
+def fmt_bytes(b):
+    b = float(b or 0)
+    for u, k in (("ТБ", 1e12), ("ГБ", 1e9), ("МБ", 1e6), ("КБ", 1e3)):
+        if b >= k:
+            return "%.1f %s" % (b / k, u)
+    return "%d Б" % b
+
+
+def report_text(r):
+    """Отчёт текстом (Telegram, CLI): без HTML, его экранирует отправитель."""
+    per = "неделю" if r["days"] == 7 else "30 дней"
+    m = r["main"]
+    out = ["Отчёт за %s · данных %s%%" % (per, r["coverage"]),
+           "Основной канал %s: %s%% времени, вне его %s; переключений %d, возвратов %d%s" % (
+               r["main_name"], m["on_main_pct"], fmt_dur(m["off_main_sec"]), m["switch"] + m["degrade"], m["return"],
+               ", отказ всех каналов: %d" % m["both"] if m["both"] else "")]
+    if r["tunnels"]:
+        out.append("")
+        out.append("Каналы (доступность · RTT · потери · трафик · активен):")
+        for t in r["tunnels"]:
+            out.append("  %s%s: %s · %s · %s · %s · %s" % (
+                t["name"], " (%s)" % t["label"] if t["label"] else "", "%s%%" % t["avail"] if t["avail"] is not None else "—",
+                "%s мс" % t["rtt"] if t["rtt"] is not None else "—", "%s%%" % t["loss"] if t["loss"] is not None else "—",
+                fmt_bytes(t["bytes"]), fmt_dur(t["active_min"] * 60)))
+    if r["speed"]:
+        out.append("")
+        out.append("Скорость (средняя по замерам):")
+        for s_ in r["speed"]:
+            out.append("  %s: ↓ %s · ↑ %s%s (замеров %d)" % (s_["iface"], fmt_bps(s_["down_bps"]), fmt_bps(s_["up_bps"]),
+                                                          " · %d мс" % s_["ping_ms"] if s_["ping_ms"] else "", s_["n"]))
+    for rt in r["routes"]:
+        out.append("")
+        out.append("Маршрут %s%s: на первом канале %s; переключений %d" % (
+            rt["id"], " (%s)" % rt["label"] if rt["label"] else "", "%s%%" % rt["first_pct"] if rt["first_pct"] is not None else "—", rt["switch"]))
+        out += ["  %s: %s" % (x["tunnel"] or "без канала", fmt_dur(x["minutes"] * 60)) for x in rt["on"][:4]]
+    if r["acct"]:
+        out.append("")
+        out.append("Трафик через туннели по устройствам (↓ · ↑):")
+        out += ["  %s: %s · %s" % (d["name"] or d["ip"], fmt_bytes(d["down"]), fmt_bytes(d["up"])) for d in r["devices"][:10]] or ["  пока нет данных"]
+    return "\n".join(out)
+
+
+def api_report(h, q):
+    d = (q.get("days") or ["7"])[0]
+    return report_data(30 if d == "30" else 7)

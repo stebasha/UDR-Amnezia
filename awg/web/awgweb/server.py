@@ -286,6 +286,7 @@ ROUTES = {
     ("POST", "/api/tune/run"): api_tune_run,
     ("POST", "/api/tune/apply"): api_tune_apply,
     ("GET", "/api/lists"): api_lists_get,
+    ("GET", "/api/report"): api_report,
     ("POST", "/api/lists/update"): api_lists_update,
     ("GET", "/api/routes"): api_routes_get,
     ("POST", "/api/route/save"): api_route_save,

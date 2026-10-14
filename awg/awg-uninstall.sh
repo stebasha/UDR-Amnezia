@@ -40,7 +40,10 @@ for t in nat:POSTROUTING mangle:FORWARD mangle:POSTROUTING mangle:PREROUTING fil
     iptables -t "$tb" $r 2>/dev/null
   done
 done
-for s in AWG_UI AWG_DOM AWG_DIRECT; do ipset destroy "$s" 2>/dev/null; done
+# учёт трафика по устройствам (#41): цепочка в mangle FORWARD и её наборы
+while iptables -t mangle -D FORWARD -j AWG_ACC 2>/dev/null; do :; done
+iptables -t mangle -F AWG_ACC 2>/dev/null; iptables -t mangle -X AWG_ACC 2>/dev/null
+for s in AWG_UI AWG_DOM AWG_DIRECT AWG_LIST AWG_GEO AWG_ACC_UP AWG_ACC_DN; do ipset destroy "$s" 2>/dev/null; done
 # подсети, которые старые версии добавляли в набор локальных сетей UniFi
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2>/dev/null; done
 

@@ -47,6 +47,7 @@ jobs:
           python3 tests/t_web.py
           python3 tests/t_bot.py
           python3 tests/t_ha.py
+          python3 tests/t_report.py
 
   # Панель в настоящем браузере (#15): вход, страницы, редактор туннеля, перезагрузка, EN/RU; регрессии 1.4.2
   ui:
@@ -84,3 +85,4 @@ jobs:
           python3 tests/t_web.py
           python3 tests/t_bot.py
           python3 tests/t_ha.py
+          python3 tests/t_report.py

@@ -410,7 +410,18 @@ def scr_stats(chat):
         s = P.stats_from_events(d)
         out.append("\n<b>%s</b>: на основном %s%%, вне основного %s\nпереключений %d · по качеству %d · вручную %d · все лежали %d · запусков %d" % (
             {1: "Сутки", 7: "7 дней", 30: "30 дней"}[d], s["on_main_pct"], fa(s["off_main_sec"]), s["switch"], s["degrade"], s["force"], s["both"], s["start"]))
-    return "\n".join(out), [[("📜 События", "m:ev")], [("⬅️ Назад", "m:main")]]
+    return "\n".join(out), [[("📅 Отчёт за неделю", "m:wk"), ("📜 События", "m:ev")], [("⬅️ Назад", "m:main")]]
+
+
+def scr_report(chat, days=7):
+    """Отчёт (#41): каналы, скорость, маршруты, трафик по устройствам."""
+    try:
+        txt = P.report_text(P.report_data(days))
+    except Exception as ex:
+        log("отчёт: %r" % ex)
+        txt = "не удалось собрать отчёт: %s" % ex
+    return ("<b>📅 %s</b>\n<pre>%s</pre>" % ("Неделя" if days == 7 else "30 дней", esc(txt)),
+            [[("7 дней", "m:wk"), ("30 дней", "m:wk30")], [("📈 Статистика", "m:stats"), ("🏠 Меню", "m:main")]])
 
 
 def scr_chk(chat):
@@ -483,11 +494,12 @@ def scr_svc(chat):
 
 
 HELP = ("<b>❓ Команды</b>\n/menu — меню кнопками\n/status — состояние\n/tunnels — каналы\n/router — роутер\n/events — события\n"
-        "/clients — клиенты в туннеле\n/routes — дополнительные маршруты\n/domain сайт — проверить сайт\n/switch имя — сделать канал активным\n/auto — вернуть автовыбор\n"
+        "/clients — клиенты в туннеле\n/week — отчёт за неделю (/week 30 — за 30 дней)\n/routes — дополнительные маршруты\n/domain сайт — проверить сайт\n/switch имя — сделать канал активным\n/auto — вернуть автовыбор\n"
         "/route ID канал|auto — канал маршрута\n/report — отчёт файлом\n/id — chat id\n\nДобавить людей: веб-панель → Настройки → Telegram (администраторы и «только просмотр»).")
 
 SCREENS = {"main": scr_main, "tun": scr_tun, "ev": scr_ev, "stats": scr_stats, "chk": scr_chk, "sys": scr_sys, "cl": scr_cl,
-           "mute": scr_mute, "svc": scr_svc, "rt": scr_routes, "help": lambda c: (HELP, [[("⬅️ Назад", "m:main")]])}
+           "mute": scr_mute, "svc": scr_svc, "rt": scr_routes,
+           "wk": scr_report, "wk30": lambda c: scr_report(c, 30), "help": lambda c: (HELP, [[("⬅️ Назад", "m:main")]])}
 ADMIN_ONLY = ("svc",)
 
 
@@ -665,6 +677,8 @@ def on_message(m):
         send(chat, *scr_stats(chat))
     elif cmd == "/clients":
         send(chat, *scr_cl(chat))
+    elif cmd in ("/week", "/weekly"):
+        send(chat, *scr_report(chat, 30 if arg == "30" else 7))
     elif cmd == "/routes":
         send(chat, *scr_routes(chat))
     elif cmd == "/help":
@@ -800,8 +814,8 @@ def monitor():
             wk = time.strftime("%G-%V")
             if time.strftime("%u") == "1" and int(time.strftime("%H%M")) >= int(C["report_time"] or 900) and P.read_file(os.path.join(DD, "bot.lastweek")).strip() != wk:
                 P.write_secure(os.path.join(DD, "bot.lastweek"), wk + "\n", 0o600)
-                txt, _ = scr_stats(None)
-                broadcast("<b>📅 Недельный отчёт</b> · %s\n%s" % (esc(H), txt))
+                txt, _ = scr_report(None, 7)
+                broadcast("<b>Роутер %s</b>\n%s" % (esc(H), txt))
         except Exception as ex:
             log("монитор: %r" % ex)
 
@@ -823,6 +837,7 @@ def main():
         {"command": "tunnels", "description": "каналы"}, {"command": "router", "description": "роутер: CPU, память, диск"},
         {"command": "events", "description": "события"}, {"command": "clients", "description": "клиенты в туннеле"},
         {"command": "routes", "description": "дополнительные маршруты"},
+        {"command": "week", "description": "отчёт за неделю"},
         {"command": "domain", "description": "проверить сайт"}, {"command": "help", "description": "помощь"}]})
     threading.Thread(target=monitor, daemon=True).start()
     off = P.read_file(OFFF).strip() or "0"

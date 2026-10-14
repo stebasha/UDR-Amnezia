@@ -57,6 +57,7 @@ upd2 = {"ok": True, "result": [
     {"update_id": 23, "callback_query": {"id": "g", "data": "rtq:us:awgmain", "message": {"message_id": 9, "chat": {"id": 222}}}},
     {"update_id": 24, "message": {"chat": {"id": 222}, "text": "/route us awgmain"}},
     {"update_id": 25, "message": {"chat": {"id": 111}, "text": "/route us nope"}},
+    {"update_id": 26, "message": {"chat": {"id": 333}, "text": "/week"}},
 ]}
 json.dump(upd2, open(f, "w"))
 out = subprocess.run(["python3", os.path.join(R, "awg/bot.py"), "--once-from", f], env=envv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
@@ -70,6 +71,8 @@ c222 = by("222")
 check("маршрут: подтверждение переключения", c222 and "rtw:us:awgmain" in btns(c222[0]), c222[:1])
 fu = os.path.join(L, "run", "awg-force-us")
 check("маршрут: /route переключает канал", len(c222) > 1 and c222[1]["params"]["text"].startswith("✅") and os.path.exists(fu) and "awgmain" in open(fu).read(), (c222[1:2], out.stderr.decode()[-300:]))
+c333 = by("333")
+check("отчёт за неделю: каналы и маршрут, просмотру доступен", any("Отчёт за неделю" in c["params"]["text"] and "Маршрут us (США)" in c["params"]["text"] for c in c333), c333[-1:])
 check("маршрут: неверный канал — подсказка", any("Формат: /route" in c["params"]["text"] for c in m), m)
 print("bot: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

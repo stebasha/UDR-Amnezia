@@ -445,6 +445,7 @@ SETTINGS = {
     "DNS_INTERCEPT": (v_choice("yes", "no"), ["awg-guard"], "Перехват DNS устройств"),
     "DNS_CLIENTS": (v_hosts, ["awg-guard"], "Для каких клиентов (пусто — вся LAN)"),
     "DNS_BLOCK_DOT": (v_choice("yes", "no"), ["awg-guard"], "Запретить DNS-over-TLS и DNS по IPv6 мимо роутера"),
+    "TRAFFIC_ACCT": (v_choice("yes", "no"), [], "Учёт трафика по устройствам"),
     "UI_FIX": (v_choice("yes", "no"), ["awg-self"], "unifi.ui.com через туннель"),
     "UI_DOMAINS": (v_domains, ["awg-self"], "Домены UniFi"),
     "UI_DNS": (v_ipv4, ["awg-self"], "DNS для доменов UniFi"),
@@ -453,7 +454,7 @@ SETTINGS = {
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
-            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no"}
+            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no"}
 
 
 # ======================================================================= службы

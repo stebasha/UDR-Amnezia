@@ -2738,6 +2738,10 @@ awgctl lists update<span class="c">          # скачать сейчас (пр
     <li>Правило стоит последним в nat PREROUTING: фильтр контента UniFi (свой перехват DNS) срабатывает раньше и не обходится. Запросы к самому роутеру не трогаются.</li>
   </ul>
 
+  <h3>Отчёт за неделю и трафик по устройствам (1.7)</h3>
+  <p>«<b>Обзор → Отчёт</b>» (7 или 30 дней), в Telegram — <code>/week</code> и каждый понедельник сам: доля времени на основном канале и переключения; по каждому туннелю — доступность (минуты со свежим handshake), средние RTT и потери, трафик, сколько был активным; средняя скорость по замерам; по дополнительным маршрутам — время на первом канале, на остальных и без канала. События маршрутов больше не смешиваются со статистикой основного канала.</p>
+  <p>Трафик по устройствам — по желанию: переключатель в карточке отчёта (<code>TRAFFIC_ACCT=yes</code>). Роутер считает, сколько каждое устройство LAN отправило в туннели и получило из них: своя цепочка <code>AWG_ACC</code> в mangle FORWARD с наборами ipset со счётчиками (<code>AWG_ACC_UP</code>, <code>AWG_ACC_DN</code>) — правила только считают и на трафик не влияют. Раз в 10 минут счётчики сводятся по суткам (62 дня, по MAC, имена — из аренд DHCP). Выключение убирает правила.</p>
+
   <h3>Автоподбор параметров обфускации (1.6)</h3>
   <p>Если провайдер начал узнавать или замедлять AmneziaWG: «<b>Инструменты → Подбор параметров обфускации</b>» (или <code>awgctl tune</code>). Роутер меряет текущий набор и N новых: у каждого handshake, интернет, потери, задержка и скорость (5 МБ), итог — оценка и лучший набор. В конце туннель возвращается на исходный набор; лучший ставится только по кнопке «Применить» (с паролем, прежний конфиг остаётся в «Истории»). По умолчанию подбор идёт только на неактивном канале.</p>
   <div class="tw"><table>
@@ -2833,7 +2837,10 @@ for t in nat:POSTROUTING mangle:FORWARD mangle:POSTROUTING mangle:PREROUTING fil
     iptables -t "$tb" $r 2&gt;/dev/null
   done
 done
-for s in AWG_UI AWG_DOM AWG_DIRECT; do ipset destroy "$s" 2&gt;/dev/null; done
+<span class="c"># учёт трафика по устройствам (#41): цепочка в mangle FORWARD и её наборы</span>
+while iptables -t mangle -D FORWARD -j AWG_ACC 2&gt;/dev/null; do :; done
+iptables -t mangle -F AWG_ACC 2&gt;/dev/null; iptables -t mangle -X AWG_ACC 2&gt;/dev/null
+for s in AWG_UI AWG_DOM AWG_DIRECT AWG_LIST AWG_GEO AWG_ACC_UP AWG_ACC_DN; do ipset destroy "$s" 2&gt;/dev/null; done
 <span class="c"># подсети, которые старые версии добавляли в набор локальных сетей UniFi</span>
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2&gt;/dev/null; done
 
@@ -2861,7 +2868,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 72 строк">Показать целиком · 72 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 75 строк">Показать целиком · 75 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 
@@ -2991,6 +2998,7 @@ EOF</code></pre></figure>
     <tr><td><code>VPS_IP</code></td><td><code>203.0.113.10</code></td><td>Только для подсказок в панели и исключения из трафика роутера</td></tr>
     <tr><td><code>TUNNELS_EXTRA</code>, <code>QUALITY</code>, <code>QUALITY_LOSS</code>, <code>QUALITY_RTT</code>, <code>MIN_DWELL</code></td><td><code>""</code>, <code>yes</code>, <code>40</code>, <code>0</code>, <code>120</code></td><td>Дополнительные туннели и выбор по качеству (часть ★)</td></tr>
     <tr><td><code>LEAK_GUARD</code>, <code>LEAK_V6</code></td><td><code>yes</code>, <code>block</code></td><td>Защита от утечек awg-guard; <code>LEAK_V6=route</code> — IPv6 через туннель (1.6)</td></tr>
+    <tr><td><code>TRAFFIC_ACCT</code></td><td><code>no</code></td><td>Учёт трафика через туннели по устройствам для отчёта (1.7)</td></tr>
     <tr><td><code>DNS_INTERCEPT</code>, <code>DNS_CLIENTS</code>, <code>DNS_BLOCK_DOT</code></td><td><code>no</code>, пусто, <code>no</code></td><td>Перехват DNS устройств на роутер (1.7); вместе с <code>DNS_ALL_TUNNEL=yes</code> — через туннель</td></tr>
     <tr><td><code>LISTS_MODE</code>, <code>GEO_COUNTRIES</code>, <code>LIST_URLS</code></td><td><code>off</code>, пусто, antifilter.download</td><td>Списки и GeoIP (1.7): <code>blocked</code> — через туннель только заблокированное, <code>geoip</code> — всё, кроме стран</td></tr>
     <tr><td><code>ROUTE_ONLY</code></td><td><code>""</code></td><td>Туннели только для дополнительных маршрутов: основной их не использует (1.6)</td></tr>
