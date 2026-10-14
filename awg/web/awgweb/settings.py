@@ -33,6 +33,10 @@ def api_ha_set(h, d):
     tls = str(d.get("tls", "no"))
     if tls not in ("no", "yes", "insecure"):
         raise ValueError("TLS: no, yes или insecure")
+    if str(d.get("pass", "")) == "" and pw:   # прежний пароль — только тому же брокеру и не открытым текстом вместо TLS
+        sch = lambda t: "mqtts" if t != "no" else "mqtt"
+        keep_secret("%s://%s:%s" % (sch(old.get("MQTT_TLS", "no")), old.get("MQTT_HOST", ""), old.get("MQTT_PORT", "1883")),
+                    "%s://%s:%s" % (sch(tls), host, port), "пароль брокера MQTT")
     prefix = str(d.get("prefix", "homeassistant")).strip() or "homeassistant"
     if not re.match(r"^[a-z0-9_/-]{1,40}$", prefix):
         raise ValueError("префикс discovery: латиница, цифры, _ - /")

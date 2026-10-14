@@ -159,5 +159,9 @@ check("3x-ui: новый адрес без токена — отказ, токе
       and S.xui_db()["panels"]["p1"]["url"] == "https://xui.example:2053/p")
 check("3x-ui: тот же узел — прежний токен остаётся", S.api_xui_set(FakeH(), {"id": "p1", "url": "https://xui.example:2053/p2"})["ok"]
       and S.xui_db()["panels"]["p1"]["token"] == "tokentoken1")
+open(S.HA_F, "w").write('MQTT_HOST="ha.lan"\nMQTT_PORT="8883"\nMQTT_USER="u"\nMQTT_PASS="p@ss"\nMQTT_TLS="yes"\n')
+check("HA: другой брокер без пароля — отказ", raises(S.api_ha_set, FakeH(), {"host": "evil.lan", "port": "8883", "user": "u", "tls": "yes"}))
+check("HA: тот же брокер, но без TLS — пароль ввести заново", raises(S.api_ha_set, FakeH(), {"host": "ha.lan", "port": "8883", "user": "u", "tls": "no"})
+      and "MQTT_TLS=\"yes\"" in C.read_file(S.HA_F))
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)
