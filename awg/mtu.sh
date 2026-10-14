@@ -15,6 +15,10 @@ for a in "$@"; do case "$a" in --apply) APPLY=1;; -h|--help) sed -n '2,8p' "$0";
 conf_for(){ case "$1" in "$MAIN") echo main.conf;; "${BACKUP:-awgbackup}") [ -f "$DD/backup.conf" ] && echo backup.conf || echo client.conf;; *) echo "$1.conf";; esac; }
 wan_if(){ [ -n "$WANIF" ] && { echo "$WANIF"; return; }; ip -4 route show table all 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | grep -v -E '^(awg|wg|lo|wgclt)' | head -n1; }
 WAN=$(wan_if)
+up_tun(){   # под тем же замком, что сторож и панель: два up.sh одновременно мешают друг другу
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
+  else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
+}
 df_ping(){ ping -I "$WAN" -M "do" -c 1 -W 2 -s "$1" "$2" >/dev/null 2>&1; }   # 0 — пакет с payload $1 дошёл без фрагментации
 
 # максимальный payload, проходящий до цели, бинарным поиском
@@ -52,7 +56,8 @@ for t in $TUNS; do
     if grep -qiE '^[[:space:]]*MTU[[:space:]]*=' "$cf"; then sed -i -E "s/^[[:space:]]*[Mm][Tt][Uu][[:space:]]*=.*/MTU = $rec/" "$cf"
     else sed -i -E "0,/^[[:space:]]*Address[[:space:]]*=.*/s//&\nMTU = $rec/" "$cf"; fi
     chmod 600 "$cf"
-    "$DD/up.sh" "$t" >/dev/null 2>&1 && echo "  записано MTU = $rec, туннель перезапущен" || { echo "  туннель не поднялся: восстанавливаю конфиг"; cp -p "$(ls -t "$cf".pre-mtu.* | head -n1)" "$cf"; "$DD/up.sh" "$t" >/dev/null 2>&1; rc=1; }
+    up_tun "$t" && echo "  записано MTU = $rec, туннель перезапущен" || { echo "  туннель не поднялся: восстанавливаю конфиг"; cp -p "$(ls -t "$cf".pre-mtu.* | head -n1)" "$cf"; up_tun "$t"; rc=1; }
+    ls -t "$cf".pre-mtu.* 2>/dev/null | tail -n +4 | xargs -r rm -f   # хранить три последние копии
   else echo "  применить: $0 $t --apply"; fi
 done
 exit $rc

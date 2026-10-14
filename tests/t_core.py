@@ -74,5 +74,17 @@ try:
 except C.ApiError as ex:
     over = ex.code == 429
 check("сверх MAX_RUNNING — отказ 429", over)
+# up.sh из панели — под замком сторожа: пока туннель перезапускает другая служба, второй up.sh не идёт
+import fcntl  # noqa: E402
+up = os.path.join(T, "up.sh")
+open(up, "w").write("#!/bin/sh\necho \"up $1\" >> %s/up.log\n" % T)
+os.chmod(up, 0o755)
+lk = open(os.path.join(T, "awg-up-awgx.lock"), "w")
+fcntl.flock(lk, fcntl.LOCK_EX)
+rc, out = C.up_tunnel("awgx", wait=1)
+check("up_tunnel: замок занят — up.sh не запускается", rc == 1 and not os.path.exists(os.path.join(T, "up.log")), (rc, out))
+fcntl.flock(lk, fcntl.LOCK_UN)
+rc, out = C.up_tunnel("awgx", wait=1)
+check("up_tunnel: замок свободен — up.sh выполнен", rc == 0 and C.read_file(os.path.join(T, "up.log")) == "up awgx\n", (rc, out))
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

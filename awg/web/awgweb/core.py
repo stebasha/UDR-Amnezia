@@ -3,6 +3,7 @@
 
 import base64
 import collections
+import fcntl
 import getpass
 import hashlib
 import hmac
@@ -110,6 +111,26 @@ def run(cmd, timeout=60, env=None, inp=None):
         except subprocess.TimeoutExpired:
             pass
         return 124, "превышено время ожидания (%d с)" % timeout
+
+
+def up_tunnel(t, timeout=60, wait=30):
+    """Поднять (перезапустить) туннель через up.sh под тем же замком, что берут сторож и подбор параметров
+    (/run/awg-up-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del)."""
+    try:
+        f = open(os.path.join(RUN, "awg-up-%s.lock" % t), "w")
+    except OSError:
+        return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
+    with f:
+        end = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() > end:
+                    return 1, "туннель %s сейчас перезапускает другая служба — повторите позже" % t
+                time.sleep(0.3)
+        return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
 
 
 def parse_env_text(text):
