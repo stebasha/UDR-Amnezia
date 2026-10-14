@@ -85,3 +85,82 @@ def api_tunnel_order(h, d):
             run(["systemctl", "restart", "awg-failover"], timeout=60)
     h.act("tunnel-order", new)
     return {"ok": True, "msg": "порядок сохранён, сторож перезапущен"}
+
+
+# ======================================================================= маршруты (#22): разные туннели для разных профилей PBR
+ROUTE_ID_RE = re.compile(r"^[a-z][a-z0-9]{0,11}$")
+
+
+def routes_sh(args, timeout=90):
+    return run([os.path.join(DD, "routes.sh")] + args, timeout=timeout,
+               env={"STATEF": STATEF, "FORCEF": FORCEF, "SYSD": SYSD})
+
+
+def api_routes_get(h, q):
+    e = env()
+    rails = []
+    for line in routes_sh(["rails"], 15)[1].splitlines():
+        p = line.split("\t")
+        if len(p) == 5:
+            rails.append({"prio": p[0], "mark": p[1], "table": p[2], "rail": p[3], "used": "" if p[4] == "-" else p[4]})
+    st = state()
+    routes = [{"id": "main", "label": "", "rail": e.get("RAIL_IF", ""), "table": e.get("TABLE", ""),
+               "tunnels": st.get("TUNNELS", "").split() or tunnels(e), "active": st.get("ACTIVE", ""), "forced": st.get("FORCED", ""),
+               "service": "active" if svc_active("awg-failover") else "inactive", "only": False}]
+    for line in routes_sh(["list"], 15)[1].splitlines():
+        p = line.split("\t")
+        if len(p) == 8 and ROUTE_ID_RE.match(p[0]):
+            rf = parse_env_text(read_file(os.path.join(DD, "route.d", p[0] + ".env")))
+            routes.append({"id": p[0], "rail": p[1], "table": p[2], "tunnels": p[3].split(), "active": "" if p[4] == "-" else p[4],
+                           "service": p[5], "forced": "" if p[6] == "-" else p[6], "label": p[7], "only": rf.get("ONLY") == "yes"})
+    return {"rails": rails, "routes": routes, "tunnels": tunnels(e), "labels": labels(), "route_only": e.get("ROUTE_ONLY", "").split()}
+
+
+def api_route_save(h, d):
+    """Новый маршрут (new) или новые туннели существующего — с паролем: меняется, куда идёт трафик устройств."""
+    need_pw(h, d, "route-save")
+    rid = str(d.get("id", "")).strip()
+    if not ROUTE_ID_RE.match(rid) or rid == "main":
+        raise ValueError("ID маршрута: латиница с буквы, до 12 знаков (например, us)")
+    tl = [str(x) for x in (d.get("tunnels") or [])]
+    if not tl or any(not NAME_RE.match(x) for x in tl):
+        raise ValueError("выберите туннели маршрута по порядку")
+    label = str(d.get("label", "")).strip()[:40]
+    if re.search(r"[<>\"'`$\\&\x00-\x1f]", label):
+        raise ValueError("недопустимые символы в названии")
+    only = ["--only"] if d.get("only") else []
+    if d.get("new"):
+        rail = str(d.get("rail", "")).strip()
+        if not re.match(r"^[a-z]+clt[0-9]+$", rail):
+            raise ValueError("выберите профиль VPN Client UniFi")
+        rc, out = routes_sh(["add", rid, rail, " ".join(tl), label] + only, 120)
+    else:
+        rc, out = routes_sh(["set", rid, " ".join(tl), label] + only, 120)
+    if rc != 0:
+        raise ValueError(out.strip().replace("ОШИБКА: ", "")[:400])
+    h.act("route-save", {"id": rid, "tunnels": tl})
+    return {"ok": True, "msg": out.strip()}
+
+
+def api_route_remove(h, d):
+    need_pw(h, d, "route-remove")
+    rid = str(d.get("id", "")).strip()
+    if not ROUTE_ID_RE.match(rid) or rid == "main":
+        raise ValueError("основной маршрут не убирается")
+    rc, out = routes_sh(["remove", rid], 120)
+    if rc != 0:
+        raise ValueError(out.strip().replace("ОШИБКА: ", "")[:400])
+    h.act("route-remove", rid)
+    return {"ok": True, "msg": out.strip()}
+
+
+def api_route_switch(h, d):
+    rid = str(d.get("id", "")).strip()
+    t = str(d.get("tunnel", "")).strip()
+    if not ROUTE_ID_RE.match(rid) or rid == "main" or not (t == "auto" or NAME_RE.match(t)):
+        raise ValueError("маршрут и туннель")
+    rc, out = routes_sh(["switch", rid, t], 15)
+    if rc != 0:
+        raise ValueError(out.strip().replace("ОШИБКА: ", "")[:300])
+    h.act("route-switch", {"id": rid, "tunnel": t})
+    return {"ok": True, "msg": out.strip()}

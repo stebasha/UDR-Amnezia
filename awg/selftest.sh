@@ -77,6 +77,22 @@ if [ $FULL = 1 ] && [ -n "$ac" ]; then
   esac
 elif [ $FULL = 0 ]; then I "динамическая проверка kill switch: selftest.sh --full"; fi
 [ "$(sysctl -n net.ipv4.ip_forward 2>/dev/null)" = 1 ] && P "ip_forward = 1" || F "ip_forward не 1" "sysctl -w net.ipv4.ip_forward=1"
+# дополнительные маршруты (#22): свой сторож, туннель маршрута в его таблице, kill switch
+for rf in "$DD"/route.d/*.env; do
+  [ -r "$rf" ] || continue
+  rid=$(basename "$rf" .env); rt=$(sed -n 's/^TABLE="\{0,1\}\([0-9]*\)"\{0,1\}$/\1/p' "$rf"); rr=$(sed -n 's/^RAIL_IF="\{0,1\}\([a-z0-9]*\)"\{0,1\}$/\1/p' "$rf")
+  rtun=$(sed -n 's/^TUNNELS="\{0,1\}\([a-z0-9 ]*\)"\{0,1\}$/\1/p' "$rf")
+  systemctl is-active --quiet "awg-failover-$rid" 2>/dev/null && P "маршрут $rid ($rr): сторож awg-failover-$rid работает" || F "маршрут $rid ($rr): сторож не запущен" "systemctl restart awg-failover-$rid; journalctl -u awg-failover-$rid -n 20"
+  rtb=$(ip route show table "$rt" 2>/dev/null)
+  ra=$(echo "$rtb" | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev" && $(i+1) ~ /^awg/){print $(i+1); exit}}')
+  if [ -n "$ra" ] && [[ " $rtun " == *" $ra "* ]]; then P "маршрут $rid: в таблице $rt туннель $ra"; else F "маршрут $rid: в таблице $rt нет маршрута на туннели маршрута ($rtun)" "systemctl restart awg-failover-$rid"; fi
+  echo "$rtb" | grep -q blackhole && P "маршрут $rid: kill switch (blackhole в таблице $rt)" || W "маршрут $rid: нет blackhole в таблице $rt" "systemctl restart awg-failover-$rid"
+done
+if [ "${LEAK_V6:-block}" = route ]; then   # IPv6 через туннель (#23)
+  ip -6 rule show 2>/dev/null | grep -q "fwmark $MARK" && P "IPv6 через туннель: правило IPv6 для метки PBR есть" || W "IPv6 через туннель включён, а правила IPv6 для метки PBR нет" "systemctl restart awg-failover"
+  v6t=$(ip -6 route show table "$TABLE" 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+  [ -n "$v6t" ] && P "IPv6 через туннель: активный туннель $v6t" || I "IPv6 через туннель: у активного туннеля нет IPv6 — IPv6 под PBR отклоняется, устройства идут по IPv4"
+fi
 
 sec "Дубликаты правил"
 dup=0
@@ -111,7 +127,7 @@ if [ "${LEAK_GUARD:-no}" = yes ]; then
   else W "защита от утечек не установлена" "$DD/install.sh → Компоненты → Маршрутизация и защита"; fi
 else I "защита от утечек (awg-guard) выключена: от утечек защищает blackhole в таблице PBR"; fi
 if ip -6 route show default 2>/dev/null | grep -q . && ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
-  if [ $guard_on = 1 ] && [ "${LEAK_V6:-block}" = block ]; then P "у роутера есть IPv6 в интернет; помеченный PBR-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются"
+  if [ $guard_on = 1 ] && { [ "${LEAK_V6:-block}" = block ] || [ "${LEAK_V6:-block}" = route ]; }; then P "у роутера есть IPv6 в интернет; помеченный PBR-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются"
   else W "у роутера есть IPv6 в интернет, а блокировки IPv6 для трафика под PBR нет: сайты с IPv6 могут открываться мимо туннеля" "включите awg-guard с LEAK_V6=block или отключите IPv6 в сетях с такими устройствами"; fi
 else I "IPv6 в интернет у роутера нет — утечки по IPv6 исключены"; fi
 # DNS: чей адрес видит внешний резолвер

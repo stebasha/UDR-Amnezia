@@ -15,7 +15,7 @@
       el('div', { class: 'alert crit' }, icon('alert'), el('div', null,
         T('Перезагрузится весь роутер: интернет, Wi-Fi, UniFi и туннели пропадут на 2–4 минуты. Звонки и загрузки оборвутся.'))),
       el('p', { class: 'small muted' }, T('Для подтверждения введите пароль. После загрузки сторож сам поднимет туннели и маршруты PBR.')),
-      el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), pw)), [
+      el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
       el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), go]);
   }
   function rebootWait(delay) {

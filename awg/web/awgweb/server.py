@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTTP-сервер: обработчик запросов, таблица маршрутов API, запуск и командная строка."""
-from .tools import *  # noqa: F401,F403  (всё из предыдущих модулей)
+from .xui import *  # noqa: F401,F403  (всё из предыдущих модулей)
 from .data import _OV  # noqa: F401
 
 STATIC_FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -269,8 +269,26 @@ ROUTES = {
     ("POST", "/api/backup/auto"): api_backup_auto_set,
     ("POST", "/api/backup/auto/run"): api_backup_auto_run,
     ("POST", "/api/backup/auto/test"): api_backup_auto_test,
+    ("GET", "/api/xui"): api_xui_get,
+    ("POST", "/api/xui"): api_xui_set,
+    ("POST", "/api/xui/test"): api_xui_test,
+    ("POST", "/api/xui/create"): api_xui_create,
+    ("POST", "/api/xui/remove"): api_xui_remove,
+    ("POST", "/api/xui/panel/remove"): api_xui_panel_remove,
+    ("GET", "/api/xui/inbounds"): api_xui_inbounds,
+    ("POST", "/api/xui/import"): api_xui_import,
+    ("POST", "/api/xui/link"): api_xui_link,
+    ("POST", "/api/xui/sync"): api_xui_sync,
     ("GET", "/api/vps"): api_vps_get,
     ("POST", "/api/vps"): api_vps_set,
+    ("POST", "/api/vps/del"): api_vps_del,
+    ("GET", "/api/tune"): api_tune_get,
+    ("POST", "/api/tune/run"): api_tune_run,
+    ("POST", "/api/tune/apply"): api_tune_apply,
+    ("GET", "/api/routes"): api_routes_get,
+    ("POST", "/api/route/save"): api_route_save,
+    ("POST", "/api/route/remove"): api_route_remove,
+    ("POST", "/api/route/switch"): api_route_switch,
     ("POST", "/api/vps/test"): api_vps_test,
     ("POST", "/api/vps/status"): api_vps_status,
     ("POST", "/api/vps/versions"): api_vps_versions,
@@ -423,8 +441,40 @@ def cli():
         rc, out = make_cert()
         print(out.strip() or ("сертификат: %s" % CERT_F))
         sys.exit(rc)
+    if cmd == "tunnel-add" and len(a) > 2:      # panel.py tunnel-add ИМЯ ФАЙЛ [НАЗВАНИЕ] — для vps.sh setup (#28)
+        try:
+            rc, out = tunnel_add(a[1], read_file(a[2]), a[3] if len(a) > 3 else "")
+        except ValueError as ex:
+            print("ОШИБКА: %s" % ex)
+            sys.exit(2)
+        audit("cli", "127.0.0.1", "tunnel-add", a[1])
+        print(out.strip())
+        sys.exit(0 if rc == 0 else 1)
+    if cmd == "xui":                            # panel.py xui [ПАНЕЛЬ] — подключения AmneziaWG в 3x-ui, только чтение (#32)
+        db = xui_db()
+        if not db["panels"]:
+            print("панелей 3x-ui нет")
+            return
+        for pid in ([a[1]] if len(a) > 1 else sorted(db["panels"])):
+            p = db["panels"].get(pid) or {}
+            print("== %s «%s» %s" % (pid, p.get("label", ""), p.get("url", "")))
+            try:
+                r = api_xui_inbounds(None, {"panel": [pid]})
+            except ValueError as ex:
+                print("  ОШИБКА: %s" % ex)
+                continue
+            for ib in r["inbounds"]:
+                print("  №%s «%s» %s:%s %s%s%s" % (ib["id"], ib["remark"], ib["host"] or "?", ib["port"], "вкл" if ib["enable"] else "выкл",
+                                                   (" · туннель роутера " + ib["match"]) if ib["match"] else "",
+                                                   (" · связан: " + ", ".join(ib["tunnels"])) if ib["tunnels"] else ""))
+                for c in ib["clients"]:
+                    print("     клиент %s %s%s%s" % (c["email"], c["address"], " · ключ в 3x-ui" if c["has_key"] else "", " · роутер" if c["router"] else ""))
+        for k, v in sorted(db["tunnels"].items()):
+            print("туннель %s: панель %s, подключение №%s, %s" % (k, v.get("panel"), v.get("inbound"), XUI_KINDS.get(v.get("kind"), v.get("kind"))))
+        return
     if cmd == "check":
         c = conf()
         print("порт %s, адрес %s, TLS %s, пользователей %d" % (c["WEB_PORT"], c["WEB_BIND"], c["WEB_TLS"], len(load_users())))
         return
-    print(__doc__)
+    import __main__                     # справка — докстрока точки входа panel.py, а не этого модуля
+    print(getattr(__main__, "__doc__", None) or __doc__)

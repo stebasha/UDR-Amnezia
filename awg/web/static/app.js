@@ -281,7 +281,7 @@
       const inp = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
       const go = () => { done = true; m.close(); res(inp.value); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), inp)), [
+      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), inp)), [
         el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
         el('button', { class: 'btn primary', onclick: go }, T('Подтвердить')),
       ], { onclose: () => { if (!done) res(null); } });
@@ -304,7 +304,7 @@
       el('div', { class: 'alert crit' }, icon('alert'), el('div', null,
         T('Перезагрузится весь роутер: интернет, Wi-Fi, UniFi и туннели пропадут на 2–4 минуты. Звонки и загрузки оборвутся.'))),
       el('p', { class: 'small muted' }, T('Для подтверждения введите пароль. После загрузки сторож сам поднимет туннели и маршруты PBR.')),
-      el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), pw)), [
+      el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
       el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), go]);
   }
   function rebootWait(delay) {
@@ -1347,7 +1347,7 @@
     DIRECT_DOMAINS: { t: 'list', ph: 'gosuslugi.ru\nsberbank.ru', hint: T('Устройства под PBR откроют эти сайты напрямую, мимо туннеля.') },
     DIRECT_SUBNETS: { t: 'list', ph: '95.173.128.0/19', hint: T('Адреса и подсети, куда устройства под PBR ходят напрямую.') },
     LEAK_GUARD: { t: 'bool', hint: T('Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.') },
-    LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR идёт мимо туннеля: его стоит блокировать.') },
+    LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['route', T('Через туннель')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR: «Блокировать» (по умолчанию) — устройства идут по IPv4 через туннель; «Через туннель» — IPv6 тоже идёт через туннель, если сервер выдал туннелю IPv6-адрес (иначе отклоняется); «Не трогать» — IPv6 идёт мимо туннеля.') },
     UI_FIX: { t: 'bool', hint: T('Соединения самого роутера с облаком UniFi (unifi.ui.com) — через туннель. Нужно, если ui.com недоступен напрямую.') },
     UI_DOMAINS: { t: 'list', hint: T('Домены облака UniFi.') },
     UI_DNS: { t: 'text', hint: T('DNS-сервер для доменов UniFi (запрос уходит через туннель).') },
@@ -1542,6 +1542,8 @@
           el('button', { class: 'btn', onclick: async () => { if (await confirmBox(T('Вернуть правила набора?'), T('Службы awg-failover, guard, self, subnets будут перезапущены (на секунды прерывается трафик PBR).'), T('Вернуть'))) runTool({ tool: 'drift-repair' }, T('Восстановление')); } }, icon('wrench', 'sm'), T('Вернуть правила набора')),
           el('button', { class: 'btn', onclick: async () => { if (await confirmBox(T('Принять текущее состояние?'), T('Текущие правила станут эталоном. Делайте это, когда всё работает (например, после изменения PBR в UniFi).'), T('Принять'))) runTool({ tool: 'drift-save' }, T('Новый эталон')); } }, icon('check', 'sm'), T('Принять текущее как эталон')))), { icon: 'layers' }),
       el('div', { class: 'spacer' }),
+      tuneCard(),
+      el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-tools' }, tiles),
       el('div', { class: 'spacer' }), outCard]);
   };
@@ -1639,13 +1641,13 @@
   }
 
   // ===================================================================== НАСТРОЙКИ
-  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['vps', T('Свой VPS')], ['system', T('Система и обновление')]];
+  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['routes', T('Маршруты')], ['vps', T('Свой VPS')], ['xui', '3x-ui'], ['system', T('Система и обновление')]];
   PAGES.settings = function (main, sub) {
     const cur = SET_TABS.some((t) => t[0] === sub) ? sub : 'failover';
     add(main, [head(T('Настройки')), tabs(SET_TABS, cur, (id) => { location.hash = '#/settings/' + id; })]);
     const body = el('div', { class: 'stack' });
     main.appendChild(body);
-    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, vps: setVps, system: setSystem })[cur](body);
+    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, routes: setRoutes, vps: setVps, xui: setXui, system: setSystem })[cur](body);
   };
   async function setFailover(body) {
     try {
@@ -1745,40 +1747,74 @@
         el('div', { class: 'field' }, el('label', null, T('ntfy: адрес темы')), ntfy, el('span', { class: 'hint' }, T('ntfy.sh или свой сервер; приоритет по важности события.'))),
         el('div', { class: 'field' }, el('label', null, T('ntfy: токен')), ntok, c3))), { icon: 'bell', foot: [test, save] });
   }
+  // журнал действия на VPS (awg-vps-job): обновлять, пока идёт; итог — по «[код N]» в конце
+  async function followVpsJob(box) {
+    box.classList.remove('hidden');
+    for (let i = 0; i < 400; i++) {
+      let x;
+      try { x = await api('/api/vps/job'); } catch (e) { await new Promise((ok2) => setTimeout(ok2, 3000)); continue; }
+      paint(box, x.text); box.scrollTop = box.scrollHeight;
+      if (!x.running) {
+        const good = /\[код 0\]/.test(x.text);
+        (good ? ok : err)(good ? T('Готово') : T('Не удалось — подробности в журнале ниже'));
+        return good;
+      }
+      await new Promise((ok2) => setTimeout(ok2, 3000));
+    }
+    return false;
+  }
   // свой VPS (#13): состояние сервера, обновление AmneziaWG, смена ключей и обфускации на обеих сторонах с откатом
   async function setVps(body) {
     let r;
-    try { r = await api('/api/vps'); } catch (e) { err(e); return; }
+    try { r = await api('/api/vps?vps=' + encodeURIComponent(S.vpsSel || 'main')); } catch (e) { S.vpsSel = 'main'; err(e); return; }
+    const vid = r.vps;
+    const rerender = (v) => { S.vpsSel = v; clear(body); setVps(body); };
+    // несколько своих VPS (#32): выбор сервера, новый, убрать
+    const pickV = el('select', { class: 'input' }, r.profiles.map((p) => el('option', { value: p.id, selected: p.id === vid },
+      (p.label || (p.id === 'main' ? T('основной') : p.id)) + (p.host ? ' — ' + p.host : ''))));
+    pickV.addEventListener('change', () => rerender(pickV.value));
+    const addV = el('button', { class: 'btn' }, icon('plus', 'sm'), T('Добавить VPS'));
+    addV.addEventListener('click', () => {
+      const lb = el('input', { class: 'input', maxlength: 40, placeholder: T('например, Швеция') });
+      const hs = el('input', { class: 'input mono', placeholder: '203.0.113.10', spellcheck: 'false' });
+      const ps = el('input', { class: 'input mono', value: '22', inputmode: 'numeric' });
+      const us = el('input', { class: 'input mono', value: 'root', spellcheck: 'false' });
+      const sv = el('button', { class: 'btn primary' }, T('Добавить'));
+      const m = modal(T('Ещё один свой VPS'), el('div', null, el('p', { class: 'muted small' }, T('Ключ роутера общий для всех VPS. После добавления выберите VPS в списке и нажмите «Добавить ключ роутера» или «Подключить и настроить».')),
+        el('div', { class: 'form-grid' },
+          el('div', { class: 'field' }, el('label', null, T('Название')), lb),
+          el('div', { class: 'field' }, el('label', null, T('Адрес VPS')), hs),
+          el('div', { class: 'field' }, el('label', null, T('Порт SSH')), ps),
+          el('div', { class: 'field' }, el('label', null, T('Пользователь')), us))), [el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), sv]);
+      sv.addEventListener('click', () => busy(sv, async () => {
+        try { const x = await api('/api/vps', { new: true, label: lb.value.trim(), host: hs.value.trim(), port: ps.value.trim(), user: us.value.trim() }); ok(x.msg); m.close(); rerender(x.vps); } catch (e) { err(e); }
+      }));
+    });
+    const delV = el('button', { class: 'btn danger' }, T('Убрать из списка'));
+    delV.addEventListener('click', async () => {
+      if (!await confirmBox(T('Убрать VPS ') + (r.label || vid) + '?', T('Роутер забудет адрес этого VPS. Сервер, его туннели и ключ роутера на нём не трогаются.'), T('Убрать'), true)) return;
+      try { ok((await api('/api/vps/del', { vps: vid })).msg); rerender('main'); } catch (e) { err(e); }
+    });
+    const vlabel = el('input', { class: 'input', value: r.label || '', maxlength: 40, placeholder: vid === 'main' ? T('основной') : '' });
     const host = el('input', { class: 'input mono', value: r.host, placeholder: r.host_default || '203.0.113.10', spellcheck: 'false' });
     const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
     const user = el('input', { class: 'input mono', value: r.user, spellcheck: 'false' });
     const out = el('div', { class: 'out hidden' });
     const show = (text) => { paint(out, text); out.classList.remove('hidden'); };
     const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить'));
-    save.addEventListener('click', () => busy(save, async () => { try { ok((await api('/api/vps', { host: host.value.trim(), port: port.value.trim(), user: user.value.trim() })).msg); } catch (e) { err(e); } }));
+    save.addEventListener('click', () => busy(save, async () => { try { ok((await api('/api/vps', { vps: vid, label: vlabel.value.trim(), host: host.value.trim(), port: port.value.trim(), user: user.value.trim() })).msg); } catch (e) { err(e); } }));
     const test = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Проверить подключение'));
-    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/vps/test', {}); (x.ok ? ok : err)(x.ok ? T('VPS доступен') : T('VPS недоступен')); show(x.msg); } catch (e) { err(e); } }));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/vps/test', { vps: vid }); (x.ok ? ok : err)(x.ok ? T('VPS доступен') : T('VPS недоступен')); show(x.msg); } catch (e) { err(e); } }));
     const st = el('button', { class: 'btn' }, icon('activity', 'sm'), T('Состояние сервера'));
-    st.addEventListener('click', () => busy(st, async () => { try { const x = await api('/api/vps/status', {}); show(x.text); } catch (e) { err(e); } }));
+    st.addEventListener('click', () => busy(st, async () => { try { const x = await api('/api/vps/status', { vps: vid }); show(x.text); } catch (e) { err(e); } }));
     const ver = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить версии'));
-    ver.addEventListener('click', () => busy(ver, async () => { try { const x = await api('/api/vps/versions', {}); show(x.text); if (x.update) toast(T('На VPS есть что обновить')); } catch (e) { err(e); } }));
+    ver.addEventListener('click', () => busy(ver, async () => { try { const x = await api('/api/vps/versions', { vps: vid }); show(x.text); if (x.update) toast(T('На VPS есть что обновить')); } catch (e) { err(e); } }));
     const log = el('div', { class: 'out' + (r.log ? '' : ' hidden') });
     if (r.log) paint(log, r.log);
     const btns = [];
     async function follow() {
       btns.forEach((b) => { b.disabled = true; });
-      log.classList.remove('hidden');
-      for (let i = 0; i < 300; i++) {
-        let x;
-        try { x = await api('/api/vps/job'); } catch (e) { await new Promise((ok2) => setTimeout(ok2, 3000)); continue; }
-        paint(log, x.text); log.scrollTop = log.scrollHeight;
-        if (!x.running) {
-          const good = /\[код 0\]/.test(x.text);
-          (good ? ok : err)(good ? T('Готово') : T('Не удалось — подробности в журнале ниже'));
-          break;
-        }
-        await new Promise((ok2) => setTimeout(ok2, 3000));
-      }
+      await followVpsJob(log);
       btns.forEach((b) => { b.disabled = false; });
     }
     const lab = (n) => { const t = S.ov && S.ov.tunnels.find((x) => x.name === n); return t && t.label ? t.label + ' (' + n + ')' : n; };
@@ -1788,11 +1824,41 @@
       b.addEventListener('click', async () => {
         const pw = await promptPw(title + '?', text);
         if (pw == null) return;
-        try { ok((await api('/api/vps/run', { action, tunnel: tun.value, current: pw })).msg); follow(); } catch (e) { err(e); }
+        try { ok((await api('/api/vps/run', { vps: vid, action, tunnel: tun.value, current: pw })).msg); follow(); } catch (e) { err(e); }
       });
       btns.push(b);
       return b;
     };
+    // мастер (#28): от пароля VPS до работающего туннеля
+    const vpw = el('input', { class: 'input', type: 'password', autocomplete: 'off', placeholder: r.key ? T('не нужен, если ключ роутера уже на VPS') : T('пароль root на VPS — один раз') });
+    const tname = el('input', { class: 'input mono', value: 'awgvps', spellcheck: 'false' });
+    const aport = el('input', { class: 'input mono', value: '51823', inputmode: 'numeric' });
+    const wiz = el('button', { class: 'btn primary' }, icon('server', 'sm'), T('Подключить и настроить'));
+    wiz.addEventListener('click', async () => {
+      if (!host.value.trim() && !r.host_default) { err(T('укажите адрес VPS')); host.focus(); return; }
+      const pw = await promptPw(T('Подключить VPS?'), T('Роутер войдёт на VPS (пароль VPS — только для первого входа, не сохраняется), положит туда свой ключ, соберёт AmneziaWG из исходников amnezia-vpn (3–7 минут), создаст сервер и добавит туннель. Нужны Ubuntu или Debian и root. Существующие туннели не трогаются.'));
+      if (pw == null) return;
+      try {
+        ok((await api('/api/vps/run', { vps: vid, label: vlabel.value.trim(), action: 'setup', host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), vps_password: vpw.value,
+          name: tname.value.trim(), awg_port: aport.value.trim(), current: pw })).msg);
+        vpw.value = '';
+        await follow();
+        rerender(vid);
+      } catch (e) { err(e); }
+    });
+    btns.push(wiz);
+    const akey = el('button', { class: 'btn' }, icon('key', 'sm'), T('Добавить ключ роутера'));
+    akey.addEventListener('click', async () => {
+      if (!vpw.value) { err(T('введите пароль VPS')); vpw.focus(); return; }
+      const pw = await promptPw(T('Добавить ключ роутера на VPS?'), T('Для VPS, где сервер уже настроен: роутер войдёт по паролю один раз и добавит свой ключ в ~/.ssh/authorized_keys. Дальше обновление, состояние, ключи и обфускация — без пароля. Сервер не меняется.'));
+      if (pw == null) return;
+      try {
+        ok((await api('/api/vps/run', { vps: vid, label: vlabel.value.trim(), action: 'addkey', host: host.value.trim(), port: port.value.trim(), user: user.value.trim(), vps_password: vpw.value, current: pw })).msg);
+        vpw.value = '';
+        await follow();
+      } catch (e) { err(e); }
+    });
+    btns.push(akey);
     const upd = job('update', T('Обновить AmneziaWG на VPS'), T('Последние релизы amnezia-vpn собираются на VPS из исходников (3–7 минут), сервер перезапускается. Если туннели к VPS не получат handshake — вернутся прежние файлы.'));
     const rk = job('rotate-keys', T('Сменить ключи'), T('Новые ключи сервера и роутера одновременно. Туннель будет недоступен 10–30 секунд (kill switch держит трафик). Не заработает — обе стороны откатятся.'));
     const ob = job('obfs', T('Новые параметры обфускации'), T('Новые Jc, Jmin, Jmax, S1, S2, H1–H4 на VPS и роутере одновременно — если провайдер начал узнавать трафик. Туннель будет недоступен 10–30 секунд; не заработает — откат.'));
@@ -1801,22 +1867,26 @@
     add(body, [
       el('div', { class: 'grid g-2e' },
         card(T('Подключение к VPS'), el('div', null,
-          el('p', { class: 'muted small' }, T('Роутер входит на ваш VPS по SSH своим ключом, без пароля. Ключ создаёт установщик при настройке VPS.')),
-          el('div', { class: 'row wrap' }, el('span', { class: 'badge ' + (r.key ? 'ok' : 'warn') }, r.key ? T('ключ роутера есть') : T('ключа роутера нет'))),
+          el('p', { class: 'muted small' }, T('Роутер входит на ваш VPS по SSH своим ключом, без пароля. Новый VPS: укажите адрес и пароль root один раз и нажмите «Подключить и настроить» — роутер сам добавит ключ, соберёт AmneziaWG, создаст сервер и туннель.')),
+          el('div', { class: 'row wrap' }, r.profiles.length > 1 ? pickV : null, addV, vid !== 'main' ? delV : null,
+            el('span', { class: 'badge ' + (r.key ? 'ok' : 'warn') }, r.key ? T('ключ роутера есть') : T('ключа роутера нет'))),
           el('div', { class: 'form-grid' },
+            el('div', { class: 'field' }, el('label', null, T('Название')), vlabel),
             el('div', { class: 'field' }, el('label', null, T('Адрес VPS')), host, el('span', { class: 'hint' }, r.host_default ? T('Пусто — ваш VPS из настройки: ') + r.host_default : T('IP или имя сервера'))),
             el('div', { class: 'field' }, el('label', null, T('Порт SSH')), port),
-            el('div', { class: 'field' }, el('label', null, T('Пользователь')), user)),
+            el('div', { class: 'field' }, el('label', null, T('Пользователь')), user),
+            el('div', { class: 'field' }, el('label', null, T('Пароль VPS')), vpw),
+            el('div', { class: 'field' }, el('label', null, T('Имя нового туннеля')), tname),
+            el('div', { class: 'field' }, el('label', null, T('Порт AmneziaWG (UDP)')), aport, el('span', { class: 'hint' }, T('Откройте его в файрволе хостера')))),
           r.pub ? el('details', { class: 'fgroup' }, el('summary', null, T('Открытый ключ роутера (для ~/.ssh/authorized_keys на VPS)')), el('pre', { class: 'res' }, r.pub)) : null,
-          out), { icon: 'server', foot: [test, save] }),
+          out, log), { icon: 'server', foot: [test, save, akey, wiz] }),
         card(T('Сервер и AmneziaWG'), el('div', null,
           el('p', { class: 'muted small' }, T('Состояние — только чтение: служба awg-server, handshake роутера, NAT, файрвол, права на ключи, нагрузка и место. Обновление — только из официальных исходников amnezia-vpn.'))),
         { icon: 'activity', foot: [st, ver, upd] })),
       card(T('Ключи и обфускация'), el('div', null,
-        el('p', { class: 'muted small' }, noTun ? T('Нет туннеля, у которого Endpoint — этот VPS: менять можно только свой сервер, не сервер провайдера.')
+        el('p', { class: 'muted small' }, noTun ? T('Нет туннеля, у которого Endpoint — этот VPS и сервер — awg-server: менять можно только свой сервер, не сервер провайдера. Туннели через 3x-ui меняются на вкладке 3x-ui («Обновить из 3x-ui»).')
           : T('Меняется туннель к вашему VPS одновременно на обеих сторонах; перед изменением делаются копии, при неудаче всё откатывается само.')),
-        noTun ? null : el('div', { class: 'field' }, el('label', null, T('Туннель')), tun),
-        log), { icon: 'key', foot: [rk, ob] })]);
+        noTun ? null : el('div', { class: 'field' }, el('label', null, T('Туннель')), tun)), { icon: 'key', foot: [rk, ob] })]);
     if (r.running) follow();
   }
   // Home Assistant (#5): MQTT discovery — HA сам находит устройство, датчики, выбор канала и кнопки
@@ -2165,8 +2235,18 @@
           : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последнюю версию в ') + u.repo + T(' (GitHub недоступен с роутера?)'))));
       } catch (e) { err(e); }
     }));
-    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11)
+    // бинарники AmneziaWG против последних официальных релизов amnezia-vpn (#11); обновление из панели (#29)
     const bup = el('div');
+    const blog = el('div', { class: 'out hidden' });
+    const binsUpdateBtn = () => {
+      const go = el('button', { class: 'btn primary' }, icon('download', 'sm'), T('Обновить на роутере'));
+      go.addEventListener('click', async () => {
+        const pw = await promptPw(T('Обновить AmneziaWG на роутере?'), T('Последние релизы amnezia-vpn собираются на вашем VPS (3–7 минут), затем туннели пересоздаются на новых файлах (несколько секунд без трафика PBR). Если handshake не появится — вернутся прежние файлы.'));
+        if (pw == null) return;
+        try { ok((await api('/api/vps/run', { action: 'router-bins', current: pw })).msg); go.disabled = true; await followVpsJob(blog); go.disabled = false; } catch (e) { err(e); }
+      });
+      return el('div', { class: 'row' }, go);
+    };
     const bchk = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Проверить AmneziaWG'));
     bchk.addEventListener('click', () => busy(bchk, async () => {
       try {
@@ -2179,7 +2259,8 @@
           ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Не удалось узнать последние релизы на github.com/amnezia-vpn (GitHub недоступен с роутера?)'), list))
           : b.update
             ? el('div', { class: 'alert info' }, icon('download'), el('div', null, T('Есть новые официальные релизы AmneziaWG.'), list,
-              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd))))
+              el('div', { class: 'small muted' }, T('Обновление собирает файлы из исходников amnezia-vpn на вашем VPS и проверяет handshake; если туннели не поднимутся — вернутся прежние. По SSH: '), el('code', null, b.cmd)),
+              b.vps_ready ? binsUpdateBtn() : el('div', { class: 'small' }, T('Для обновления из панели подключите свой VPS: «Настройки → Свой VPS».'))))
             : el('div', { class: 'alert ok' }, icon('okc'), el('div', null, T('Бинарники AmneziaWG актуальны.'), list)));
       } catch (e) { err(e); }
     }));
@@ -2206,7 +2287,7 @@
     add(body, [
       el('div', { class: 'grid g-2e' },
         card(T('Версии и обновление'), el('div', null, kv([[T('Набор'), r.version || '?'], [T('Установщик'), r.installer], [T('Панель'), r.panel], ['awg', r.awg], ['amneziawg-go', r.amneziawg_go], ['Python', r.python], [T('Свободно в /data'), r.data_free_mb + T(' МБ')], [T('Канал обновлений'), chSel]]),
-          el('div', { class: 'spacer' }), upd, bup, log), { icon: 'info', foot: [chk, bchk] }),
+          el('div', { class: 'spacer' }), upd, bup, blog, log), { icon: 'info', foot: [chk, bchk] }),
         card(T('Перенос настроек'), el('div', null, el('p', { class: 'muted small' }, T('Настройки без секретов в файл JSON: перенести на другой роутер или сохранить перед экспериментами. Конфиги туннелей переносятся отдельно (Туннели → Настроить → Экспорт) или резервной копией.'))),
           { icon: 'archive', foot: [exp, imp] }))]);
   }
@@ -2249,6 +2330,301 @@
       el('div', { class: 'row end' }, save)]);
   }
 
+  // 3x-ui (#30, #32): несколько панелей; туннель AmneziaWG 3.1 — создать, подключить к клиенту, привязать работающий
+  const XUI_KIND = { created: 'создан роутером', imported: 'клиент из 3x-ui', linked: 'привязан' };
+  function askNamePw(title, text, def) {   // имя нового туннеля + текущий пароль → {name, pw} или null
+    return new Promise((res) => {
+      let done = false;
+      const nm = el('input', { class: 'input mono', value: def || 'awgxui', spellcheck: 'false' });
+      const pw = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
+      const go = () => { done = true; m.close(); res({ name: nm.value.trim(), pw: pw.value }); };
+      pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      const m = modal(title, el('div', null, el('p', null, text),
+        el('div', { class: 'field' }, el('label', null, T('Имя туннеля')), nm),
+        el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), pw)), [
+        el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
+        el('button', { class: 'btn primary', onclick: go }, T('Подключить')),
+      ], { onclose: () => { if (!done) res(null); } });
+    });
+  }
+  async function setXui(body) {
+    let r;
+    try { r = await api('/api/xui'); } catch (e) { err(e); return; }
+    let sel = (r.panels.find((p) => p.id === S.xuiPanel) || r.panels[0] || {}).id || '';
+    const rerender = () => { S.xuiPanel = sel; clear(body); setXui(body); };
+    // ---- панели
+    const pick = el('select', { class: 'input' }, r.panels.map((p) => el('option', { value: p.id, selected: p.id === sel }, (p.label || p.id) + ' — ' + p.url)));
+    pick.addEventListener('change', () => { sel = pick.value; rerender(); });
+    const cur = r.panels.find((p) => p.id === sel);
+    const form = (p) => {
+      p = p || { id: '', label: '', url: '', token_set: false, insecure: false, host: '', host_default: '' };
+      const label = el('input', { class: 'input', value: p.label, placeholder: T('например, Финляндия'), maxlength: 40 });
+      const url = el('input', { class: 'input mono', value: p.url, placeholder: 'https://vps.example.com:2053/secretpath', spellcheck: 'false' });
+      const tok = el('input', { class: 'input mono', type: 'password', autocomplete: 'off', placeholder: p.token_set ? T('задан — оставьте пустым, чтобы не менять') : T('в 3x-ui: «Учетная запись → Токен API»') });
+      const host = el('input', { class: 'input mono', value: p.host, placeholder: p.host_default || 'vps.example.com', spellcheck: 'false' });
+      const insec = el('input', { type: 'checkbox', checked: p.insecure });
+      const sw = el('div', { class: 'setting' }, el('div', { class: 'txt' }, el('b', null, T('Без проверки сертификата')), el('span', null, T('Для самоподписанного сертификата панели 3x-ui.'))),
+        el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, insec, el('span', { class: 'knob' }))));
+      const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), p.id ? T('Сохранить') : T('Добавить панель'));
+      save.addEventListener('click', () => busy(save, async () => {
+        try {
+          const x = await api('/api/xui', { id: p.id, label: label.value.trim(), url: url.value.trim(), token: tok.value.trim(), host: host.value.trim(), insecure: insec.checked });
+          ok(x.msg); sel = x.id; rerender();
+        } catch (e) { err(e); }
+      }));
+      return { save, node: el('div', null,
+        el('div', { class: 'form-grid' },
+          el('div', { class: 'field' }, el('label', null, T('Название')), label),
+          el('div', { class: 'field' }, el('label', null, T('Адрес панели')), url, el('span', { class: 'hint' }, T('Как в браузере, вместе с секретным путём (webBasePath), без /panel'))),
+          el('div', { class: 'field' }, el('label', null, T('API-токен')), tok),
+          el('div', { class: 'field' }, el('label', null, T('Адрес сервера для туннеля')), host, el('span', { class: 'hint' }, T('Пусто — как в ссылках 3x-ui: узел или адрес панели')))),
+        sw) };
+    };
+    const out = el('div', { class: 'res hidden' });
+    const say = (t, good) => { out.textContent = t; out.classList.remove('hidden'); out.classList.toggle('bad', !good); };
+    const pf = form(cur);
+    const test = el('button', { class: 'btn', disabled: !cur }, icon('activity', 'sm'), T('Проверить подключение'));
+    test.addEventListener('click', () => busy(test, async () => { try { const x = await api('/api/xui/test', { id: sel }); ok(T('3x-ui отвечает')); say(x.msg, true); } catch (e) { err(e); say(String(e.message || e), false); } }));
+    const addP = el('button', { class: 'btn' }, icon('plus', 'sm'), T('Ещё панель'));
+    addP.addEventListener('click', () => {
+      const f = form(null);
+      const m = modal(T('Новая панель 3x-ui'), f.node, [el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), f.save]);
+    });
+    const delP = el('button', { class: 'btn danger', disabled: !cur }, T('Убрать панель'));
+    delP.addEventListener('click', async () => {
+      if (!await confirmBox(T('Убрать панель ') + (cur.label || cur.id) + '?', T('Роутер забудет адрес и токен этой панели. В самой 3x-ui ничего не изменится.'), T('Убрать'), true)) return;
+      try { ok((await api('/api/xui/panel/remove', { id: sel })).msg); sel = ''; rerender(); } catch (e) { err(e); }
+    });
+    // ---- туннели через 3x-ui
+    const tb = el('tbody');
+    const paintTunnels = (list) => replace(tb, list.length ? list.map((t) => el('tr', null,
+      el('td', null, el('b', { class: 'mono' }, t.name), el('div', { class: 'small muted' }, (t.panel_label || t.panel) + T(' · подключение №') + t.inbound + (t.email ? ' · ' + t.email : ''))),
+      el('td', null, el('span', { class: 'badge' + (t.kind === 'linked' ? ' ok' : '') }, T(XUI_KIND[t.kind] || t.kind))),
+      el('td', { class: 'r nowrap' },
+        el('button', { class: 'btn sm', title: T('Перенести на роутер параметры подключения из 3x-ui (обфускацию, ключ сервера, порт); ключ роутера не меняется'), onclick: async (e) => {
+          const pw = await promptPw(T('Обновить ') + t.name + T(' из 3x-ui?'), T('Если в 3x-ui поменяли параметры обфускации, ключ сервера или порт этого подключения — роутер возьмёт новые. Туннель перезапустится; не поднимется — вернётся прежний конфиг (он же в «Истории»).'));
+          if (pw == null) return;
+          await busy(e.currentTarget, async () => { try { const x = await api('/api/xui/sync', { name: t.name, current: pw }); (x.ok ? ok : err)(TM(x.msg)); } catch (ex) { err(ex); } });
+        } }, T('Обновить из 3x-ui')), ' ',
+        el('button', { class: 'btn sm danger', onclick: async () => {
+          const txt = t.kind === 'linked' ? T('Роутер забудет связь туннеля с 3x-ui. Сам туннель и подключение в 3x-ui не меняются.')
+            : t.kind === 'imported' ? T('Туннель уберётся из сторожа. Клиент в 3x-ui останется.')
+              : T('Туннель уберётся из сторожа, подключение «UDR-Amnezia ') + t.name + T('» удалится в 3x-ui.');
+          const pw = await promptPw((t.kind === 'linked' ? T('Отвязать ') : T('Убрать туннель ')) + t.name + '?', txt);
+          if (pw == null) return;
+          try { ok(TM((await api('/api/xui/remove', { name: t.name, current: pw, delete_inbound: true })).msg)); loadT(); loadIb(); } catch (e) { err(e); }
+        } }, t.kind === 'linked' ? T('Отвязать') : T('Убрать'))))) : el('tr', null, el('td', { class: 'empty', colspan: 3 }, T('Туннелей через 3x-ui пока нет'))));
+    const loadT = async () => { try { paintTunnels((await api('/api/xui')).tunnels); } catch (e) { err(e); } };
+    paintTunnels(r.tunnels);
+    // ---- подключения AmneziaWG выбранной панели
+    const ibBox = el('div', { class: 'stack' }, el('div', { class: 'muted small' }, cur ? T('Загрузка…') : T('Сначала добавьте панель')));
+    const loadIb = async () => {
+      if (!cur) return;
+      let x;
+      try { x = await api('/api/xui/inbounds?panel=' + encodeURIComponent(sel)); } catch (e) { replace(ibBox, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, String(e.message || e)))); return; }
+      if (!x.inbounds.length) { replace(ibBox, el('div', { class: 'muted small' }, T('В этой панели подключений AmneziaWG нет — создайте туннель ниже'))); return; }
+      replace(ibBox, x.inbounds.map((ib) => {
+        const linkBtn = ib.match && !ib.tunnels.includes(ib.match) ? el('button', { class: 'btn sm primary', onclick: async (e) => {
+          await busy(e.currentTarget, async () => { try { ok(TM((await api('/api/xui/link', { panel: sel, inbound: ib.id, name: ib.match })).msg)); loadT(); loadIb(); } catch (ex) { err(ex); } });
+        } }, T('Привязать ') + ib.match) : null;
+        return el('div', { class: 'fgroup' },
+          el('div', { class: 'row wrap' }, el('b', null, '№' + ib.id + ' «' + ib.remark + '»'), el('span', { class: 'mono small' }, (ib.host || '?') + ':' + ib.port),
+            el('span', { class: 'badge ' + (ib.enable ? 'ok' : '') }, ib.enable ? T('вкл') : T('выкл')),
+            ib.match ? el('span', { class: 'badge ok' }, T('туннель роутера ') + ib.match) : null,
+            ib.tunnels.length ? el('span', { class: 'badge' }, T('связан: ') + ib.tunnels.join(', ')) : null, linkBtn),
+          el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('tbody', null, ib.clients.map((c) => el('tr', null,
+            el('td', null, el('span', { class: 'mono' }, c.email), c.comment ? el('div', { class: 'small muted' }, c.comment) : null),
+            el('td', { class: 'mono small' }, c.address),
+            el('td', { class: 'small muted nowrap' }, '↓ ' + fmtBytes(c.down) + ' ↑ ' + fmtBytes(c.up)),
+            el('td', { class: 'r nowrap' }, c.router ? el('span', { class: 'badge ok' }, T('это роутер'))
+              : c.has_key && c.enable ? el('button', { class: 'btn sm', onclick: async () => {
+                if (!r.go_ok) { err(T('нужен amneziawg-go v3.x на роутере')); return; }
+                const a = await askNamePw(T('Подключить клиента ') + c.email + '?', T('Роутер возьмёт из 3x-ui ключ этого клиента и параметры подключения и добавит дополнительный туннель. Если этим клиентом уже пользуется другое устройство, они будут мешать друг другу — лучше отдельный клиент.'), 'awgxui');
+                if (!a) return;
+                try { const y = await api('/api/xui/import', { panel: sel, inbound: ib.id, email: c.email, name: a.name, current: a.pw }); (y.ok ? ok : err)(TM(y.msg)); loadT(); loadIb(); } catch (ex) { err(ex); }
+              } }, T('Подключить')) : el('span', { class: 'muted small' }, c.enable ? T('ключ не в 3x-ui') : T('выключен')))))))));
+      }));
+    };
+    if (cur) loadIb();
+    const reloadIb = el('button', { class: 'btn' }, icon('refresh', 'sm'), T('Обновить список'));
+    reloadIb.addEventListener('click', () => busy(reloadIb, loadIb));
+    // ---- новый туннель
+    const name = el('input', { class: 'input mono', value: 'awgxui', spellcheck: 'false' });
+    const port = el('input', { class: 'input mono', inputmode: 'numeric', placeholder: T('свободный — выберется сам') });
+    const mk = el('button', { class: 'btn primary', disabled: !r.go_ok || !cur }, icon('plus', 'sm'), T('Создать туннель'));
+    mk.addEventListener('click', async () => {
+      const pw = await promptPw(T('Создать туннель через 3x-ui?'), T('В 3x-ui появится подключение AmneziaWG 3.1 «UDR-Amnezia …» с одним клиентом — роутером (его закрытый ключ остаётся на роутере). Туннель добавится дополнительным; сторож будет использовать его по порядку приоритета.'));
+      if (pw == null) return;
+      await busy(mk, async () => {
+        try { const x = await api('/api/xui/create', { panel: sel, name: name.value.trim(), port: port.value.trim(), current: pw }); (x.ok ? ok : err)(TM(x.msg)); say(TM(x.msg), x.ok); loadT(); loadIb(); } catch (e) { err(e); say(String(e.message || e), false); }
+      });
+    });
+    add(body, [
+      el('div', { class: 'grid g-2e' },
+        card(T('Панели 3x-ui'), el('div', null,
+          el('p', { class: 'muted small' }, T('3x-ui ≥ 3.8.5 умеет AmneziaWG 3.1. Нужен API-токен с областью admin: в 3x-ui «Учетная запись → Токен API». Токены хранятся на роутере (файл 600) и в браузер не возвращаются. Панелей может быть несколько.')),
+          r.panels.length > 1 ? el('div', { class: 'field' }, el('label', null, T('Панель')), pick) : null,
+          pf.node, out), { icon: 'server', foot: [test, pf.save, addP, cur ? delP : null] }),
+        card(T('Новый туннель AmneziaWG 3.1'), el('div', null,
+          r.go_ok ? null : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('На роутере amneziawg-go ') + (r.go || '?') + T(': для AmneziaWG 3.1 нужен v3.x. Обновите: «Система и обновление → Проверить AmneziaWG → Обновить на роутере».'))),
+          el('p', { class: 'muted small' }, T('Роутер создаст в выбранной панели отдельное подключение со своим клиентом.')),
+          el('div', { class: 'form-grid' },
+            el('div', { class: 'field' }, el('label', null, T('Имя туннеля')), name),
+            el('div', { class: 'field' }, el('label', null, T('Порт UDP в 3x-ui')), port, el('span', { class: 'hint' }, T('Откройте его в файрволе сервера'))))), { icon: 'tunnel', foot: mk })),
+      card(T('Подключения AmneziaWG в панели'), el('div', null,
+        el('p', { class: 'muted small' }, T('Туннель роутера, который уже ведёт на подключение (совпали ключ сервера и порт), можно привязать — тогда «Обновить из 3x-ui» переносит на роутер параметры, изменённые в 3x-ui. Клиента, ключ которого хранит 3x-ui, можно подключить новым туннелем.')),
+        ibBox), { icon: 'globe', foot: reloadIb }),
+      card(T('Туннели через 3x-ui'), el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, tb)), { icon: 'tunnel', flush: true })]);
+  }
+  // маршруты (#22): разные туннели для разных устройств и доменов — свой профиль PBR UniFi, своя цепочка туннелей
+  function chainPicker(all, cur, lab) {   // цепочка туннелей по приоритету: нажать туннель — добавить в конец, нажать в цепочке — убрать
+    const chain = (cur || []).slice();
+    const box = el('div', { class: 'stack' });
+    const paint = () => {
+      replace(box,
+        el('div', { class: 'row wrap' }, el('span', { class: 'small muted' }, T('Порядок:')), chain.length ? chain.map((t, i) => el('button', { class: 'btn sm primary', title: T('Убрать из цепочки'),
+          onclick: () => { chain.splice(i, 1); paint(); } }, (i + 1) + '. ' + lab(t), icon('x', 'sm'))) : el('span', { class: 'small muted' }, T('выберите туннели ниже'))),
+        el('div', { class: 'row wrap' }, el('span', { class: 'small muted' }, T('Добавить:')), all.filter((t) => !chain.includes(t)).map((t) => el('button', { class: 'btn sm',
+          onclick: () => { chain.push(t); paint(); } }, icon('plus', 'sm'), lab(t)))));
+    };
+    paint();
+    return { node: box, value: () => chain.slice() };
+  }
+  async function setRoutes(body) {
+    let r;
+    try { r = await api('/api/routes'); } catch (e) { err(e); return; }
+    const lab = (t) => (r.labels && r.labels[t] ? r.labels[t] + ' (' + t + ')' : t);
+    const reload = () => { clear(body); setRoutes(body); };
+    const tb = el('tbody', null, r.routes.map((x) => {
+      const main = x.id === 'main';
+      const sw = main ? null : el('select', { class: 'input sm', onchange: async (e) => {
+        try { ok(TM((await api('/api/route/switch', { id: x.id, tunnel: e.target.value })).msg)); setTimeout(reload, 2500); } catch (ex) { err(ex); }
+      } }, el('option', { value: 'auto', selected: !x.forced }, T('Авто')), x.tunnels.map((t) => el('option', { value: t, selected: x.forced === t }, lab(t))));
+      const edit = main ? null : el('button', { class: 'btn sm', onclick: () => {
+        const cp = chainPicker(r.tunnels, x.tunnels, lab);
+        const lb = el('input', { class: 'input', value: x.label || '', maxlength: 40 });
+        const only = el('input', { type: 'checkbox', checked: x.only });
+        const save = el('button', { class: 'btn primary' }, T('Сохранить'));
+        const m = modal(T('Маршрут ') + x.id, el('div', { class: 'stack' },
+          el('div', { class: 'field' }, el('label', null, T('Название')), lb),
+          el('div', { class: 'field' }, el('label', null, T('Туннели по приоритету')), cp.node),
+          el('label', { class: 'row' }, only, T('Эти туннели — только для этого маршрута (основной их не использует)'))), [el('button', { class: 'btn', onclick: () => m.close() }, T('Отмена')), save]);
+        save.addEventListener('click', async () => {
+          const pw = await promptPw(T('Сохранить маршрут ') + x.id + '?', T('Сторож маршрута перезапустится: трафик этого профиля на секунды уйдёт в blackhole (не в WAN).'));
+          if (pw == null) return;
+          try { ok(TM((await api('/api/route/save', { id: x.id, tunnels: cp.value(), label: lb.value.trim(), only: only.checked, current: pw })).msg)); m.close(); reload(); } catch (e) { err(e); }
+        });
+      } }, T('Изменить'));
+      const del = main ? null : el('button', { class: 'btn sm danger', onclick: async () => {
+        const pw = await promptPw(T('Убрать маршрут ') + x.id + '?', T('Трафик профиля ') + x.rail + T(' пойдёт как без набора — в сам профиль VPN Client UniFi. Туннели остаются.'));
+        if (pw == null) return;
+        try { ok(TM((await api('/api/route/remove', { id: x.id, current: pw })).msg)); reload(); } catch (e) { err(e); }
+      } }, T('Убрать'));
+      return el('tr', null,
+        el('td', null, el('b', null, main ? T('Основной') : (x.label || x.id)), el('div', { class: 'small muted mono' }, (main ? '' : x.id + ' · ') + (x.rail || '?') + T(' · таблица ') + (x.table || '?'))),
+        el('td', null, el('div', { class: 'row wrap' }, x.tunnels.map((t, i) => el('span', { class: 'badge' + (t === x.active ? ' ok' : '') }, (i + 1) + '. ' + lab(t))))),
+        el('td', null, el('span', { class: 'badge ' + (x.service === 'active' ? 'ok' : 'crit') }, x.service === 'active' ? T('сторож работает') : T('сторож не запущен')),
+          x.forced ? el('div', { class: 'small muted' }, T('выбран вручную: ') + x.forced) : null),
+        el('td', { class: 'r nowrap' }, main ? el('a', { class: 'btn sm', href: '#/tunnels' }, T('Туннели')) : [sw, ' ', edit, ' ', del]));
+    }));
+    const free = r.rails.filter((x) => !x.used);
+    const rail = el('select', { class: 'input' }, free.map((x) => el('option', { value: x.rail }, x.rail + T(' (таблица ') + x.table + ')')));
+    const rid = el('input', { class: 'input mono', placeholder: 'us', maxlength: 12, spellcheck: 'false' });
+    const lb = el('input', { class: 'input', placeholder: T('например, США для ТВ'), maxlength: 40 });
+    const cp = chainPicker(r.tunnels, [], lab);
+    const only = el('input', { type: 'checkbox' });
+    const mk = el('button', { class: 'btn primary', disabled: !free.length }, icon('plus', 'sm'), T('Создать маршрут'));
+    mk.addEventListener('click', async () => {
+      if (!cp.value().length) { err(T('выберите туннели маршрута по порядку')); return; }
+      const pw = await promptPw(T('Создать маршрут?'), T('Устройства и домены, которые в UniFi направлены на профиль ') + rail.value + T(', пойдут через выбранные туннели со своим сторожем и kill switch.'));
+      if (pw == null) return;
+      await busy(mk, async () => {
+        try { ok(TM((await api('/api/route/save', { new: true, id: rid.value.trim(), rail: rail.value, tunnels: cp.value(), label: lb.value.trim(), only: only.checked, current: pw })).msg)); reload(); } catch (e) { err(e); }
+      });
+    });
+    add(body, [
+      el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Какие устройства и домены куда идут, задаётся в UniFi: Settings → Routing → Policy-Based Routes, правило на нужный профиль VPN Client. Здесь каждому профилю назначается своя цепочка туннелей AmneziaWG со своим переключением и kill switch. Профиль для нового маршрута — ещё один VPN Client в UniFi (как для основного) и хотя бы одно правило PBR на него.'))),
+      card(T('Маршруты'), el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+        el('thead', null, el('tr', null, el('th', null, T('Маршрут')), el('th', null, T('Туннели (активный выделен)')), el('th', null, T('Состояние')), el('th', { class: 'r' }, ''))), tb)),
+      { icon: 'layers', flush: true }),
+      card(T('Новый маршрут'), el('div', { class: 'stack' },
+        free.length ? null : el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('Свободных профилей VPN Client с правилами PBR нет. Создайте в UniFi ещё один VPN Client и правило Policy-Based Route на него, затем обновите страницу.'))),
+        el('div', { class: 'form-grid' },
+          el('div', { class: 'field' }, el('label', null, T('Профиль VPN Client UniFi')), rail),
+          el('div', { class: 'field' }, el('label', null, T('ID')), rid, el('span', { class: 'hint' }, T('латиница, до 12 знаков'))),
+          el('div', { class: 'field' }, el('label', null, T('Название')), lb)),
+        el('div', { class: 'field' }, el('label', null, T('Туннели по приоритету')), cp.node),
+        el('label', { class: 'row' }, only, T('Эти туннели — только для этого маршрута (основной их не использует)'))), { icon: 'plus', foot: mk })]);
+  }
+  // автоподбор обфускации (#33): перебор наборов, проверка, оценка; «Применить» — только по кнопке
+  function tuneCard() {
+    const box = el('div', { class: 'stack' }, el('div', { class: 'muted small' }, T('Загрузка…')));
+    let polling = false;
+    const load = async () => {
+      let r;
+      try { r = await api('/api/tune'); } catch (e) { replace(box, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, String(e.message || e)))); return; }
+      const lab = (t) => { const x = S.ov && S.ov.tunnels.find((y) => y.name === t.name); return (x && x.label ? x.label + ' (' + t.name + ')' : t.name) + (t.active ? T(' — активный') : ''); };
+      const first = (r.tunnels.find((t) => !t.active) || {}).name;
+      const sel = el('select', { class: 'input' }, r.tunnels.map((t) => el('option', { value: t.name, selected: t.name === first }, lab(t))));
+      const mode = el('select', { class: 'input' });
+      const cnt = el('input', { class: 'input mono', value: '5', inputmode: 'numeric' });
+      const act = el('input', { type: 'checkbox' });
+      const fillMode = () => {
+        const t = r.tunnels.find((x) => x.name === sel.value) || {};
+        replace(mode, el('option', { value: 'client' }, T('Только роутер (Jc, Jmin, Jmax) — любой туннель')),
+          t.server ? el('option', { value: 'server', selected: true }, T('Роутер и свой VPS (Jc…H4) — согласованно')) : null);
+      };
+      sel.addEventListener('change', fillMode); fillMode();
+      const log = el('div', { class: 'out' + (r.log ? '' : ' hidden') });
+      if (r.log) paint(log, r.log);
+      const go = el('button', { class: 'btn primary', disabled: r.running }, icon('activity', 'sm'), r.running ? T('Подбор идёт…') : T('Подобрать'));
+      go.addEventListener('click', async () => {
+        const pw = await promptPw(T('Подобрать параметры для ') + sel.value + '?', T('Туннель по очереди пробует наборы: на каждый — до полутора минут без связи по этому туннелю, замер скорости — 5 МБ трафика. В конце возвращается исходный набор. Лучший ставится только по кнопке «Применить».'));
+        if (pw == null) return;
+        try { ok(TM((await api('/api/tune/run', { tunnel: sel.value, mode: mode.value, count: cnt.value.trim(), active: act.checked, current: pw })).msg)); follow(); } catch (e) { err(e); }
+      });
+      const rows = r.rows.map((x) => el('tr', { class: x.n === r.best ? 'hl' : '' },
+        el('td', { class: 'mono' }, x.n === 0 ? T('сейчас') : '№' + x.n),
+        el('td', null, x.ok ? el('span', { class: 'badge ok' }, T('работает')) : el('span', { class: 'badge crit' }, T('нет связи'))),
+        el('td', { class: 'mono small' }, x.ok ? x.loss + '% · ' + x.rtt + T(' мс · ') + x.mbps + T(' Мбит/с') : '—'),
+        el('td', null, el('b', null, String(x.score)), x.n === r.best ? el('span', { class: 'badge ok' }, T('лучший')) : null),
+        el('td', { class: 'mono small' }, x.params),
+        el('td', { class: 'r' }, x.ok && x.n !== 0 ? el('button', { class: 'btn sm' + (x.n === r.best ? ' primary' : ''), disabled: r.running, onclick: async () => {
+          const pw = await promptPw(T('Поставить набор №') + x.n + T(' на ') + r.head.tunnel + '?', r.head.mode === 'server' ? T('Параметры поменяются на VPS и роутере одновременно; не заработает — обе стороны вернутся.') : T('Меняется только конфиг роутера (прежний — в «Истории» туннеля).'));
+          if (pw == null) return;
+          try { const y = await api('/api/tune/apply', { n: x.n, current: pw }); (y.ok ? ok : err)(TM(y.msg)); if (y.job) follow(); else load(); } catch (e) { err(e); }
+        } }, T('Применить')) : null)));
+      replace(box,
+        el('p', { class: 'muted small' }, T('Если провайдер начал узнавать или замедлять AmneziaWG: роутер перебирает наборы параметров обфускации, проверяет каждый (handshake, интернет, потери, задержка, скорость) и ставит оценку. «Только роутер» меняет параметры мусорных пакетов, которые сервер не сверяет, — подходит и для туннеля провайдера, и для 3x-ui. «Роутер и свой VPS» меняет и S1, S2, H1–H4 на вашем сервере.')),
+        el('div', { class: 'form-grid' },
+          el('div', { class: 'field' }, el('label', null, T('Туннель')), sel),
+          el('div', { class: 'field' }, el('label', null, T('Что менять')), mode),
+          el('div', { class: 'field' }, el('label', null, T('Новых наборов')), cnt, el('span', { class: 'hint' }, T('1–12; первым меряется текущий')))),
+        el('label', { class: 'row' }, act, T('Разрешить на активном канале (трафик устройств на время подбора пойдёт с перерывами)')),
+        el('div', { class: 'row' }, go),
+        r.rows.length ? el('div', null, el('div', { class: 'small muted' }, T('Последний подбор: ') + r.head.tunnel + ' · ' + (r.head.mode === 'server' ? T('роутер и VPS') : T('только роутер')) + ' · ' + fmtTime(r.head.ts, true)),
+          el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Набор')), el('th', null, T('Связь')),
+            el('th', null, T('Потери · задержка · скорость')), el('th', null, T('Оценка')), el('th', null, T('Параметры')), el('th', null, ''))), el('tbody', null, rows)))) : null,
+        log);
+      if (r.running && !polling) follow();
+    };
+    async function follow() {
+      if (polling) return;
+      polling = true;
+      for (let i = 0; i < 600; i++) {
+        await new Promise((ok2) => setTimeout(ok2, 3000));
+        let x;
+        try { x = await api('/api/tune'); } catch (e) { continue; }
+        if (!x.running) break;
+        const lg = box.querySelector('.out');
+        if (lg) { lg.classList.remove('hidden'); paint(lg, x.log); lg.scrollTop = lg.scrollHeight; }
+      }
+      polling = false;
+      load();
+    }
+    load();
+    return card(T('Подбор параметров обфускации'), box, { icon: 'shield' });
+  }
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)
   function qrMatrix(text) {
     const data = Array.from(new TextEncoder().encode(text));

@@ -8,5 +8,8 @@ case "$1 $2" in
   "route replace") echo "$*" >> $S/routes.log; exit 0;;
   "route del") echo "$*" >> $S/routes-del.log; exit 0;;
   "-4 -o") [ "$3 $4" = "addr show" ] && echo "9: $6    inet 10.9.0.$(( ${#6} % 200 ))/32 scope global $6"; exit 0;;
+  "-6 -o") [ "$3 $4" = "addr show" ] && [ -e "$S/v6/$6" ] && echo "9: $6    inet6 fd00::${#6}/128 scope global"; exit 0;;
+  "-6 route") echo "$*" >> "$S/routes6.log"; exit 0;;
+  "-6 rule") [ "$3" = show ] && cat "$S/rule6" 2>/dev/null; [ "$3" = add ] && echo "$*" >> "$S/rule6.log"; [ "$3" = del ] && echo "$*" >> "$S/rule6-del.log"; exit 0;;
 esac
 exit 0

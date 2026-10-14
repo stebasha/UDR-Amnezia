@@ -277,7 +277,7 @@
       const inp = el('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
       const go = () => { done = true; m.close(); res(inp.value); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Текущий пароль')), inp)), [
+      const m = modal(title, el('div', null, text ? el('p', null, text) : null, el('div', { class: 'field' }, el('label', null, T('Пароль от этой веб-панели (тот же, что при входе)')), inp)), [
         el('button', { class: 'btn', onclick: () => { done = true; m.close(); res(null); } }, T('Отмена')),
         el('button', { class: 'btn primary', onclick: go }, T('Подтвердить')),
       ], { onclose: () => { if (!done) res(null); } });

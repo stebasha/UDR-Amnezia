@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.5.1"
+VERSION = "1.6.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -416,7 +416,7 @@ SETTINGS = {
     "DIRECT_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Домены напрямую (исключения)"),
     "DIRECT_SUBNETS": (v_subnets, ["awg-guard"], "Подсети напрямую (исключения)"),
     "LEAK_GUARD": (v_choice("yes", "no"), ["awg-guard"], "Защита от утечек"),
-    "LEAK_V6": (v_choice("block", "off"), ["awg-guard"], "Блокировать IPv6 под PBR"),
+    "LEAK_V6": (v_choice("block", "off", "route"), ["awg-guard", "awg-failover"], "IPv6 устройств под PBR"),
     "UI_FIX": (v_choice("yes", "no"), ["awg-self"], "unifi.ui.com через туннель"),
     "UI_DOMAINS": (v_domains, ["awg-self"], "Домены UniFi"),
     "UI_DNS": (v_ipv4, ["awg-self"], "DNS для доменов UniFi"),
@@ -486,6 +486,11 @@ def apply_services(services, e):
             else:
                 rc, out = unit_on(u)
             msgs.append("%s: %s" % (u, "перезапущена" if rc == 0 else "ошибка: " + out.strip()[:200]))
+            if u == "awg-failover":              # сторожа дополнительных маршрутов (#22) — с теми же настройками
+                for r in units_list():
+                    if r.startswith("awg-failover-"):
+                        rc, out = run(["systemctl", "restart", r], timeout=30)
+                        msgs.append("%s: %s" % (r, "перезапущена" if rc == 0 else "ошибка: " + out.strip()[:200]))
         elif svc_installed(u):
             unit_off(u)
             msgs.append("%s: выключена (нечего делать)" % u)
@@ -707,7 +712,10 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/tunnel/export", "/api/system/reboot", "/api/web", "/api/update/run", "/api/update/channel", "/api/settings/import",
               "/api/backup/file", "/api/backup/create", "/api/backup/delete", "/api/backup/verify", "/api/telegram", "/api/ha",
               "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test", "/api/hooks", "/api/hooks/test",
-              "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job"}
+              "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job",
+              "/api/xui", "/api/xui/test", "/api/xui/create", "/api/xui/remove", "/api/xui/panel/remove", "/api/xui/inbounds",
+              "/api/xui/import", "/api/xui/link", "/api/xui/sync", "/api/vps/del", "/api/route/save", "/api/route/remove",
+              "/api/tune/run", "/api/tune/apply"}
 
 
 class Throttle:

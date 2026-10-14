@@ -1,14 +1,21 @@
 #!/bin/bash
 # vps.sh — управление своим VPS (сервер запасного канала) с роутера по SSH ключом роутера (#13).
+#   vps.sh setup [ИМЯ] [ПОРТ]    мастер (#28): ключ роутера на VPS (пароль — один раз, из VPS_PASS_FILE), сборка и сервер
+#                                AmneziaWG, конфиг клиента → новый туннель (по умолчанию awgvps, UDP 51823), проверка handshake
+#   vps.sh addkey                только положить ключ роутера на VPS по паролю (VPS_PASS_FILE) — для уже настроенного VPS
 #   vps.sh test                  вход по ключу без пароля
 #   vps.sh tunnels               туннели, ведущие на этот VPS
 #   vps.sh status                состояние сервера (audit-server.sh, только чтение), версии AmneziaWG, нагрузка, место
 #   vps.sh versions              версии amneziawg-go и awg на VPS и последние релизы amnezia-vpn (код 10 — есть новее)
 #   vps.sh update                собрать последние релизы на VPS и перезапустить сервер; нет handshake — откат на *.prev
+#   vps.sh router-bins           собрать последние amneziawg-go и awg для роутера на VPS и поставить (откат по handshake)
 #   vps.sh rotate-keys [ТУННЕЛЬ] новые ключи сервера и роутера одновременно; нет handshake — откат на обеих сторонах
-#   vps.sh obfs [ТУННЕЛЬ]        новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
-# Адрес — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env. Ключ роутера — ssh/id_ed25519
-# (создаёт установщик при настройке VPS). Туннель к VPS определяется по Endpoint = адрес VPS.
+#   vps.sh obfs [ТУННЕЛЬ] [--file Ф]  новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
+#   vps.sh list                  все свои VPS (#32): ID адрес порт пользователь метка
+#   vps.sh --vps ID КОМАНДА …    то же для другого своего VPS (по умолчанию main)
+# Адрес VPS main — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env; остальные VPS — vps.d/ID.env
+# (VPS_HOST, VPS_PORT, VPS_USER, VPS_LABEL). Ключ роутера — ssh/id_ed25519, общий для всех VPS. Туннель к VPS определяется
+# по Endpoint = адрес VPS; туннели, привязанные к 3x-ui (xui.json), и туннели не на порт awg-server сюда не относятся.
 export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
 RKEY=${RKEY:-$DD/ssh/id_ed25519}
@@ -18,13 +25,22 @@ umask 077
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}
-VPS_HOST=""; VPS_PORT=22; VPS_USER=root
-# shellcheck disable=SC1091
-[ -r "$DD/vps.env" ] && . "$DD/vps.env"
-VPS_HOST=${VPS_HOST:-${VPS_IP:-}}
-
 say(){ printf '%s\n' "$*"; }
 die(){ say "ОШИБКА: $*"; exit 1; }
+
+VPS_ID=${VPS_ID:-main}
+if [ "${1:-}" = --vps ]; then VPS_ID=${2:-}; shift 2 || shift; fi
+[[ $VPS_ID =~ ^[a-z][a-z0-9]{0,11}$ ]] || die "неверный ID VPS: $VPS_ID"
+VPS_HOST=""; VPS_PORT=22; VPS_USER=root; VPS_LABEL=""
+if [ "$VPS_ID" = main ]; then
+  # shellcheck disable=SC1091
+  [ -r "$DD/vps.env" ] && . "$DD/vps.env"
+  VPS_HOST=${VPS_HOST:-${VPS_IP:-}}
+else
+  [ -r "$DD/vps.d/$VPS_ID.env" ] || [ "${1:-}" = list ] || die "нет VPS $VPS_ID (vps.d/$VPS_ID.env): добавьте его в панели («Свой VPS → Добавить VPS»)"
+  # shellcheck disable=SC1090
+  [ -r "$DD/vps.d/$VPS_ID.env" ] && . "$DD/vps.d/$VPS_ID.env"
+fi
 event(){ echo "$(date +%s)|vps|$1" >> "$DD/events.log"; }
 notify(){ if { [ -r "$DD/telegram.env" ] || [ -r "$DD/hooks.env" ]; } && [ -x "$DD/notify.sh" ]; then "$DD/notify.sh" "$1" >/dev/null 2>&1; fi; return 0; }
 
@@ -40,6 +56,18 @@ valid(){
 }
 vrun(){ ssh "${SSHO[@]}" "$VPS_USER@$VPS_HOST" "$@" < /dev/null; }
 vput(){ scp "${SCPO[@]}" "$@" "$VPS_USER@$VPS_HOST:/root/"; }
+vget(){ scp "${SCPO[@]}" "$VPS_USER@$VPS_HOST:$1" "$2"; }
+push_key(){  # push_key ПАРОЛЬ — положить ключ роутера в authorized_keys по паролю (один раз; пароль не сохраняется)
+  local ap pub rc
+  pub=$(cat "$RKEY.pub") || return 1
+  ap=$(mktemp "$DD/.askpass.XXXXXX"); printf '#!/bin/sh\nprintf "%%s\\n" "$AWG_SSH_PASS"\n' > "$ap"; chmod 700 "$ap"
+  # ssh спрашивает пароль через SSH_ASKPASS (без терминала); в аргументах и файлах пароля нет — только в окружении процесса
+  AWG_SSH_PASS="$1" SSH_ASKPASS="$ap" SSH_ASKPASS_REQUIRE=force DISPLAY=none setsid -w ssh -p "$VPS_PORT" -o ConnectTimeout=15 \
+    -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$DD/ssh/known_hosts" -o PubkeyAuthentication=no \
+    -o PreferredAuthentications=password,keyboard-interactive -o NumberOfPasswordPrompts=1 "$VPS_USER@$VPS_HOST" \
+    "umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && { grep -qxF '$pub' ~/.ssh/authorized_keys || echo '$pub' >> ~/.ssh/authorized_keys; }" < /dev/null
+  rc=$?; rm -f "$ap"; return $rc
+}
 need_script(){ [ -f "$SRV/$1" ] || die "нет $SRV/$1: обновите набор (install.sh --update)"; }
 
 conf_of(){
@@ -50,15 +78,24 @@ conf_of(){
 }
 conf_get(){ awk -v k="$2" 'BEGIN{k=tolower(k)} { line=$0; sub(/\r$/,"",line); split(line,a,"="); key=a[1]; gsub(/[ \t]/,"",key) } tolower(key)==k { sub(/^[^=]*=[ \t]*/,"",line); print line; exit }' "$1"; }
 hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
-vps_tunnels(){  # туннели, у которых Endpoint — этот VPS (имя или адрес, в т. ч. разрешённый up.sh)
-  local t cf ep host ip
+xui_tunnels(){  # туннели, привязанные к 3x-ui (#30, #32): их сервер — 3x-ui, а не awg-server
+  [ -r "$DD/xui.json" ] || return 0
+  python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+t = d.get("tunnels", {}) if "tunnels" in d or "panels" in d else d
+print(" ".join(k for k in t if isinstance(t, dict)))' "$DD/xui.json" 2>/dev/null
+}
+vps_tunnels(){  # туннели, у которых Endpoint — этот VPS (имя или адрес, в т. ч. разрешённый up.sh), кроме туннелей 3x-ui
+  local t cf ep host ip xt
   [ -n "$VPS_HOST" ] || return 0        # адрес VPS не задан — своих туннелей нет (пустое не совпадает с пустым)
+  xt=" $(xui_tunnels) "
   for t in $MAIN $BACKUP $TUNNELS_EXTRA; do
+    case "$xt" in *" $t "*) continue;; esac
     cf=$DD/$(conf_of "$t"); [ -f "$cf" ] || continue
     ep=$(conf_get "$cf" Endpoint | tr -d ' \r'); host=${ep%:*}
     ip=$(awk '{print $2}' "$DD/.endpoint-$t" 2>/dev/null)
     [ -n "$host" ] || continue
-    if [ "$host" = "$VPS_HOST" ] || { [ -n "$ip" ] && [ "$ip" = "$VPS_HOST" ]; } || { [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
+    if [ "$host" = "$VPS_HOST" ] || { [ -n "$ip" ] && [ "$ip" = "$VPS_HOST" ]; } || { [ "$VPS_ID" = main ] && [ -n "${VPS_IP:-}" ] && [ "$host" = "$VPS_IP" ]; }; then echo "$t"; fi
   done
 }
 pick(){  # pick [ТУННЕЛЬ] → $T, $CF
@@ -67,6 +104,11 @@ pick(){  # pick [ТУННЕЛЬ] → $T, $CF
   if [ -n "$1" ]; then echo "$l" | grep -qx "$1" || die "$1 — не туннель к $VPS_HOST (подходят: $(echo "$l" | tr '\n' ' '))"; T=$1
   else [ "$(echo "$l" | wc -l)" = 1 ] || die "к VPS ведут несколько туннелей ($(echo "$l" | tr '\n' ' ')): укажите какой"; T=$l; fi
   CF=$DD/$(conf_of "$T")
+  # туннель должен обслуживать awg-server (/etc/amnezia/server.conf), а не другая программа на том же VPS (например, 3x-ui)
+  local tp sp; tp=$(conf_get "$CF" Endpoint | tr -d ' \r'); tp=${tp##*:}
+  sp=$(vrun 'sed -n "s/^[[:space:]]*ListenPort[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p" /etc/amnezia/server.conf 2>/dev/null | head -n1' 2>/dev/null)
+  [ -n "$sp" ] || die "на VPS нет сервера awg-server (/etc/amnezia/server.conf): туннель $T обслуживает другая программа (например, 3x-ui) — меняйте его там"
+  [ "$sp" = "$tp" ] || die "туннель $T идёт на порт $tp, а awg-server слушает $sp: этот туннель обслуживает другая программа (например, 3x-ui) — ключи и обфускацию меняйте там (для 3x-ui: «3x-ui → Обновить из 3x-ui»)"
 }
 fresh(){ local a; a=$(hs_age "$1"); [ "$a" -ge 0 ] && [ "$a" -lt "${2:-20}" ]; }
 wait_hs(){  # wait_hs ТУННЕЛЬ — handshake свежее 20 с за VPS_WAIT секунд и интернет через туннель
@@ -118,8 +160,9 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   if wait_hs "$T"; then
     say "✔ $what: туннель $T работает (handshake есть, интернет через него открывается)"
     vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
-    say "  прежний конфиг роутера: $pre (со старым ключом — удалите: shred -u $pre); на VPS: $bk"
-    event "$what: $T — готово"; notify "🔑 $what · $(hostname): туннель $T работает на новых значениях"
+    if [ -n "${VPS_NO_KEEP:-}" ]; then rm -f "$pre"; [[ $bk =~ ^/[A-Za-z0-9._/-]+$ ]] && vrun "rm -f '$bk'" >/dev/null 2>&1   # автоподбор (#33): копии не копятся
+    else say "  прежний конфиг роутера: $pre (со старым ключом — удалите: shred -u $pre); на VPS: $bk"; fi
+    [ -z "${VPS_QUIET:-}" ] && { event "$what: $T — готово"; notify "🔑 $what · $(hostname): туннель $T работает на новых значениях"; }
     return 0
   fi
   say "✘ $what: туннель $T не заработал — откатываю обе стороны"
@@ -128,7 +171,8 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   "$DD/up.sh" "$T" >/dev/null 2>&1
   vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
   if wait_hs "$T"; then say "· откат выполнен: $T работает на прежних значениях"; else say "· после отката $T не отвечает: смотрите «Диагностика» и awgctl selftest"; fi
-  event "$what: $T — не заработало, откат"; notify "⚠️ $what · $(hostname): туннель $T не заработал, выполнен откат"
+  [ -n "${VPS_NO_KEEP:-}" ] && rm -f "$pre"
+  [ -z "${VPS_QUIET:-}" ] && { event "$what: $T — не заработало, откат"; notify "⚠️ $what · $(hostname): туннель $T не заработал, выполнен откат"; }
   return 1
 }
 apply_keys(){ set_keys "$CF" "$NK" "$1"; }
@@ -147,7 +191,100 @@ remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt и
 
 cmd=${1:-help}; shift
 case "$cmd" in
+  list)    # #32: все свои VPS
+    mainh=$VPS_HOST; [ "$VPS_ID" = main ] || mainh=$( . "$DD/vps.env" 2>/dev/null; echo "${VPS_HOST:-${VPS_IP:-}}")
+    # shellcheck disable=SC1091
+    [ -n "$mainh" ] && ( VPS_PORT=22; VPS_USER=root; VPS_LABEL=""; [ -r "$DD/vps.env" ] && . "$DD/vps.env"
+      printf 'main\t%s\t%s\t%s\t%s\n' "$mainh" "$VPS_PORT" "$VPS_USER" "$VPS_LABEL" )
+    for f in "$DD"/vps.d/*.env; do
+      [ -r "$f" ] || continue; id=$(basename "$f" .env); [[ $id =~ ^[a-z][a-z0-9]{0,11}$ ]] || continue
+      # shellcheck disable=SC1090
+      ( VPS_HOST=""; VPS_PORT=22; VPS_USER=root; VPS_LABEL=""; . "$f"; printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$VPS_HOST" "$VPS_PORT" "$VPS_USER" "$VPS_LABEL" )
+    done;;
   tunnels) vps_tunnels;;
+  addkey)  # ключ роутера на уже настроенный VPS: дальше обновление, состояние, ключи и обфускация — без пароля
+    pw=""; if [ -n "${VPS_PASS_FILE:-}" ]; then pw=$(cat "$VPS_PASS_FILE" 2>/dev/null); rm -f "$VPS_PASS_FILE"; fi
+    if [ ! -f "$RKEY" ]; then
+      command -v ssh-keygen >/dev/null || die "на роутере нет ssh-keygen"
+      mkdir -p "$DD/ssh"; chmod 700 "$DD/ssh"
+      ssh-keygen -q -t ed25519 -N "" -C "udr-awg@$(hostname)" -f "$RKEY" || die "ssh-keygen не сработал"
+      say "· создан ключ роутера $RKEY"
+    fi
+    valid
+    if vrun true >/dev/null 2>&1; then say "✔ ключ роутера уже на VPS: вход без пароля работает"; exit 0; fi
+    [ -n "$pw" ] || die "укажите пароль VPS"
+    push_key "$pw" >/dev/null 2>"$DD/.ssh.err" || { e=$(tail -n1 "$DD/.ssh.err"); rm -f "$DD/.ssh.err"; die "вход по паролю не удался: ${e:-нет ответа}"; }
+    rm -f "$DD/.ssh.err"; unset pw
+    vrun true >/dev/null 2>&1 || die "ключ добавлен, но вход по нему не работает (PubkeyAuthentication на VPS?)"
+    event "ключ роутера добавлен на VPS $VPS_HOST"
+    say "✔ ключ роутера добавлен на VPS $VPS_HOST: вход без пароля работает, пароль нигде не сохранён";;
+  setup)   # #28: мастер своего VPS — от пароля до работающего туннеля
+    name=${1:-awgvps}; aport=${2:-51823}; pw=""
+    if [ -n "${VPS_PASS_FILE:-}" ]; then pw=$(cat "$VPS_PASS_FILE" 2>/dev/null); rm -f "$VPS_PASS_FILE"; fi
+    [[ $name =~ ^awg[a-z0-9]{1,10}$ ]] || die "имя туннеля: awg и 1–10 строчных латинских букв или цифр"
+    [[ $aport =~ ^[0-9]{4,5}$ ]] && [ "$aport" -ge 1024 ] && [ "$aport" -le 65535 ] || die "порт AmneziaWG: 1024–65535"
+    for t in $MAIN $BACKUP $TUNNELS_EXTRA; do [ "$t" = "$name" ] && die "туннель $name уже есть: выберите другое имя"; done
+    [ -e "$DD/$name.conf" ] && die "уже есть $DD/$name.conf: выберите другое имя"
+    command -v ssh-keygen >/dev/null || die "на роутере нет ssh-keygen"
+    if [ ! -f "$RKEY" ]; then
+      mkdir -p "$DD/ssh"; chmod 700 "$DD/ssh"
+      ssh-keygen -q -t ed25519 -N "" -C "udr-awg@$(hostname)" -f "$RKEY" || die "ssh-keygen не сработал"
+      say "· создан ключ роутера $RKEY"
+    fi
+    valid
+    say "· 1/6 вход на $VPS_USER@$VPS_HOST:$VPS_PORT"
+    if ! vrun true >/dev/null 2>&1; then
+      [ -n "$pw" ] || die "вход по ключу роутера не работает, а пароль не указан"
+      push_key "$pw" >/dev/null 2>"$DD/.ssh.err" || { e=$(tail -n1 "$DD/.ssh.err"); rm -f "$DD/.ssh.err"; die "вход по паролю не удался: ${e:-нет ответа} (пароль, порт, PermitRootLogin, файрвол хостера)"; }
+      rm -f "$DD/.ssh.err"
+      vrun true >/dev/null 2>&1 || die "ключ роутера добавлен, но вход по нему не работает (PubkeyAuthentication на VPS?)"
+      say "  ключ роутера добавлен на VPS: дальше вход без пароля, пароль нигде не сохранён"
+    fi
+    unset pw
+    st=$(vrun 'id -u; uname -m; . /etc/os-release 2>/dev/null; echo "$ID $VERSION_ID"; command -v apt-get >/dev/null && echo APT; test -e /etc/amnezia/server.conf && echo SERVER; test -e /root/awgbuild/client.conf && echo CLIENT; command -v awg >/dev/null && command -v amneziawg-go >/dev/null && echo BUILT' 2>/dev/null)
+    say "· 2/6 сервер: $(echo "$st" | sed -n 3p), $(echo "$st" | sed -n 2p)"
+    [ "$(echo "$st" | sed -n 1p)" = 0 ] || die "нужен пользователь root (сборке нужны apt и systemd)"
+    echo "$st" | grep -qx APT || die "на сервере нет apt: поддерживаются Ubuntu и Debian"
+    if echo "$st" | grep -qx SERVER && ! echo "$st" | grep -qx CLIENT; then
+      die "на VPS уже настроен сервер AmneziaWG, а его конфиг клиента удалён: подключите туннель вручную (импорт конфига) или удалите /etc/amnezia/server.conf на VPS"
+    fi
+    if [[ $VPS_HOST =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then ip=$VPS_HOST; else ip=$(getent ahostsv4 "$VPS_HOST" 2>/dev/null | awk 'NR==1{print $1}'); fi
+    [ -n "$ip" ] || die "не удалось определить IPv4 адрес $VPS_HOST"
+    for f in awg-server-build.sh awg-server-setup.sh audit-server.sh; do need_script "$f"; done
+    vput "$SRV/awg-server-build.sh" "$SRV/awg-server-setup.sh" "$SRV/audit-server.sh" || die "не удалось передать скрипты на VPS"
+    if echo "$st" | grep -qx BUILT; then say "· 3/6 AmneziaWG на VPS уже собран"
+    else
+      lg=$(latest amneziawg-go); lt=$(latest amneziawg-tools)
+      say "· 3/6 сборка AmneziaWG на VPS из исходников amnezia-vpn${lg:+ ($lg, $lt)} (3–7 минут)…"
+      out=$(vrun "${lg:+AWG_GO_REF=$lg AWG_TOOLS_REF=$lt }bash /root/awg-server-build.sh" 2>&1)
+      echo "$out" | tail -n 4 | sed 's/^/    │ /'
+      echo "$out" | grep -qx BUILT_OK || die "сборка на VPS не удалась"
+    fi
+    if echo "$st" | grep -qx SERVER; then say "· 4/6 сервер AmneziaWG уже есть, беру его конфиг клиента"
+    else
+      say "· 4/6 сервер AmneziaWG: UDP $aport, адрес $ip, параметры обфускации — случайные"
+      out=$(vrun "VPS_IP=$ip PORT=$aport bash /root/awg-server-setup.sh" 2>&1); rc=$?
+      echo "$out" | tail -n 4 | sed 's/^/    │ /'
+      [ $rc = 0 ] || die "настройка сервера не удалась"
+    fi
+    tmpc=$(mktemp "$DD/.client.XXXXXX")
+    vget /root/awgbuild/client.conf "$tmpc" >/dev/null 2>&1 && grep -q '^\[Interface\]' "$tmpc" || { rm -f "$tmpc"; die "не удалось забрать конфиг клиента с VPS"; }
+    say "· 5/6 туннель $name на роутере"
+    python3 "$DD/web/panel.py" tunnel-add "$name" "$tmpc" "Свой VPS" 2>&1 | tail -n 3 | sed 's/^/    │ /'; rc=${PIPESTATUS[0]}
+    if [ "$rc" = 2 ]; then rm -f "$tmpc"; die "туннель не добавлен (конфиг остался на VPS: /root/awgbuild/client.conf)"; fi
+    rm -f "$tmpc"
+    # конфиг клиента на VPS больше не нужен: ключ роутера живёт только на роутере
+    vrun 'shred -u /root/awgbuild/client.conf 2>/dev/null || rm -f /root/awgbuild/client.conf; rm -f /root/awg-server-build.sh /root/awg-server-setup.sh /root/audit-server.sh' >/dev/null 2>&1
+    grep -q '^VPS_IP=..*' "$DD/awg.env" 2>/dev/null || { sed -i '/^VPS_IP=/d' "$DD/awg.env"; echo "VPS_IP=$ip" >> "$DD/awg.env"; }
+    say "· 6/6 жду handshake (до ${VPS_WAIT} с)…"
+    if wait_hs "$name"; then
+      say "✔ свой VPS подключён: туннель $name работает (handshake есть, интернет через него открывается)"
+      event "свой VPS $VPS_HOST подключён: туннель $name"; notify "🖥 Свой VPS подключён · $(hostname): туннель $name"
+      exit 0
+    fi
+    say "▲ туннель $name добавлен, но handshake пока нет: откройте UDP $aport в файрволе хостера (в панели провайдера VPS) и проверьте через минуту"
+    event "свой VPS $VPS_HOST: туннель $name добавлен, handshake нет"
+    exit 3;;
   test)
     valid
     r=$(vrun 'echo CONNECTED; uname -m; . /etc/os-release 2>/dev/null; echo "$PRETTY_NAME"; systemctl is-active awg-server 2>/dev/null' 2>&1)
@@ -203,6 +340,27 @@ case "$cmd" in
     say "✔ на VPS amneziawg-go $lg и awg $lt"
     event "AmneziaWG на VPS обновлён: amneziawg-go $lg, awg $lt"; notify "⬆️ AmneziaWG на VPS обновлён · $(hostname): amneziawg-go $lg, awg $lt"
     exit 0;;
+  router-bins)   # #29: бинарники роутера из официальных исходников, собранные на своём VPS; установка — install.sh с откатом
+    valid; need_script awg-build-router.sh
+    [ -x "$DD/install.sh" ] || die "нет $DD/install.sh"
+    lg=$(latest amneziawg-go); lt=$(latest amneziawg-tools)
+    [ -n "$lg" ] && [ -n "$lt" ] || die "не удалось узнать последние релизы на github.com/amnezia-vpn"
+    say "· сборка amneziawg-go $lg и awg $lt для роутера (linux/arm64) на VPS из исходников amnezia-vpn (3–7 минут)…"
+    vput "$SRV/awg-build-router.sh" || die "не удалось передать awg-build-router.sh"
+    out=$(vrun "AWG_GO_REF=$lg AWG_TOOLS_REF=$lt bash /root/awg-build-router.sh" 2>&1); rc=$?
+    echo "$out" | tail -n 8 | sed 's/^/    │ /'
+    vrun 'rm -f /root/awg-build-router.sh' >/dev/null 2>&1
+    [ $rc = 0 ] || die "сборка на VPS не удалась (код $rc): роутер не тронут"
+    tmpd=$(mktemp -d "$DD/.bins.XXXXXX")
+    for f in amneziawg-go awg SHA256SUMS BUILDINFO; do
+      vget "/root/awgbuild/router/$f" "$tmpd/$f" >/dev/null 2>&1 || { rm -rf "$tmpd"; die "не удалось забрать $f с VPS"; }
+    done
+    say "· файлы на роутере, ставлю (сверка SHA256SUMS, проверка handshake, откат при неудаче)…"
+    AWG_YES=1 "$DD/install.sh" --bins-update "$tmpd" 2>&1 | sed 's/^/    /'; rc=${PIPESTATUS[0]}
+    rm -rf "$tmpd"
+    if [ "$rc" = 0 ]; then event "бинарники роутера обновлены: amneziawg-go $lg, awg $lt"; notify "⬆️ AmneziaWG на роутере обновлён · $(hostname): amneziawg-go $lg, awg $lt"
+    else event "обновление бинарников роутера не удалось, работают прежние"; fi
+    exit "$rc";;
   rotate-keys)
     valid; need_script vps-rotate.sh; pick "${1:-}"
     addr=$(conf_get "$CF" Address | tr ',' '\n' | tr -d ' \t\r' | grep -m1 '\.')
@@ -212,14 +370,20 @@ case "$cmd" in
     say "· смена ключей туннеля $T ($addr): $T будет недоступен 10–30 с, kill switch держит PBR-трафик"
     OBFL=""; coordinated "смена ключей" "CLIENT_ADDR=$addr NEW_CLIENT_PUB=$NP" apply_keys; rc=$?
     unset NK; exit $rc;;
-  obfs)
-    valid; need_script vps-rotate.sh; pick "${1:-}"
+  obfs)   # obfs [ТУННЕЛЬ] [--file ФАЙЛ] — новые случайные параметры или заданные (автоподбор #33)
+    tn=""; of=""
+    while [ $# -gt 0 ]; do case "$1" in --file) of=${2:-}; shift 2 || shift;; *) tn=$1; shift;; esac; done
+    valid; need_script vps-rotate.sh; pick "$tn"
     for k in Jc Jmin Jmax S1 S2 H1 H2 H3 H4; do
       v=$(conf_get "$CF" "$k" | tr -d ' \r'); [[ $v =~ ^[0-9]+$ ]] || die "в $CF нет числового $k (AWG 2.0 с диапазонами H — меняйте вручную)"
     done
-    tmpd=$(mktemp -d "$DD/.obf.XXXXXX"); OBFL=$tmpd/awg-obf.txt; gen_obf > "$OBFL"
+    tmpd=$(mktemp -d "$DD/.obf.XXXXXX"); OBFL=$tmpd/awg-obf.txt
+    if [ -n "$of" ]; then
+      for k in Jc Jmin Jmax S1 S2 H1 H2 H3 H4; do grep -qE "^$k = [0-9]{1,10}$" "$of" 2>/dev/null || { rm -rf "$tmpd"; die "в $of нет числового $k"; }; done
+      grep -E '^(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4) = [0-9]{1,10}$' "$of" > "$OBFL"
+    else gen_obf > "$OBFL"; fi
     say "· новые параметры обфускации для $T: $(tr '\n' ' ' < "$OBFL")"
     coordinated "смена обфускации" "OBF_FILE=/root/awg-obf.txt" apply_obf; rc=$?
     rm -rf "$tmpd"; exit $rc;;
-  *) sed -n '2,12p' "$0";;
+  *) sed -n '2,18p' "$0";;
 esac

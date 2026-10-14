@@ -26,7 +26,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.5.1
+INSTALLER_VERSION=1.6.0
 # Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
 #   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
 #   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
@@ -286,7 +286,7 @@ KIT_FILES="awg/up.sh awg/failover.sh awg/awg-detect.sh awg/status.sh awg/audit.s
  awg/awg-uninstall.sh awg/subnets.sh awg/self.sh awg/guard.sh awg/awgctl.sh awg/selftest.sh awg/mtu.sh awg/backup.sh awg/bot.sh awg/metrics.sh
  awg/awg-failover.service awg/awg-notify.service awg/awg-motd.service awg/awg-subnets.service awg/awg-self.service awg/awg-guard.service
  awg/awg-bot.service awg/awg-metrics.service awg/diagnose.sh awg/report.sh awg/domain-check.sh awg/awg-web.service
- awg/drift.sh awg/vps.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/awgweb/__init__.py awg/web/awgweb/account.py awg/web/awgweb/api.py awg/web/awgweb/backups.py awg/web/awgweb/clients.py awg/web/awgweb/configs.py awg/web/awgweb/core.py awg/web/awgweb/data.py awg/web/awgweb/importer.py awg/web/awgweb/server.py awg/web/awgweb/settings.py awg/web/awgweb/speed.py awg/web/awgweb/tools.py awg/web/awgweb/tunnels.py awg/web/awgweb/update.py awg/web/awgweb/vps.py awg/web/awgweb/webconf.py
+ awg/drift.sh awg/vps.sh awg/routes.sh awg/obfs-tune.sh awg/bot.py awg/ha.py awg/awg-ha.service awg/awg-backup.service awg/web/panel.py awg/web/awgweb/__init__.py awg/web/awgweb/account.py awg/web/awgweb/api.py awg/web/awgweb/backups.py awg/web/awgweb/clients.py awg/web/awgweb/configs.py awg/web/awgweb/core.py awg/web/awgweb/data.py awg/web/awgweb/importer.py awg/web/awgweb/server.py awg/web/awgweb/settings.py awg/web/awgweb/speed.py awg/web/awgweb/tools.py awg/web/awgweb/tunnels.py awg/web/awgweb/update.py awg/web/awgweb/vps.py awg/web/awgweb/webconf.py awg/web/awgweb/xui.py
  awg/web/static/lang-en.js awg/web/static/index.html awg/web/static/app.js awg/web/static/app.css awg/web/static/favicon.svg
  server/awg-server-build.sh server/awg-build-router.sh server/awg-server-setup.sh server/audit-server.sh server/vps-rotate.sh server/vps-harden.sh"
 kit_ok(){ local f; for f in $KIT_FILES; do [ -f "$1/$f" ] || return 1; done; }
@@ -387,7 +387,7 @@ install_files(){
   # скрипты для своего VPS: панель и vps.sh передают их на сервер (#13)
   if [ -d "$KIT/server" ]; then
     mkdir -p "$DD/server"; chmod 700 "$DD/server"
-    for f in vps-rotate.sh audit-server.sh awg-server-build.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
+    for f in vps-rotate.sh audit-server.sh awg-server-build.sh awg-server-setup.sh awg-build-router.sh; do [ -f "$KIT/server/$f" ] && put "$KIT/server/$f" "$DD/server/$f"; done
   fi
   chmod 755 "$DD"/*.sh; chmod 700 "$DD/notify.sh" "$DD/awg-notify.sh" "$DD/bot.sh"
   chmod 644 "$DD"/*.service
