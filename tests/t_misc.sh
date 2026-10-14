@@ -121,7 +121,9 @@ MD=$T/mdd; mkdir -p "$MD" "$STUB/hs" "$STUB/svc"; echo 30 > "$STUB/hs/awgmain"; 
 printf 'MAIN=awgmain\nBACKUP=awgbackup\nTABLE=178\n' > "$MD/awg.env"; ln -sf "$H/stubs5/awg" "$MD/awg"
 printf 'ACTIVE=awgmain\nFORCED=\nUPDATED=1\nLOSS_awgmain=0\nRTT_awgmain=41\n' > "$T/mstate"
 printf '1|switch|a\n2|switch|b\n3|return|c\n' > "$MD/events.log"
+mkdir -p "$MD/metrics"; echo old > "$MD/metrics/metrics"      # прежняя папка метрик на /data (до 1.7.1)
 mo=$(DD=$MD STATEF=$T/mstate PATH="$H/stubs5:$PATH" bash "$COMP/metrics.sh" once)
+ck "метрики: файл в памяти (/run), \$DD/metrics — ссылка туда, прежняя папка убрана" '[ -L "$MD/metrics" ] && [ "$(readlink "$MD/metrics")" = "$AWG_RUN/awg-metrics" ]'
 ck "метрики: handshake, активный канал, события, служба" 'echo "$mo" | grep -qx "awg_handshake_age_seconds{tunnel=\"awgmain\"} 30" && echo "$mo" | grep -qx "awg_tunnel_up{tunnel=\"awgbackup\"} 0" && echo "$mo" | grep -qx "awg_active{tunnel=\"awgmain\"} 1" && echo "$mo" | grep -qx "awg_events_total{type=\"switch\"} 2" && echo "$mo" | grep -qx "awg_service_up{service=\"awg-failover\"} 1"'
 # отчёт для issue (report.sh): ключи, токены, имя сервера и публичные адреса скрыты
 mk=$(printf 'PrivateKey = cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5cHI=\nEndpoint = vpn.example.org:51820\nTG_TOKEN="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nVPS_HOST="vpn.example.org"\nendpoint: 95.31.7.8:51820\n' \

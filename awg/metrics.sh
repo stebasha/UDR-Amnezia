@@ -1,17 +1,22 @@
 #!/bin/bash
 # awg-metrics: экспорт метрик в формате Prometheus.
-# Каждые 15 с пишет файл $DD/metrics/metrics. Если задан METRICS_PORT в awg.env, отдаёт его по HTTP
+# Каждые 15 с пишет файл $DD/metrics/metrics (ссылка на /run/awg-metrics: в памяти, не на флеш-памяти). Если задан METRICS_PORT в awg.env, отдаёт его по HTTP
 # (python3 -m http.server на адресе LAN-моста, путь /metrics) — для Prometheus / Grafana Agent / VictoriaMetrics.
 # Без METRICS_PORT только пишет файл: подходит для node_exporter --collector.textfile (скопируйте/слинкуйте файл).
 # Порт слушает только LAN-адрес роутера; доступ из интернета UniFi закрывает по умолчанию, но не открывайте его вручную.
 DD=${DD:-/data/awg}
 AWG=$DD/awg
-OUTD=$DD/metrics
+# файл переписывается каждые 15 с: держим его в памяти (/run), а не на флеш-памяти /data — $DD/metrics ссылка туда
+OUTD=${AWG_METRICS_DIR:-${AWG_RUN:-/run}/awg-metrics}
 STATEF=${STATEF:-/run/awg-state}
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TABLE=${TABLE:-0}
 TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
 mkdir -p "$OUTD"; chmod 755 "$OUTD"
+if [ "$OUTD" != "$DD/metrics" ] && [ ! -L "$DD/metrics" ]; then          # прежняя папка на /data → ссылка
+  rm -f "$DD/metrics/metrics" "$DD/metrics/metrics.tmp" 2>/dev/null; rmdir "$DD/metrics" 2>/dev/null
+  [ -e "$DD/metrics" ] || ln -s "$OUTD" "$DD/metrics"
+fi
 
 collect(){
   local t a ts rx tx act l r n now line; local -A HS=() EVC=() SV=()
