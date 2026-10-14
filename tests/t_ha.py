@@ -98,9 +98,9 @@ class Broker(threading.Thread):
                 pass
             c.close()
 
-    def send(self, topic, payload):
+    def send(self, topic, payload, retain=False):
         body = mstr(topic) + payload.encode()
-        self.client.sendall(bytes([0x30, len(body)]) + body)
+        self.client.sendall(bytes([0x31 if retain else 0x30, len(body)]) + body)
 
     def last(self, topic):
         for t, p, r in reversed(self.pubs):
@@ -186,6 +186,9 @@ def main():
         b3.send("udr_amnezia/%s/set/mode" % node, "auto")
         time.sleep(1.5)
         check("select auto → автовыбор", not os.path.exists(forcef))
+        b3.send("udr_amnezia/%s/set/mode" % node, "awgbackup", retain=True)
+        time.sleep(1.5)
+        check("сохранённая (retain) команда не выполняется: иначе повторялась бы при каждом переподключении", not os.path.exists(forcef))
         b3.send("udr_amnezia/%s/set/route/us" % node, "awgmain")
         time.sleep(1.5)
         fu = os.path.join(env["AWG_RUN"], "awg-force-us")

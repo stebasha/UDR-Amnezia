@@ -81,6 +81,7 @@ def _str(s):
 class MQTT:
     def __init__(self, host, port, user="", pw="", tls="no", client_id=NODE, keepalive=60, timeout=10):
         self.host, self.port, self.user, self.pw, self.tls = host, port, user, pw, tls
+        self.flags = 0
         self.cid, self.keepalive, self.timeout = client_id, keepalive, timeout
         self.sock = None
         self.buf = b""
@@ -163,6 +164,7 @@ class MQTT:
                     raise OSError("брокер прислал слишком большой пакет")
                 if i > 0 and len(self.buf) >= i + n:
                     t, body = self.buf[0] & 0xF0, self.buf[i:i + n]
+                    self.flags = self.buf[0] & 0x0F        # у PUBLISH бит 0 — retain
                     self.buf = self.buf[i + n:]
                     return t, body
             try:
@@ -368,7 +370,11 @@ def serve():
                 if time.time() - m.last_tx > 30:
                     m.ping()
                 t, body = m.read_packet(1.0)
-                if t == 0x30:
+                if t == 0x30 and m.flags & 1:
+                    # сохранённое (retain) сообщение брокер отдаёт при каждой подписке: команда из него выполнялась бы
+                    # при каждом переподключении (перезапуск туннеля, перезагрузка). Команды — только «живые».
+                    log("пропускаю сохранённую команду %s" % parse_publish(body)[0].rsplit("/", 1)[-1])
+                elif t == 0x30:
                     topic, payload = parse_publish(body)
                     try:
                         msg = handle(topic, payload.strip(), c)
