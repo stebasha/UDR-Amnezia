@@ -74,5 +74,21 @@ check("маршрут: /route переключает канал", len(c222) > 1 
 c333 = by("333")
 check("отчёт за неделю: каналы и маршрут, просмотру доступен", any("Отчёт за неделю" in c["params"]["text"] and "Маршрут us (США)" in c["params"]["text"] for c in c333), c333[-1:])
 check("маршрут: неверный канал — подсказка", any("Формат: /route" in c["params"]["text"] for c in m), m)
+# ---------- нагрузка: проверки не размножаются от частых нажатий; тест только туннелей
+dg = os.path.join(dd, "diagnose.sh")
+open(dg, "w").write("#!/bin/sh\nsleep 2\necho diag-ok\n")
+os.chmod(dg, 0o755)
+upd3 = {"ok": True, "result": [
+    {"update_id": 30, "callback_query": {"id": "h", "data": "run:diag", "message": {"message_id": 9, "chat": {"id": 111}}}},
+    {"update_id": 31, "callback_query": {"id": "i", "data": "run:diag", "message": {"message_id": 9, "chat": {"id": 111}}}},
+    {"update_id": 32, "callback_query": {"id": "j", "data": "test:eth3", "message": {"message_id": 9, "chat": {"id": 333}}}},
+]}
+json.dump(upd3, open(f, "w"))
+out = subprocess.run(["python3", os.path.join(R, "awg/bot.py"), "--once-from", f], env=dict(envv, BOT_TEST_WAIT="3"),
+                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+calls = [json.loads(l) for l in out.stdout.decode().splitlines() if l.startswith("{")]
+m = [c["params"].get("text", "") for c in by("111")]
+check("повторная диагностика, пока идёт первая, не запускается", sum("уже выполняется" in t for t in m) == 1 and sum("diag-ok" in t for t in m) == 1, m)
+check("тест по кнопке — только для туннелей", any("Туннеля eth3 нет" in c["params"].get("text", "") for c in by("333")), by("333"))
 print("bot: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

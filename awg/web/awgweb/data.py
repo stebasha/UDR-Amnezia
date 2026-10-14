@@ -487,7 +487,19 @@ def tunnel_test(t):
 
 
 # ======================================================================= фоновые задачи
+def kill_group(p):
+    """Завершить команду вместе с её потомками (curl, ping): иначе они держат вывод открытым."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        p.kill()
+
+
 class Jobs:
+    """Фоновые задачи панели. Одинаковая задача не запускается второй раз, пока идёт первая;
+    всего одновременно — не больше MAX_RUNNING (проверки сайтов, ping, замеры нагружают роутер)."""
+    MAX_RUNNING = 4
+
     def __init__(self):
         self.j = {}
         self.lock = threading.Lock()
@@ -497,6 +509,8 @@ class Jobs:
             for k, x in self.j.items():
                 if x["kind"] == kind and not x["done"]:
                     return k
+            if sum(not x["done"] for x in self.j.values()) >= self.MAX_RUNNING:
+                raise ApiError(429, "уже выполняются %d задачи — дождитесь окончания" % self.MAX_RUNNING)
             jid = secrets.token_hex(6)
             self.j[jid] = {"kind": kind, "out": "", "done": False, "rc": None, "started": now()}
             if len(self.j) > 30:
@@ -517,17 +531,22 @@ class Jobs:
                     x["out"] += chunk
                 x["rc"] = 0
             else:
-                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e)
-                t_end = time.time() + timeout
-                for line in iter(p.stdout.readline, b""):
-                    x["out"] += ANSI.sub("", line.decode("utf-8", "replace"))
-                    if len(x["out"]) > 400000:
-                        x["out"] = x["out"][-300000:]
-                    if time.time() > t_end:
-                        p.kill()
-                        x["out"] += "\n[превышено время ожидания]\n"
-                        break
-                x["rc"] = p.wait()
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e, start_new_session=True)
+                # срок — таймером: зависшая команда без вывода иначе держала бы задачу (и место в MAX_RUNNING) вечно
+                late = []
+                wd = threading.Timer(timeout, lambda: (late.append(1), kill_group(p)))
+                wd.daemon = True
+                wd.start()
+                try:
+                    for line in iter(p.stdout.readline, b""):
+                        x["out"] += ANSI.sub("", line.decode("utf-8", "replace"))
+                        if len(x["out"]) > 400000:
+                            x["out"] = x["out"][-300000:]
+                    x["rc"] = p.wait()
+                finally:
+                    wd.cancel()
+                if late:
+                    x["out"] += "\n[превышено время ожидания]\n"
             if after:
                 x["out"] += after(x) or ""
         except Exception as ex:

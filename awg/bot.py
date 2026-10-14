@@ -504,9 +504,36 @@ ADMIN_ONLY = ("svc",)
 
 
 # ======================================================================= действия
+JOBS = set()
+JOBS_LOCK = threading.Lock()
+JOBS_MAX = 2          # тяжёлые проверки (диагностика, отчёт, замер) нагружают роутер: не больше двух сразу
+
+
 def run_job(chat, kind, arg=""):
-    """Долгие проверки — в фоне, результат отдельным сообщением."""
+    """Долгие проверки — в фоне, результат отдельным сообщением.
+    Одна и та же проверка не запускается повторно, пока идёт прежняя; всего не больше JOBS_MAX сразу:
+    частые нажатия кнопок не должны размножать diagnose.sh и curl на роутере."""
+    if kind == "test" and arg not in P.tunnels(P.env()):
+        send(chat, "Туннеля %s нет" % esc(arg))
+        return
+    key = (kind, arg)
+    with JOBS_LOCK:
+        if key in JOBS:
+            send(chat, "⏳ Эта проверка уже выполняется — дождитесь результата")
+            return
+        if len(JOBS) >= JOBS_MAX:
+            send(chat, "⏳ Уже идут другие проверки — повторите через минуту")
+            return
+        JOBS.add(key)
+
     def go():
+        try:
+            work()
+        finally:
+            with JOBS_LOCK:
+                JOBS.discard(key)
+
+    def work():
         try:
             if kind == "diag":
                 rc, out = P.run([os.path.join(DD, "diagnose.sh")], timeout=300)

@@ -48,5 +48,31 @@ for k, (val, _svc, _lab) in C.SETTINGS.items():
         except (ValueError, TypeError):
             continue
         check("настройка %s: «%s» не пропускается или безопасна" % (k, bad), not any(c in v for c in '$`";'), v)
+# run(): по сроку завершаются и потомки команды, а не только она сама
+import time  # noqa: E402
+mark = os.path.join(T, "child-alive")
+t0 = time.time()
+rc, out = C.run(["bash", "-c", "(sleep 2; touch %s) & sleep 30" % mark], timeout=1)
+check("run: срок соблюдён", rc == 124 and time.time() - t0 < 4, (rc, out))
+time.sleep(2.5)
+check("run: потомки завершены вместе с командой", not os.path.exists(mark))
+check("run: ввод, код возврата, нет команды", C.run(["cat"], inp="abc") == (0, "abc") and C.run(["sh", "-c", "exit 3"])[0] == 3
+      and C.run([os.path.join(T, "nope")])[0] == 127)
+
+# фоновые задачи панели: зависшая без вывода команда снимается по сроку; одновременно не больше MAX_RUNNING
+import awgweb.data as D  # noqa: E402
+J = D.Jobs()
+jid = J.start("hang", ["bash", "-c", "sleep 30 & sleep 30"], timeout=1)
+time.sleep(2.5)
+x = J.get(jid)
+check("задача без вывода снята по сроку", x["done"] and "превышено время" in x["out"], x)
+ids = [J.start("s%d" % i, ["sleep", "3"], timeout=10) for i in range(D.Jobs.MAX_RUNNING)]
+check("та же задача повторно не запускается", J.start("s0", ["sleep", "3"]) == ids[0])
+try:
+    J.start("extra", ["true"])
+    over = False
+except C.ApiError as ex:
+    over = ex.code == 429
+check("сверх MAX_RUNNING — отказ 429", over)
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

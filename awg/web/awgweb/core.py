@@ -92,13 +92,24 @@ def run(cmd, timeout=60, env=None, inp=None):
     if env:
         e.update(env)
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=e,
-                           input=inp.encode() if isinstance(inp, str) else inp)
-        return p.returncode, ANSI.sub("", p.stdout.decode("utf-8", "replace"))
-    except subprocess.TimeoutExpired:
-        return 124, "превышено время ожидания (%d с)" % timeout
+        # своя группа процессов: по истечении срока завершаются и потомки (curl, ping), а не только сама команда
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e, start_new_session=True,
+                             stdin=subprocess.PIPE if inp is not None else subprocess.DEVNULL)
     except OSError as ex:
         return 127, str(ex)
+    try:
+        out = p.communicate(inp.encode() if isinstance(inp, str) else inp, timeout=timeout)[0]
+        return p.returncode, ANSI.sub("", out.decode("utf-8", "replace"))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            p.kill()
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        return 124, "превышено время ожидания (%d с)" % timeout
 
 
 def parse_env_text(text):
