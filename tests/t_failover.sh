@@ -1,10 +1,11 @@
 #!/bin/bash
+# shellcheck disable=SC2034  # переменные используются в строках проверок (eval)
 # тест failover v2 на заглушках. Запуск: bash tests/t_failover.sh <путь к comp>
 COMP=${1:-comp}; HERE=$(cd "$(dirname "$0")" && pwd); COMP=$(cd "$COMP" && pwd)
 T=$(mktemp -d); export STUB=$T/stub DD=$T/dd
 export AWG_RUN=$T/run; mkdir -p "$AWG_RUN"
 mkdir -p $STUB/{up,links,loss,rtt} $DD
-export PATH=$HERE/stubs:$PATH
+export PATH=$HERE/stubs:$PATH AWG_SYSNET=$STUB/links
 export BOOT_WAIT=0 FORCEF=$T/force STATEF=$T/state SIM=$T/sim INTERVAL=1 FAIL_MAX=3 RECOVER_SEC=6 QUALITY_INTERVAL=2 MIN_DWELL=0 QUALITY_FAILS=2
 printf '#!/bin/bash\ntouch %s/links/$1\n' $STUB > $DD/up.sh; chmod +x $DD/up.sh
 cat > $DD/awg.env <<ENV
@@ -103,5 +104,24 @@ STATEF=$T/v6s bash $COMP/failover.sh > $T/v6b.log 2>&1 &
 VP=$!; sleep 2; kill -TERM $VP; wait $VP 2>/dev/null
 ck "IPv6 выключен: своё правило IPv6 убирается, маршруты UniFi в таблице не трогаются" 'grep -q "rule del fwmark 0x6a0000/0x7e0000 lookup 178 priority 32504 proto 99" $STUB/rule6-del.log && ! grep -q "flush" $STUB/routes6.log'
 
+# ---- экономия (1.7.1): живой трафик заменяет HTTPS-проверку; верная таблица не переписывается каждый проход
+S2=$T/s2; mkdir -p $S2/up $S2/links/awgmain/statistics $S2/links/awgbackup/statistics $S2/loss $S2/rtt $T/dd2
+for i in awgmain awgbackup; do touch $S2/up/$i; echo 0 > $S2/links/$i/statistics/rx_bytes; done
+printf 'TABLE=190\nMARK=0x7a0000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=no\n' > $T/dd2/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd2/up.sh; chmod +x $T/dd2/up.sh
+( while :; do v=$(cat $S2/links/awgmain/statistics/rx_bytes); [ -e $S2/flow ] && echo $((v + 50000)) > $S2/links/awgmain/statistics/rx_bytes; sleep 0.3; done ) & RXP=$!
+touch $S2/flow
+STUB=$S2 DD=$T/dd2 AWG_SYSNET=$S2/links STATEF=$T/state2 FORCEF=$T/force2 CHECK_RX_MIN=10000 CHECK_MAX_AGE=60 bash "$COMP/failover.sh" > $T/out2.log 2>&1 &
+FP2=$!
+sleep 4
+c1=$(grep -c -x awgmain $S2/curl.log); r1=$(grep -c "route replace" $S2/routes.log)
+sleep 4
+c2=$(grep -c -x awgmain $S2/curl.log); r2=$(grep -c "route replace" $S2/routes.log)
+ck "трафик идёт: HTTPS-проверок основного не прибавилось" '[ "$c2" -le "$((c1 + 0))" ]'
+ck "таблица верная: маршрут не переписывается каждый проход" '[ "$r2" = "$r1" ]'
+rm -f $S2/flow $S2/up/awgmain
+sleep 6
+ck "трафик оборвался и канал лёг: переход на запасной без задержки" '. $T/state2; [ "$ACTIVE" = awgbackup ]'
+kill $RXP 2>/dev/null; kill -TERM $FP2; wait $FP2 2>/dev/null
 echo "failover: провалов $fails"
 rm -rf "$T"; exit $fails

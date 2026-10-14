@@ -4,8 +4,9 @@ S=${STUB:?}; touch $S/ipsets
 case "$1" in
   create) n=$2; grep -qx "$n" $S/ipsets || echo "$n" >> $S/ipsets; touch "$S/ipset-$n";;
   destroy) sed -i "/^$2\$/d" $S/ipsets; rm -f "$S/ipset-$2";;
-  list) if [ "$2" = -n ]; then cat $S/ipsets; else grep -qx "$2" $S/ipsets || exit 1
-          echo "Name: $2"; echo "Number of entries: $(grep -c . "$S/ipset-$2" 2>/dev/null)"; echo "Members:"; cat "$S/ipset-$2" 2>/dev/null; fi;;
+  list) [ "$2" = -t ] && { shift; T=1; }   # -t: только заголовок (без членов), как настоящий ipset
+        if [ "$2" = -n ]; then cat $S/ipsets; else grep -qx "$2" $S/ipsets || exit 1
+          echo "Name: $2"; echo "Number of entries: $(grep -c . "$S/ipset-$2" 2>/dev/null)"; echo "Members:"; [ -n "${T:-}" ] || cat "$S/ipset-$2" 2>/dev/null; fi;;
   restore) while read -r c n a _; do
              case "$c" in create) grep -qx "$n" $S/ipsets || echo "$n" >> $S/ipsets; : > "$S/ipset-$n";; add) echo "$a" >> "$S/ipset-$n";; esac
            done;;

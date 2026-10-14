@@ -65,7 +65,7 @@ load_set(){  # load_set НАБОР ФАЙЛ — атомарно: временн
   ipset swap "$s.new" "$s" && ipset destroy "$s.new" 2>/dev/null
   echo "$n"
 }
-count(){ ipset list "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
+count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 update(){
   local force=$1 tmp u n c ok=1 got=0 msg=""
   mkdir -p "$LD"; chmod 700 "$LD"
