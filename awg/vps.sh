@@ -180,8 +180,8 @@ apply_obf(){ set_obf "$CF" "$OBFL"; }
 
 latest(){  # latest amneziawg-go|amneziawg-tools — последний релиз или самый свежий тег в github.com/amnezia-vpn
   local tag
-  tag=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$1/releases/latest" 2>/dev/null | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
-  [ -n "$tag" ] || tag=$(curl -fsSL -m 20 "https://api.github.com/repos/amnezia-vpn/$1/tags?per_page=30" 2>/dev/null | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
+  tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$1/releases/latest" 2>/dev/null | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  [ -n "$tag" ] || tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 "https://api.github.com/repos/amnezia-vpn/$1/tags?per_page=30" 2>/dev/null | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
   [[ $tag =~ ^v[0-9][0-9.]*$ ]] && echo "$tag"
 }
 remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt или --version)

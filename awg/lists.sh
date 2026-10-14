@@ -36,11 +36,11 @@ countries(){ local c; for c in $(echo "$GEO_COUNTRIES" | tr 'A-Z,' 'a-z '); do v
 fetch(){  # fetch URL ФАЙЛ — напрямую, при неудаче через активный туннель
   local u=$1 f=$2 i act
   case "$u" in https://*) ;; *) return 1;; esac
-  curl -fsSL -m 60 --max-filesize 20000000 -o "$f" "$u" 2>/dev/null && return 0
+  curl -fsSL --proto =https --proto-redir =https -m 60 --max-filesize 20000000 -o "$f" "$u" 2>/dev/null && return 0
   act=$(sed -n 's/^ACTIVE=//p' "${STATEF:-/run/awg-state}" 2>/dev/null)
   for i in $act $MAIN $BACKUP; do
     ip link show "$i" >/dev/null 2>&1 || continue
-    curl -fsSL -m 60 --max-filesize 20000000 --interface "$i" -o "$f" "$u" 2>/dev/null && return 0
+    curl -fsSL --proto =https --proto-redir =https -m 60 --max-filesize 20000000 --interface "$i" -o "$f" "$u" 2>/dev/null && return 0
   done
   return 1
 }

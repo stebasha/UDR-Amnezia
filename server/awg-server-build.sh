@@ -34,7 +34,7 @@ ensure_go(){
   command -v go >/dev/null 2>&1 && return 0
   if command -v snap >/dev/null 2>&1 && snap install go --classic; then return 0; fi
   local ga; case "$(uname -m)" in x86_64) ga=amd64;; aarch64) ga=arm64;; *) echo "неизвестная архитектура $(uname -m)"; exit 1;; esac
-  curl -fL "https://go.dev/dl/go${GO_FALLBACK}.linux-$ga.tar.gz" -o /tmp/go.tgz
+  curl -fL --proto =https --proto-redir =https "https://go.dev/dl/go${GO_FALLBACK}.linux-$ga.tar.gz" -o /tmp/go.tgz
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
 }
 ensure_go
