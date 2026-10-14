@@ -125,8 +125,18 @@ def parse_env_text(text):
     return res
 
 
+_ENVC = {}
+
+
 def env():
-    return parse_env_text(read_file(os.path.join(DD, "awg.env")))
+    """awg.env как словарь. Разбирается заново только при изменении текста (сборщик читает его каждые 2 с,
+    обзор — по несколько раз за запрос). Возвращается копия: вызывающий может её менять."""
+    text = read_file(os.path.join(DD, "awg.env"))
+    c = _ENVC.get("v")
+    if not c or c[0] != text:
+        c = (text, parse_env_text(text))
+        _ENVC["v"] = c
+    return dict(c[1])
 
 
 def env_set(updates):
