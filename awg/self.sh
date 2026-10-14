@@ -358,14 +358,19 @@ pstart_v(){  # pstart_v ПЕРЕМЕННАЯ PID — время старта п�
   [[ ${f[19]:-} =~ ^[0-9]+$ ]] && [ -n "$bt" ] || return 1
   printf -v "$1" '%s' "$(( bt + f[19] / HZ ))"
 }
+bad_once(){  # о неверном имени — в журнал один раз, а не каждые 5 с (проход идёт в подоболочке: помним в файле)
+  local bf=${AWG_RUN:-/run}/awg-self.bad l
+  { while IFS= read -r l; do [ "$l" = "$1" ] && return 0; done < "$bf"; } 2>/dev/null
+  printf '%s\n' "$1" >> "$bf" 2>/dev/null; log "пропускаю «$1»: не похоже на домен"
+}
 ui_conf_v(){  # ui_conf_v ПЕРЕМЕННАЯ — текст файла dnsmasq, как ui_conf
   local d o="# awg-self: файл создаёт /data/awg/self.sh, не редактировать."$'\n'
   if ui_on; then
     o+="# домены UniFi резолвятся через $UI_DNS (через AWG)"$'\n'
-    for d in $UI_DOMAINS; do valid_domain "$d" || { log "пропускаю «$d»: не похоже на домен"; continue; }; o+="server=/$d/$UI_DNS"$'\n'"ipset=/$d/$UISET"$'\n'; done
+    for d in $UI_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="server=/$d/$UI_DNS"$'\n'"ipset=/$d/$UISET"$'\n'; done
   fi
-  for d in $TUN_DOMAINS; do valid_domain "$d" || { log "пропускаю «$d»: не похоже на домен"; continue; }; o+="ipset=/$d/$DOMSET,${DOMSET}6"$'\n'; done
-  for d in $DIRECT_DOMAINS; do valid_domain "$d" || { log "пропускаю «$d»: не похоже на домен"; continue; }; o+="ipset=/$d/$DIRSET"$'\n'; done
+  for d in $TUN_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="ipset=/$d/$DOMSET,${DOMSET}6"$'\n'; done
+  for d in $DIRECT_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="ipset=/$d/$DIRSET"$'\n'; done
   printf -v "$1" '%s' "$o"
 }
 ui_dns_fast(){  # как ui_dns: файл в conf-dir dnsmasq; сверка «загрузил ли dnsmasq» — после записи, смены dnsmasq или раз в минуту
