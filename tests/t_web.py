@@ -884,6 +884,11 @@ def main():
         bk = open(os.path.join(dd, "backup.conf")).read()
         check("подбор: набор 1 поставлен через историю конфигов (Jc/Jmin/Jmax, ключи на месте)", s == 200 and j.get("ok") and "Jc = 3" in bk
               and "Jmin = 10" in bk and "Jmax = 50" in bk and "PrivateKey = aGVsbG8" in bk and "S1 = 15" in bk, (j, bk))
+        # ---------- 1.7 (#36): автоподбор при деградации
+        s, j = a.post("/api/settings", {"values": {"AUTO_TUNE": "yes"}})
+        s2, j2 = a.get("/api/tune")
+        check("автоподбор при деградации: включается, видно в карточке подбора", s == 200 and j2.get("auto") is True, (j, j2.get("auto")))
+        a.post("/api/settings", {"values": {"AUTO_TUNE": "no"}})
         # ---------- 1.7 (#38): списки и GeoIP
         s, j = a.post("/api/lists/update", {})
         check("списки: при выключенном режиме обновлять нечего", s == 400 and "режим" in j.get("error", ""), j)

@@ -2,6 +2,12 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "Автоподбор": "Auto-tune",
+ "Списки": "Lists",
+ "Подбирать самому при деградации": "Tune automatically on degradation",
+ "Неактивный канал 15 минут без handshake или с потерями выше порога — роутер сам подбирает «только роутер» (не чаще раза в сутки на канал) и присылает в Telegram лучший набор с кнопкой «Применить». Активный канал не трогается.": "An inactive channel without handshake or with loss above the threshold for 15 minutes — the router runs a “router only” tune itself (at most once a day per channel) and sends the best set to Telegram with an “Apply” button. The active channel is never touched.",
+ "нужен Telegram-бот (служба awg-bot)": "Telegram bot required (awg-bot service)",
+ "Автоподбор обфускации при деградации": "Auto-tune obfuscation on degradation",
  "Основной канал ": "Main channel ",
  " времени": " of the time",
  "вне его ": "off it ",

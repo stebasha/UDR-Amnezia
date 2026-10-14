@@ -483,6 +483,7 @@
     degrade: ['warn', 'activity', T('Качество')], return: ['ok', 'okc', T('Возврат')], force: ['accent', 'switch', T('Вручную')],
     auto: ['accent', 'refresh', T('Авто')], both: ['crit', 'alert', T('Нет каналов')], refused: ['warn', 'x', T('Отклонено')],
     drift: ['crit', 'alert', T('PBR изменён')], reboot: ['warn', 'power', T('Перезагрузка')], firmware: ['accent', 'download', T('Прошивка')], backup: ['ok', 'archive', T('Копия')], vps: ['accent', 'server', 'VPS'],
+    tune: ['accent', 'shield', T('Автоподбор')], lists: ['accent', 'layers', T('Списки')],
   };
   function dotFor(st) { return { active: 'ok pulse', standby: 'ok', nohs: 'warn', down: 'crit' }[st] || ''; }
   function evRow(e) {
@@ -2612,12 +2613,24 @@
           el('div', { class: 'field' }, el('label', null, T('Новых наборов')), cnt, el('span', { class: 'hint' }, T('1–12; первым меряется текущий')))),
         el('label', { class: 'row' }, act, T('Разрешить на активном канале (трафик устройств на время подбора пойдёт с перерывами)')),
         el('div', { class: 'row' }, go),
+        autoRow(r),
         r.rows.length ? el('div', null, el('div', { class: 'small muted' }, T('Последний подбор: ') + r.head.tunnel + ' · ' + (r.head.mode === 'server' ? T('роутер и VPS') : T('только роутер')) + ' · ' + fmtTime(r.head.ts, true)),
           el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Набор')), el('th', null, T('Связь')),
             el('th', null, T('Потери · задержка · скорость')), el('th', null, T('Оценка')), el('th', null, T('Параметры')), el('th', null, ''))), el('tbody', null, rows)))) : null,
         log);
       if (r.running && !polling) follow();
     };
+    function autoRow(r) {   // #36: подбор сам при деградации неактивного канала, итог — в Telegram с кнопкой «Применить»
+      const cb = el('input', { type: 'checkbox', checked: r.auto });
+      cb.addEventListener('change', async () => {
+        try { await api('/api/settings', { values: { AUTO_TUNE: cb.checked ? 'yes' : 'no' } }); ok(T('Сохранено')); } catch (e) { cb.checked = !cb.checked; err(e); }
+      });
+      return el('div', { class: 'setting' },
+        el('div', { class: 'txt' }, el('b', null, T('Подбирать самому при деградации')),
+          el('span', null, T('Неактивный канал 15 минут без handshake или с потерями выше порога — роутер сам подбирает «только роутер» (не чаще раза в сутки на канал) и присылает в Telegram лучший набор с кнопкой «Применить». Активный канал не трогается.')),
+          r.auto && !r.bot ? el('span', { class: 'badge warn' }, T('нужен Telegram-бот (служба awg-bot)')) : null),
+        el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, cb, el('span', { class: 'knob' }))));
+    }
     async function follow() {
       if (polling) return;
       polling = true;

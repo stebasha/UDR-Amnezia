@@ -100,7 +100,7 @@ def api_tune_get(h, q):
             vt |= set(x for x in vps_sh(["tunnels"], 10, vid)[1].split() if NAME_RE.match(x))
     tl = [{"name": t, "active": t in act, "server": t in vt} for t in tunnels(env())]
     return {"running": tune_running(), "log": read_file(TUNE_LOG)[-20000:], "head": head, "rows": rows, "best": best,
-            "tunnels": tl}
+            "tunnels": tl, "auto": env().get("AUTO_TUNE") == "yes", "bot": svc_active("awg-bot")}
 
 
 def api_tune_run(h, d):
@@ -134,11 +134,16 @@ def api_tune_apply(h, d):
     """Поставить набор из последнего подбора: client — через историю конфигов (с откатом, если туннель не поднялся),
     server — согласованно на VPS и роутере (служба, с откатом обеих сторон)."""
     need_pw(h, d, "tune-apply")
-    head, rows, best = tune_results()
     try:
         n = int(d.get("n"))
     except (TypeError, ValueError):
         raise ValueError("номер набора")
+    return tune_apply(h, n)
+
+
+def tune_apply(h, n):
+    """То же без пароля — для кнопки бота (#36): администратор Telegram подтверждает сам."""
+    head, rows, best = tune_results()
     r = next((x for x in rows if x["n"] == n), None)
     if not head or not r:
         raise ValueError("в последнем подборе нет такого набора")
@@ -329,3 +334,100 @@ def report_text(r):
 def api_report(h, q):
     d = (q.get("days") or ["7"])[0]
     return report_data(30 if d == "30" else 7)
+
+
+# ======================================================================= автоподбор при деградации (#36, по желанию)
+AUTOTUNE_F = os.path.join(DD, "autotune.json")
+
+
+def ev_add(kind, text):
+    try:
+        with open(os.path.join(DD, "events.log"), "a", encoding="utf-8") as f:
+            f.write("%d|%s|%s\n" % (now(), kind, text))
+    except OSError:
+        pass
+
+
+def autotune_state():
+    try:
+        st = json.loads(read_file(AUTOTUNE_F, "{}"))
+    except ValueError:
+        st = {}
+    return st if isinstance(st, dict) else {}
+
+
+def autotune_tick():
+    """Раз в минуту (бот): неактивный туннель без handshake или с потерями выше порога дольше AUTO_TUNE_AFTER →
+    подбор «только роутер» на нём (не чаще AUTO_TUNE_EVERY на туннель). По окончании — предложение лучшего набора.
+    → список сообщений для Telegram: {"kind": "start"|"offer"|"none", ...}."""
+    e = env()
+    if e.get("AUTO_TUNE") != "yes":
+        return []
+    after = int(e.get("AUTO_TUNE_AFTER", "900") or 900)
+    every = int(e.get("AUTO_TUNE_EVERY", "86400") or 86400)
+    lim = int(e.get("QUALITY_LOSS", "40") or 40)
+    st = autotune_state()
+    bad, last = st.get("bad") or {}, st.get("last") or {}
+    out = []
+    t0 = now()
+    run_ = st.get("run")
+    if run_:
+        if tune_running():
+            return []
+        head, rows, best = tune_results()
+        st["run"] = None
+        if head.get("tunnel") == run_["tunnel"] and head.get("ts", 0) >= run_["ts"] - 60:
+            base = next((r for r in rows if r["n"] == 0), None)
+            b = next((r for r in rows if r["n"] == best), None) if best is not None else None
+            if b and b["n"] != 0:
+                st["offer"] = {"tunnel": run_["tunnel"], "n": b["n"], "ts": t0}
+                out.append({"kind": "offer", "tunnel": run_["tunnel"], "n": b["n"], "params": b["params"], "score": b["score"],
+                            "base_ok": bool(base and base["ok"]), "base_score": base["score"] if base else 0,
+                            "loss": b["loss"], "rtt": b["rtt"], "mbps": b["mbps"]})
+            else:
+                out.append({"kind": "none", "tunnel": run_["tunnel"], "base_ok": bool(base and base["ok"])})
+            ev_add("tune", "автоподбор %s: %s" % (run_["tunnel"], "лучший набор №%d — ждёт «Применить»" % b["n"] if b and b["n"] else "лучше текущего нет"))
+        write_secure(AUTOTUNE_F, json.dumps(st), 0o600)
+        return out
+    act = active_tunnels()
+    for t in tunnels(e):
+        if t in act or not link_exists(t):
+            bad.pop(t, None)
+            continue
+        hs = hs_age(t)
+        lv = state().get("LOSS_" + t, "")
+        loss = float(lv) if re.match(r"^[0-9]+(\.[0-9]+)?$", lv) else None
+        if hs < 0 or hs > 180 or (loss is not None and loss >= lim):
+            bad.setdefault(t, t0)
+        else:
+            bad.pop(t, None)
+    for t, since in sorted(bad.items(), key=lambda x: x[1]):
+        if t0 - since >= after and t0 - last.get(t, 0) >= every and not tune_running() and not vps_job_running():
+            hs = hs_age(t)
+            why = "нет handshake %s" % ("никогда" if hs < 0 else "%d мин" % (hs // 60)) if hs < 0 or hs > 180 else "потери выше %d%%" % lim
+            write_secure(TUNE_LOG, "%s автоподбор %s: %s дольше %d мин\n" % (time.strftime("%F %T"), t, why, after // 60), 0o600)
+            rc, o = run(["systemd-run", "--unit=awg-tune", "--collect", "--quiet", "--setenv=DD=" + DD, "--setenv=STATEF=" + STATEF,
+                         "-p", "StandardOutput=append:" + TUNE_LOG, "-p", "StandardError=append:" + TUNE_LOG, "/bin/bash", "-c",
+                         '"$0" "$@"; rc=$?; echo "[код $rc]"; exit $rc', os.path.join(DD, "obfs-tune.sh"), "run", t, "client", "5"], timeout=20)
+            last[t] = t0
+            if rc == 0:
+                st["run"] = {"tunnel": t, "ts": t0}
+                ev_add("tune", "автоподбор %s: запущен (%s)" % (t, why))
+                out.append({"kind": "start", "tunnel": t, "why": why})
+            break
+    st["bad"], st["last"] = bad, last
+    write_secure(AUTOTUNE_F, json.dumps(st), 0o600)
+    return out
+
+
+def autotune_apply(h, t, n):
+    """Кнопка «Применить» из сообщения бота: только тот набор, что предлагался, и только пока результаты те же."""
+    st = autotune_state()
+    o = st.get("offer") or {}
+    head, rows, best = tune_results()
+    if o.get("tunnel") != t or o.get("n") != n or head.get("tunnel") != t:
+        raise ValueError("предложение устарело: после него был другой подбор. Откройте «Инструменты → Подбор параметров обфускации»")
+    res = tune_apply(h, n)
+    st["offer"] = None
+    write_secure(AUTOTUNE_F, json.dumps(st), 0o600)
+    return res

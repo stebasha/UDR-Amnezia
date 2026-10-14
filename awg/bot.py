@@ -394,7 +394,7 @@ def do_route_switch(chat, rid, t):
 
 def ev_line(e):
     m = {"start": "▶️", "stop": "⏹", "switch": "🔀", "degrade": "📉", "return": "✅", "force": "✋", "auto": "🤖",
-         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁", "firmware": "🔄", "backup": "💾", "vps": "🖥"}.get(e["type"], "•")
+         "both": "🛑", "refused": "⚠️", "drift": "⚠️", "reboot": "🔁", "firmware": "🔄", "backup": "💾", "vps": "🖥", "tune": "🛡", "lists": "📋"}.get(e["type"], "•")
     return "%s <code>%s</code> %s" % (m, time.strftime("%d.%m %H:%M", time.localtime(e["t"])), esc(e["text"]))
 
 
@@ -608,6 +608,14 @@ def on_callback(q):
     elif k == "auto":
         r2 = P.api_tunnel_auto(Act(chat), {})
         edit(chat, mid, "🤖 " + esc(r2["msg"]), [[("🔀 Каналы", "m:tun"), ("🏠 Меню", "m:main")]])
+    elif k == "tap" and arg.count(":") == 1:
+        t, _, n = arg.partition(":")
+        edit(chat, mid, "⏳ Ставлю набор №%s на %s…" % (esc(n), esc(t)))
+        try:
+            r2 = P.autotune_apply(Act(chat), t, int(n) if n.isdigit() else -1)
+            edit(chat, mid, ("✅ " if r2.get("ok") else "⚠️ ") + esc(r2.get("msg", "")), [[("⬅️ " + t, "t:" + t), ("🏠 Меню", "m:main")]])
+        except Exception as ex:
+            edit(chat, mid, "⚠️ " + esc(ex), [[("🏠 Меню", "m:main")]])
     elif k == "rtq" and arg.count(":") == 1:
         rid, _, t = arg.partition(":")
         edit(chat, mid, "Маршрут <b>%s</b>: сделать <b>%s</b> активным каналом? Сторож маршрута не будет возвращаться на первый, пока вы не включите автовыбор." % (esc(rid), esc(t)),
@@ -768,6 +776,27 @@ def broadcast(text, critical=False):
         send(c, text, [[("📊 Состояние", "m:main")]])
 
 
+def autotune_msgs():
+    """Автоподбор при деградации (#36): запуск — сообщением, итог — с кнопкой «Применить» (только администраторам)."""
+    for m in P.autotune_tick():
+        t = esc(m["tunnel"])
+        if m["kind"] == "start":
+            broadcast("🛡 <b>Автоподбор обфускации</b> · %s\nКанал <b>%s</b>: %s. Пробую наборы Jc/Jmin/Jmax (до 10 минут; канал неактивный, рабочий трафик не трогается)."
+                      % (esc(H), t, esc(m["why"])))
+        elif m["kind"] == "offer":
+            txt = ("🛡 <b>Автоподбор: %s</b> · %s\nТекущий набор %s. Лучший — №%d: <code>%s</code>\nпотери %s%% · %s мс · %s Мбит/с · оценка %s%s"
+                   % (t, esc(H), "работает" if m["base_ok"] else "<b>не работает</b>", m["n"], esc(m["params"]), m["loss"], m["rtt"], m["mbps"], m["score"],
+                      " (у текущего %s)" % m["base_score"] if m["base_ok"] else ""))
+            for c in C["admins"]:
+                send(c, txt + "\n\n«Применить» — конфиг меняется через историю с проверкой handshake и откатом.",
+                     [[("✅ Применить №%d" % m["n"], "tap:%s:%d" % (m["tunnel"], m["n"])), ("✖️ Не сейчас", "m:main")]])
+            for c in C["viewers"]:
+                send(c, txt)
+        else:
+            broadcast("🛡 <b>Автоподбор: %s</b> · %s\nНабора лучше текущего не нашлось%s. Попробую снова через сутки, если канал не оживёт."
+                      % (t, esc(H), " (текущий снова работает)" if m["base_ok"] else ""))
+
+
 def monitor():
     bad = collections.Counter()
     alerted = {}
@@ -810,6 +839,7 @@ def monitor():
                         if len(p) == 3 and p[1] == "refused":
                             broadcast("⚠️ <b>Ручное переключение отклонено</b> · %s\n%s" % (esc(H), esc(p[2])))
             ev_size = sz
+            autotune_msgs()
             # недельный отчёт: понедельник после REPORT_TIME
             wk = time.strftime("%G-%V")
             if time.strftime("%u") == "1" and int(time.strftime("%H%M")) >= int(C["report_time"] or 900) and P.read_file(os.path.join(DD, "bot.lastweek")).strip() != wk:
