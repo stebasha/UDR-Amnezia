@@ -123,4 +123,8 @@ printf 'ACTIVE=awgmain\nFORCED=\nUPDATED=1\nLOSS_awgmain=0\nRTT_awgmain=41\n' > 
 printf '1|switch|a\n2|switch|b\n3|return|c\n' > "$MD/events.log"
 mo=$(DD=$MD STATEF=$T/mstate PATH="$H/stubs5:$PATH" bash "$COMP/metrics.sh" once)
 ck "метрики: handshake, активный канал, события, служба" 'echo "$mo" | grep -qx "awg_handshake_age_seconds{tunnel=\"awgmain\"} 30" && echo "$mo" | grep -qx "awg_tunnel_up{tunnel=\"awgbackup\"} 0" && echo "$mo" | grep -qx "awg_active{tunnel=\"awgmain\"} 1" && echo "$mo" | grep -qx "awg_events_total{type=\"switch\"} 2" && echo "$mo" | grep -qx "awg_service_up{service=\"awg-failover\"} 1"'
+# отчёт для issue (report.sh): ключи, токены, имя сервера и публичные адреса скрыты
+mk=$(printf 'PrivateKey = cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5cHI=\nEndpoint = vpn.example.org:51820\nTG_TOKEN="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nVPS_HOST="vpn.example.org"\nendpoint: 95.31.7.8:51820\n' \
+  | bash -c 'source <(sed -n "/^mask(){/,/^}/p" "$1"); mask' _ "$COMP/report.sh")
+ck "report: ключ, токен, имя сервера, адрес VPS и публичный IP скрыты" '! echo "$mk" | grep -qE "cHJpdmF0|vpn\.example|AAAAAAAA|95\.31\.7\.8" && echo "$mk" | grep -q "Endpoint = <узел>:51820"'
 echo "misc: провалов $fails"; [ $fails = 0 ]

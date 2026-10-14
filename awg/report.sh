@@ -5,7 +5,7 @@
 # Что попадает: версии (UniFi OS, Network, установщик, бинарники), awg.env (без секретов), конфиги туннелей
 # без ключей, ip rule, таблица PBR, правила iptables с awg/AWG/UBIOS_PREROUTING_PBR, последние события и журналы,
 # итог diagnose и selftest. Что не попадает: PrivateKey, PublicKey, PresharedKey, HeaderProtectionKey, токен Telegram,
-# chat id; публичные IPv4 заменяются на «x.x.x.N» (последний октет оставлен для различения).
+# chat id, имя сервера в Endpoint и адрес VPS; публичные IPv4 заменяются на «x.x.x.N» (последний октет оставлен для различения).
 iptables(){ command iptables -w 10 "$@"; }
 DD=${DD:-/data/awg}
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -17,6 +17,8 @@ mask(){
   sed -E \
     -e 's/((PrivateKey|PublicKey|PresharedKey|HeaderProtectionKey)[[:space:]]*=[[:space:]]*).*/\1<скрыто>/I' \
     -e 's/(TG_TOKEN|TG_CHAT|AWG_BACKUP_PASS)=.*/\1=<скрыто>/' \
+    -e 's/^([[:space:]]*Endpoint[[:space:]]*=[[:space:]]*)[^:[:space:]]*[A-Za-z][^:[:space:]]*/\1<узел>/I' \
+    -e 's/^((VPS_HOST|VPS_IP|WEB_HOSTS)=).*/\1<скрыто>/' \
     -e 's#[A-Za-z0-9+/]{42,43}=#<ключ>#g' \
     -e 's/[0-9]{8,10}:[A-Za-z0-9_-]{30,}/<токен>/g' \
   | awk '{
