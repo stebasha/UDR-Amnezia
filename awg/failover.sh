@@ -131,6 +131,7 @@ N=${#TUNS[@]}
 V6=0; [ "$LEAK_V6" = route ] && command -v ip6tables >/dev/null && V6=1
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
 SYSNET=${AWG_SYSNET:-/sys/class/net}
+RUNDIR=${AWG_RUN:-/run}
 CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
 CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
 # Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные
@@ -162,13 +163,20 @@ check(){
     fi
     [[ $rx =~ ^[0-9]+$ ]] && RXL[$1]=$rx
   fi
+  # сторожа дополнительных маршрутов проверяют те же туннели: успешная проверка другого сторожа в этом же проходе
+  # (не старше INTERVAL) засчитывается и здесь — без второго запроса HTTPS через тот же туннель. Сбой не делится:
+  # его каждый сторож перепроверяет сам.
+  local okf="$RUNDIR/awg-chk-$1" ts=""
+  { read -r ts < "$okf"; } 2>/dev/null; epoch now
+  if [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -ge 0 ] && [ $((now - ts)) -lt "$INTERVAL" ]; then CHKT[$1]=$now; return 0; fi
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2>/dev/null)
-    [ -n "$c" ] && [ "$c" != 000 ] && { epoch "CHKT[$1]"; return 0; }
+    [ -n "$c" ] && [ "$c" != 000 ] && { chk_ok "$1"; return 0; }
   done
-  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && { epoch "CHKT[$1]"; return 0; }; done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && { chk_ok "$1"; return 0; }; done
   return 1
 }
+chk_ok(){ epoch "CHKT[$1]"; printf '%s\n' "${CHKT[$1]}" > "$RUNDIR/awg-chk-$1" 2>/dev/null; }
 # DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.
 declare -A DNSOK
 dns_probe(){

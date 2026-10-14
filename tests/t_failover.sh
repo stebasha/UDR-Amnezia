@@ -123,5 +123,13 @@ rm -f $S2/flow $S2/up/awgmain
 sleep 6
 ck "трафик оборвался и канал лёг: переход на запасной без задержки" '. $T/state2; [ "$ACTIVE" = awgbackup ]'
 kill $RXP 2>/dev/null; kill -TERM $FP2; wait $FP2 2>/dev/null
+# сторож маршрута только что проверил тот же туннель — его успех засчитывается без второго запроса HTTPS
+touch $S2/up/awgmain; rm -f $T/state2; : > $S2/curl.log
+( while :; do printf '%(%s)T\n' -1 > $AWG_RUN/awg-chk-awgmain; sleep 0.3; done ) & CKP=$!
+STUB=$S2 DD=$T/dd2 AWG_SYSNET=$S2/links STATEF=$T/state2 FORCEF=$T/force2 CHECK_RX_MIN=0 INTERVAL=5 bash "$COMP/failover.sh" > $T/out3.log 2>&1 &
+FP3=$!; sleep 8
+# за два прохода — только проба DNS (раз в минуту), без проверок HTTPS
+ck "свежая проверка другого сторожа: свой запрос HTTPS не нужен" '[ "$(grep -cx awgmain $S2/curl.log)" -le 1 ] && . $T/state2 && [ "$ACTIVE" = awgmain ]'
+kill $CKP 2>/dev/null; kill -TERM $FP3; wait $FP3 2>/dev/null; rm -f $AWG_RUN/awg-chk-awgmain
 echo "failover: провалов $fails"
 rm -rf "$T"; exit $fails

@@ -1108,6 +1108,7 @@ N=${#TUNS[@]}
 V6=0; [ "$LEAK_V6" = route ] &amp;&amp; command -v ip6tables &gt;/dev/null &amp;&amp; V6=1
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
 SYSNET=${AWG_SYSNET:-/sys/class/net}
+RUNDIR=${AWG_RUN:-/run}
 CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
 CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
 <span class="c"># Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные</span>
@@ -1139,13 +1140,20 @@ check(){
     fi
     [[ $rx =~ ^[0-9]+$ ]] &amp;&amp; RXL[$1]=$rx
   fi
+<span class="c">  # сторожа дополнительных маршрутов проверяют те же туннели: успешная проверка другого сторожа в этом же проходе</span>
+<span class="c">  # (не старше INTERVAL) засчитывается и здесь — без второго запроса HTTPS через тот же туннель. Сбой не делится:</span>
+<span class="c">  # его каждый сторож перепроверяет сам.</span>
+  local okf="$RUNDIR/awg-chk-$1" ts=""
+  { read -r ts &lt; "$okf"; } 2&gt;/dev/null; epoch now
+  if [[ $ts =~ ^[0-9]+$ ]] &amp;&amp; [ $((now - ts)) -ge 0 ] &amp;&amp; [ $((now - ts)) -lt "$INTERVAL" ]; then CHKT[$1]=$now; return 0; fi
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2&gt;/dev/null)
-    [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; { epoch "CHKT[$1]"; return 0; }
+    [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; { chk_ok "$1"; return 0; }
   done
-  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; { epoch "CHKT[$1]"; return 0; }; done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; { chk_ok "$1"; return 0; }; done
   return 1
 }
+chk_ok(){ epoch "CHKT[$1]"; printf '%s\n' "${CHKT[$1]}" &gt; "$RUNDIR/awg-chk-$1" 2&gt;/dev/null; }
 <span class="c"># DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.</span>
 declare -A DNSOK
 dns_probe(){
@@ -1473,7 +1481,7 @@ while true; do
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 500 строк">Показать целиком · 500 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 508 строк">Показать целиком · 508 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
