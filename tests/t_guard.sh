@@ -72,6 +72,16 @@ ck "check: DNS в отчёте" 'echo "$out" | grep -q "^OK     DNS устрой
 sed -i 's/^DNS_INTERCEPT=.*/DNS_INTERCEPT=no/' $DD/awg.env; $G apply
 ck "DNS выключен: цепочки убраны" '! iptables -t nat -S PREROUTING | grep -q AWG_ && ! iptables -S FORWARD | grep -q AWG_DNS_FWD && ! ip6tables -S FORWARD | grep -q AWG_DNS_FWD'
 sed -i 's/^DNS_INTERCEPT=.*/DNS_INTERCEPT=yes/' $DD/awg.env; $G apply
+# бюджет процессов (1.7.1): обычный проход службы (ничего не менялось) — не больше 5 внешних команд (в 1.7.0 — ~50)
+SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
+for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables ipset md5sum flock logger; do
+  printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \
+    "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
+done
+chmod +x $SH/*
+PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
+GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
+ck "guard: обычный проход — не больше 5 внешних команд (проходов $np, команд $ng; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ]'
 $G remove
 ck "remove: цепочек нет" '! iptables -S FORWARD | grep -q AWG_GUARD && ! iptables -t mangle -S PREROUTING | grep -q AWG_ && ! ip6tables -S FORWARD | grep -q AWG_GUARD && ! iptables -t nat -S PREROUTING | grep -q AWG_ && ! iptables -S FORWARD | grep -q AWG_DNS'
 echo "guard: провалов $fails"; rm -rf $T; exit $fails
