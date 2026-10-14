@@ -2715,6 +2715,19 @@ awgctl routes remove us</code></pre></figure>
   <p>По умолчанию IPv6 устройств под PBR блокируется, и они идут по IPv4 через туннель. Если сервер выдал туннелю IPv6-адрес (строка <code>Address</code> в конфиге с IPv6), можно пустить и IPv6 через туннель: «<b>Маршрутизация → Защита от утечек → IPv6 → Через туннель</b>» (<code>LEAK_V6=route</code>). Сторож добавляет правило IPv6 для метки PBR (своё, <code>proto 99</code>) и маршрут IPv6 в таблице PBR на активный туннель с NAT66 и MSS. У активного туннеля нет IPv6 — маршрут <code>unreachable</code>: устройство сразу переходит на IPv4. В WAN помеченный IPv6 не выпускается в любом случае; правила и маршруты IPv6 самой UniFi не трогаются.</p>
   <div class="note n-warn"><b>Условие</b><p>Работает, только если UniFi помечает IPv6-трафик устройств под PBR (правила PBR для IPv6). Иначе <code>guard.sh check</code> и самопроверка подскажут: надёжнее отключить IPv6 в сетях с такими устройствами.</p></div>
 
+  <h3>Списки и GeoIP — по желанию (1.7)</h3>
+  <p>По умолчанию устройства под PBR идут через туннель целиком. «<b>Маршрутизация → Списки и GeoIP</b>» (<code>LISTS_MODE</code>) меняет это для основного и дополнительных маршрутов:</p>
+  <div class="tw"><table>
+    <tr><th>Режим</th><th>Через туннель</th><th>Напрямую</th></tr>
+    <tr><td>Всё (<code>off</code>, по умолчанию)</td><td>весь трафик устройств под PBR</td><td>только исключения</td></tr>
+    <tr><td>Только заблокированное (<code>blocked</code>)</td><td>адреса из списков заблокированного (по умолчанию antifilter.download, <code>LIST_URLS</code>) и домены через туннель</td><td>всё остальное</td></tr>
+    <tr><td>Всё, кроме стран (<code>geoip</code>)</td><td>всё, кроме адресов выбранных стран</td><td>адреса стран <code>GEO_COUNTRIES</code>, например <code>ru cn by kz</code>: умный дом с серверами в Китае, местные сервисы</td></tr>
+  </table></div>
+  <p>Списки скачиваются раз в сутки (служба <code>awg-guard</code> проверяет раз в час), напрямую, а если не открываются — через туннель. Ответ, не похожий на список, отбрасывается: остаётся прежний. Частные сети и мусор из списков не берутся. Адреса лежат в наборах ipset <code>AWG_LIST</code> и <code>AWG_GEO</code>, правило снимает метку PBR в конце mangle PREROUTING, как у исключений; правила UniFi не меняются. Пока набор пуст, всё идёт через туннель — утечки нет. Самопроверка и диагностика показывают число сетей и возраст списков.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">списки по SSH</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl lists<span class="c">                 # режим, страны, сетей в наборах, когда обновлено</span>
+awgctl lists update<span class="c">          # скачать сейчас (при ошибке остаются прежние)</span></code></pre></figure>
+  <div class="note n-info"><b>Важно</b><p>Список и GeoIP работают по IP-адресам. Сайт за CDN может делить адреса с другими сайтами, поэтому для отдельных сайтов надёжнее «Домены через туннель» и исключения по доменам — они действуют вместе со списками.</p></div>
+
   <h3>Автоподбор параметров обфускации (1.6)</h3>
   <p>Если провайдер начал узнавать или замедлять AmneziaWG: «<b>Инструменты → Подбор параметров обфускации</b>» (или <code>awgctl tune</code>). Роутер меряет текущий набор и N новых: у каждого handshake, интернет, потери, задержка и скорость (5 МБ), итог — оценка и лучший набор. В конце туннель возвращается на исходный набор; лучший ставится только по кнопке «Применить» (с паролем, прежний конфиг остаётся в «Истории»). По умолчанию подбор идёт только на неактивном канале.</p>
   <div class="tw"><table>
@@ -2941,6 +2954,7 @@ EOF</code></pre></figure>
     <tr><td><code>install.sh</code>, <code>install.log</code>, <code>.installer</code>, <code>.panel</code>, <code>.audit</code></td><td>Установщик и его журнал; отметки компонентов, выбранных в установщике</td><td>⚡</td></tr>
       <tr><td><code>routes.sh</code>, <code>route.d/ID.env</code> 🔒, <code>awg-failover-ID.service</code>, <code>failover-ID.log</code></td><td>Дополнительные маршруты (1.6): профиль UniFi → своя цепочка туннелей и свой сторож</td><td>★</td></tr>
     <tr><td><code>obfs-tune.sh</code>, <code>tune.tsv</code>, <code>tune.log</code></td><td>Автоподбор параметров обфускации и его результаты (1.6)</td><td>★</td></tr>
+    <tr><td><code>lists.sh</code>, <code>lists/</code>, <code>lists.log</code></td><td>Списки заблокированного и GeoIP: кэш и журнал обновления (1.7)</td><td>★</td></tr>
     <tr><td><code>vps.sh</code>, <code>vps.env</code>, <code>vps.d/ID.env</code>, <code>ssh/</code> 🔒, <code>vps-job.log</code></td><td>Свой VPS из панели: мастер, несколько серверов, сборка бинарников роутера (1.6)</td><td>★</td></tr>
     <tr><td><code>xui.json</code> 🔒</td><td>Панели 3x-ui (адреса и токены) и туннели через них (1.6)</td><td>★</td></tr>
 </table></div>
@@ -2967,6 +2981,7 @@ EOF</code></pre></figure>
     <tr><td><code>VPS_IP</code></td><td><code>203.0.113.10</code></td><td>Только для подсказок в панели и исключения из трафика роутера</td></tr>
     <tr><td><code>TUNNELS_EXTRA</code>, <code>QUALITY</code>, <code>QUALITY_LOSS</code>, <code>QUALITY_RTT</code>, <code>MIN_DWELL</code></td><td><code>""</code>, <code>yes</code>, <code>40</code>, <code>0</code>, <code>120</code></td><td>Дополнительные туннели и выбор по качеству (часть ★)</td></tr>
     <tr><td><code>LEAK_GUARD</code>, <code>LEAK_V6</code></td><td><code>yes</code>, <code>block</code></td><td>Защита от утечек awg-guard; <code>LEAK_V6=route</code> — IPv6 через туннель (1.6)</td></tr>
+    <tr><td><code>LISTS_MODE</code>, <code>GEO_COUNTRIES</code>, <code>LIST_URLS</code></td><td><code>off</code>, пусто, antifilter.download</td><td>Списки и GeoIP (1.7): <code>blocked</code> — через туннель только заблокированное, <code>geoip</code> — всё, кроме стран</td></tr>
     <tr><td><code>ROUTE_ONLY</code></td><td><code>""</code></td><td>Туннели только для дополнительных маршрутов: основной их не использует (1.6)</td></tr>
     <tr><td><code>UI_FIX</code>, <code>UI_DOMAINS</code>, <code>UI_DNS</code>, <code>DNS_ALL_TUNNEL</code></td><td><code>yes</code>, <code>"ui.com"</code>, <code>9.9.9.9</code>, <code>no</code></td><td>awg-self: unifi.ui.com через туннель; весь DNS роутера через туннель (эксперимент)</td></tr>
     <tr><td><code>TUN_DOMAINS</code>, <code>TUN_CLIENTS</code>, <code>DIRECT_DOMAINS</code>, <code>DIRECT_SUBNETS</code></td><td>пусто</td><td>Домены через туннель и для каких клиентов; исключения из туннеля</td></tr>

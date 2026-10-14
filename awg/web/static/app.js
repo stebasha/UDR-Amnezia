@@ -1348,6 +1348,9 @@
     DIRECT_SUBNETS: { t: 'list', ph: '95.173.128.0/19', hint: T('Адреса и подсети, куда устройства под PBR ходят напрямую.') },
     LEAK_GUARD: { t: 'bool', hint: T('Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.') },
     LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['route', T('Через туннель')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR: «Блокировать» (по умолчанию) — устройства идут по IPv4 через туннель; «Через туннель» — IPv6 тоже идёт через туннель, если сервер выдал туннелю IPv6-адрес (иначе отклоняется); «Не трогать» — IPv6 идёт мимо туннеля.') },
+    LISTS_MODE: { t: 'choice', opts: [['off', T('Всё (как настроено в UniFi)')], ['blocked', T('Только заблокированное')], ['geoip', T('Всё, кроме выбранных стран')]], hint: T('Для устройств под PBR (и дополнительных маршрутов). «Только заблокированное» — через туннель идут только адреса из списков заблокированного, остальное напрямую. «Всё, кроме стран» — напрямую идут только адреса выбранных стран (умный дом с серверами в Китае, местные сервисы), остальное через туннель.') },
+    GEO_COUNTRIES: { t: 'text', ph: 'ru cn by kz', hint: T('Коды стран через пробел; их адреса идут напрямую в режиме «Всё, кроме выбранных стран».') },
+    LIST_URLS: { t: 'list', ph: 'https://antifilter.download/list/allyouneed.lst', hint: T('Списки заблокированного (по сети IPv4 на строку). Пусто — antifilter.download. Обновляются раз в сутки; не скачались — остаются прежние.') },
     UI_FIX: { t: 'bool', hint: T('Соединения самого роутера с облаком UniFi (unifi.ui.com) — через туннель. Нужно, если ui.com недоступен напрямую.') },
     UI_DOMAINS: { t: 'list', hint: T('Домены облака UniFi.') },
     UI_DNS: { t: 'text', hint: T('DNS-сервер для доменов UniFi (запрос уходит через туннель).') },
@@ -1376,7 +1379,7 @@
         ta.value = v.split(/\s+/).filter(Boolean).join('\n');
         c = ta; ctl[k] = () => ta.value.split(/[\s,]+/).filter(Boolean).join(' ');
       } else {
-        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || '' });
+        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || sp.ph || '' });
         c = sp.unit ? el('div', { class: 'input-group' }, inp, el('span', { class: 'muted row' }, sp.unit)) : inp;
         ctl[k] = () => inp.value.trim();
       }
@@ -1424,6 +1427,7 @@
       pbr,
       settingsForm(T('Домены через туннель'), 'globe', ['TUN_DOMAINS', 'TUN_CLIENTS'], d),
       settingsForm(T('Исключения: напрямую мимо туннеля'), 'link', ['DIRECT_DOMAINS', 'DIRECT_SUBNETS'], d),
+      settingsForm(T('Списки и GeoIP'), 'layers', ['LISTS_MODE', 'GEO_COUNTRIES', 'LIST_URLS'], d, listsStatus()),
       settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6', 'DNS_ALL_TUNNEL'], d),
       settingsForm(T('VPN-сервер роутера'), 'users', ['EXTRA_SUBNETS'], d),
       settingsForm(T('Облако UniFi'), 'globe', ['UI_FIX', 'UI_DOMAINS', 'UI_DNS'], d));
@@ -2624,6 +2628,52 @@
     }
     load();
     return card(T('Подбор параметров обфускации'), box, { icon: 'shield' });
+  }
+  // списки и GeoIP (#38): состояние наборов и кнопка «Обновить списки» над формой настроек
+  function listsStatus() {
+    const box = el('div', { class: 'stack' });
+    let polling = false;
+    const load = async () => {
+      let r;
+      try { r = await api('/api/lists'); } catch (e) { replace(box, el('div', { class: 'muted small' }, String(e.message || e))); return; }
+      const st = r.status || {}, sets = st.sets || {};
+      if (st.mode === 'off' || !st.mode) { replace(box, el('p', { class: 'muted small' }, T('Сейчас выключено: устройства под PBR идут через туннель целиком. Выберите режим и нажмите «Применить» — списки скачаются сами.'))); return; }
+      const k = st.mode === 'geoip' ? 'geo' : 'blocked', x = sets[k] || {};
+      const what = st.mode === 'geoip' ? T('Адресов стран ') + (st.countries || '').toUpperCase().trim() + ': ' : T('Сетей в списке заблокированного: ');
+      const badge = !r.guard ? el('span', { class: 'badge crit' }, T('служба awg-guard не запущена'))
+        : x.set > 0 ? el('span', { class: 'badge ok' }, T('работает'))
+          : el('span', { class: 'badge warn' }, T('набор пуст — пока всё идёт через туннель'));
+      const go = el('button', { class: 'btn sm', disabled: r.running }, icon('refresh', 'sm'), r.running ? T('Обновляется…') : T('Обновить списки'));
+      go.addEventListener('click', () => busy(go, async () => {
+        try { ok(TM((await api('/api/lists/update', {})).msg)); follow(); } catch (e) { err(e); }
+      }));
+      const log = el('div', { class: 'out' + (r.log && r.running ? '' : ' hidden') });
+      if (r.log) paint(log, r.log);
+      const showLog = el('button', { class: 'btn sm ghost' + (r.log ? '' : ' hidden') }, T('Журнал'));
+      showLog.addEventListener('click', () => log.classList.toggle('hidden'));
+      replace(box,
+        el('div', { class: 'row' }, badge, el('span', { class: 'small' }, what, el('b', null, String(x.set || 0))),
+          el('span', { class: 'small muted' }, T('обновлено: ') + (x.age >= 0 ? fmtAge(x.age) : T('никогда'))),
+          x.stale && x.age >= 0 ? el('span', { class: 'badge warn' }, T('собрано для прежних настроек')) : null, go, showLog),
+        log);
+      if (r.running && !polling) follow();
+    };
+    async function follow() {
+      if (polling) return;
+      polling = true;
+      for (let i = 0; i < 100; i++) {
+        await new Promise((ok2) => setTimeout(ok2, 3000));
+        let x;
+        try { x = await api('/api/lists'); } catch (e) { continue; }
+        const lg = box.querySelector('.out');
+        if (lg) { lg.classList.remove('hidden'); paint(lg, x.log); }
+        if (!x.running) break;
+      }
+      polling = false;
+      load();
+    }
+    load();
+    return box;
   }
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)
   function qrMatrix(text) {

@@ -884,6 +884,26 @@ def main():
         bk = open(os.path.join(dd, "backup.conf")).read()
         check("подбор: набор 1 поставлен через историю конфигов (Jc/Jmin/Jmax, ключи на месте)", s == 200 and j.get("ok") and "Jc = 3" in bk
               and "Jmin = 10" in bk and "Jmax = 50" in bk and "PrivateKey = aGVsbG8" in bk and "S1 = 15" in bk, (j, bk))
+        # ---------- 1.7 (#38): списки и GeoIP
+        s, j = a.post("/api/lists/update", {})
+        check("списки: при выключенном режиме обновлять нечего", s == 400 and "режим" in j.get("error", ""), j)
+        s, j = a.post("/api/settings", {"values": {"LISTS_MODE": "geoip"}})
+        check("GeoIP: без стран не включается", s == 400 and "стран" in j.get("error", ""), j)
+        s, j = a.post("/api/settings", {"values": {"GEO_COUNTRIES": "RU, cn; xyz"}})
+        check("GeoIP: неверный код страны отклонён", s == 400, j)
+        s, j = a.post("/api/settings", {"values": {"LIST_URLS": "http://example.com/x.lst"}})
+        check("списки: источник только https", s == 400, j)
+        s, j = a.post("/api/settings", {"values": {"LISTS_MODE": "geoip", "GEO_COUNTRIES": "RU, cn by,KZ"}})
+        ev = open(os.path.join(dd, "awg.env")).read().replace('"', "")
+        check("GeoIP: включён, страны нормализованы, awg-guard включается", s == 200 and "LISTS_MODE=geoip" in ev and "GEO_COUNTRIES=ru cn by kz" in ev
+              and "awg-guard" in j.get("msg", ""), j)
+        s, j = a.get("/api/lists")
+        check("списки: состояние для панели", s == 200 and j["status"]["mode"] == "geoip" and "geo" in j["status"]["sets"]
+              and j["status"]["countries"].split() == ["by", "cn", "kz", "ru"], j)
+        s, j = a.post("/api/lists/update", {})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("списки: обновление отдельной службой awg-lists", s == 200 and "--unit=awg-lists" in srl and "lists.sh update" in srl, (j, srl[-300:]))
+        a.post("/api/settings", {"values": {"LISTS_MODE": "off"}})
 
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})

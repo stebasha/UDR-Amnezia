@@ -163,3 +163,37 @@ def api_tune_apply(h, d):
         raise ValueError("не удалось запустить: " + out.strip()[:300])
     h.act("tune-apply", {"tunnel": t, "n": n})
     return {"ok": True, "msg": "ставлю набор %d на VPS и роутере — смотрите журнал" % n, "job": True}
+
+
+# ======================================================================= списки и GeoIP (#38)
+LISTS_LOG = os.path.join(DD, "lists.log")
+
+
+def lists_running():
+    return run(["systemctl", "is-active", "--quiet", "awg-lists"], timeout=5)[0] == 0
+
+
+def api_lists_get(h, q):
+    rc, out = run([os.path.join(DD, "lists.sh"), "json"], timeout=20)
+    try:
+        st = json.loads(out)
+    except ValueError:
+        st = {"mode": env().get("LISTS_MODE", "off"), "sets": {}, "due": False}
+    return {"status": st, "running": lists_running(), "log": read_file(LISTS_LOG)[-8000:],
+            "guard": svc_active("awg-guard")}
+
+
+def api_lists_update(h, d):
+    """Скачать списки сейчас (отдельной службой: источники могут отвечать долго). Прежние остаются при любой ошибке."""
+    if env().get("LISTS_MODE", "off") == "off":
+        raise ValueError("сначала выберите режим «только заблокированное» или «всё, кроме стран»")
+    if lists_running():
+        raise ValueError("обновление уже идёт")
+    write_secure(LISTS_LOG, "%s обновление списков — запущено из панели (%s)\n" % (time.strftime("%F %T"), h.user), 0o600)
+    rc, out = run(["systemd-run", "--unit=awg-lists", "--collect", "--quiet", "--setenv=DD=" + DD, "--setenv=STATEF=" + STATEF,
+                   "-p", "StandardOutput=append:" + LISTS_LOG, "-p", "StandardError=append:" + LISTS_LOG, "/bin/bash", "-c",
+                   '"$0" "$@"; rc=$?; echo "[код $rc]"; exit $rc', os.path.join(DD, "lists.sh"), "update"], timeout=20)
+    if rc != 0:
+        raise ValueError("не удалось запустить: " + out.strip()[:300])
+    h.act("lists-update", env().get("LISTS_MODE", ""))
+    return {"ok": True, "msg": "обновление списков запущено"}

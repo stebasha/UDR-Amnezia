@@ -148,9 +148,19 @@ if [ -x "$DD/self.sh" ] && systemctl is-active --quiet awg-self 2>/dev/null; the
   sec "Трафик роутера (awg-self)"
   while IFS= read -r l; do case "$l" in OK*) P "${l#OK    }";; WARN*) W "${l#WARN   }";; FAIL*) F "${l#FAIL   }";; esac; done < <("$DD/self.sh" check 2>&1)
 fi
-if [ -x "$DD/guard.sh" ] && { [ -n "$TUN_DOMAINS" ] || [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ]; }; then
-  sec "Домены и исключения"
+if [ -x "$DD/guard.sh" ] && { [ -n "$TUN_DOMAINS" ] || [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ] || [ "${LISTS_MODE:-off}" != off ]; }; then
+  sec "Домены, исключения, списки"
+  if [ "${LISTS_MODE:-off}" != off ] && ! systemctl is-active --quiet awg-guard 2>/dev/null; then
+    W "LISTS_MODE=$LISTS_MODE, но служба awg-guard не запущена — списки и GeoIP не действуют, всё под PBR идёт через туннель" "панель → Маршрутизация → Списки и GeoIP → Применить (или $DD/install.sh → Компоненты → Маршрутизация и защита)"
+  fi
   while IFS= read -r l; do case "$l" in OK*) P "${l#OK    }";; WARN*) W "${l#WARN   }";; FAIL*) F "${l#FAIL   }";; esac; done < <("$DD/guard.sh" check 2>&1 | grep -E '^(OK|WARN|FAIL)')
+  case "${LISTS_MODE:-off}" in blocked) k=blocked;; geoip) k=geo;; *) k="";; esac
+  if [ -n "$k" ]; then
+    t=$(cat "$DD/lists/$k.ts" 2>/dev/null); a=-1; [[ $t =~ ^[0-9]+$ ]] && a=$(( $(date +%s) - t ))
+    if [ "$a" -lt 0 ]; then W "списки ещё ни разу не скачивались" "awgctl lists update; журнал — $DD/lists.log"
+    elif [ "$a" -gt 259200 ]; then W "списки не обновлялись $((a/86400)) дн (источник недоступен?)" "awgctl lists update; журнал — $DD/lists.log"
+    else P "списки обновлены $((a/3600)) ч назад"; fi
+  fi
 fi
 
 sec "Система"

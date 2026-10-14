@@ -9,6 +9,9 @@ ip6tables(){ command ip6tables -w 10 "$@"; }
 #     IPv6 (LEAK_V6=block, по умолчанию): помеченный IPv6-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются.
 #     LEAK_V6=route (#23): помеченный IPv6 сторож ведёт через туннель; в WAN он всё так же не выпускается.
 #     Метки дополнительных маршрутов (#22, route.d/*.env) защищаются так же, как основная.
+#  4) Списки и GeoIP (#38, LISTS_MODE): blocked — устройства под PBR идут через туннель только к адресам из списков
+#     заблокированного (набор AWG_LIST), geoip — напрямую к адресам стран GEO_COUNTRIES (набор AWG_GEO). Наборы
+#     наполняет lists.sh; служба раз в час проверяет, не пора ли обновить (раз в сутки).
 #  2) Домены через туннель (TUN_DOMAINS): клиенты LAN (TUN_CLIENTS, пусто = вся LAN) ходят на эти домены через AWG.
 #     Адреса доменов наполняют ipset AWG_DOM (это делает dnsmasq по файлу, который пишет self.sh).
 #  3) Исключения (DIRECT_DOMAINS, DIRECT_SUBNETS): клиенты под PBR ходят туда напрямую, мимо туннеля.
@@ -24,11 +27,13 @@ CD=AWG_DOM_PRE      # mangle PREROUTING, в начало: маркировка �
 CX=AWG_DIRECT_POST  # mangle PREROUTING, в конец: снятие метки для исключений
 DOMSET=AWG_DOM
 DIRSET=AWG_DIRECT
+LISTSET=AWG_LIST    # списки заблокированного (#38), наполняет lists.sh
+GEOSET=AWG_GEO      # адреса стран GEO_COUNTRIES (#38)
 HASHF=/tmp/awg-guard.hash
 
 load(){
   TABLE=""; MARK=""; WANIF=""
-  LEAK_GUARD=yes; LEAK_V6=block; TUN_DOMAINS=""; TUN_CLIENTS=""; DIRECT_DOMAINS=""; DIRECT_SUBNETS=""; EXTRA_SUBNETS=""
+  LEAK_GUARD=yes; LEAK_V6=block; TUN_DOMAINS=""; TUN_CLIENTS=""; DIRECT_DOMAINS=""; DIRECT_SUBNETS=""; EXTRA_SUBNETS=""; LISTS_MODE=off; GEO_COUNTRIES=""
   [ -r "$DD/awg.env" ] && . "$DD/awg.env"
   MASK=${MARK#*/}; [ "$MASK" = "$MARK" ] && MASK=0xffffffff
   ROUTE_MARKS=$(sed -n 's/^MARK="\{0,1\}\([0-9a-fx\/]*\)"\{0,1\}$/\1/p' "$DD"/route.d/*.env 2>/dev/null | sort -u | tr '\n' ' ')
@@ -112,12 +117,26 @@ build_dom(){
   jump_first iptables mangle PREROUTING $CD
 }
 
+list_n(){ ipset list "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 build_direct(){
-  local n
+  local n m mk
   iptables -t mangle -N $CX 2>/dev/null; B iptables -t mangle -F $CX
   if [ -n "$MARK" ]; then
     for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$MASK"; done
     [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$MASK"
+    # списки и GeoIP (#38) — для меток основного и дополнительных маршрутов; пустой набор — правила нет (всё через туннель)
+    for m in $MARK $ROUTE_MARKS; do
+      mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
+      if [ "$LISTS_MODE" = geoip ] && [ "${GEON:-0}" -gt 0 ]; then
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -j MARK --set-xmark "0x0/$mk"
+      elif [ "$LISTS_MODE" = blocked ] && [ "${LISTN:-0}" -gt 0 ]; then
+        if [ -n "$TUN_DOMAINS" ]; then
+          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $DOMSET dst -j MARK --set-xmark "0x0/$mk"
+        else
+          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -j MARK --set-xmark "0x0/$mk"
+        fi
+      fi
+    done
   fi
   jump_last iptables mangle PREROUTING $CX
 }
@@ -134,7 +153,12 @@ apply_body(){
   W=$(wans | tr '\n' ' ')
   [ -n "$TUN_DOMAINS" ] && { ipset create $DOMSET hash:ip family inet timeout 43200 -exist 2>/dev/null; ipset create ${DOMSET}6 hash:ip family inet6 timeout 43200 -exist 2>/dev/null; }
   [ -n "$DIRECT_DOMAINS" ] && ipset create $DIRSET hash:ip family inet timeout 43200 -exist 2>/dev/null
-  h=$(printf 'g4|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$(for s in $EXTRA_SUBNETS; do sub_iface "$s"; done | tr '\n' ' ')" | md5sum | cut -c1-12)
+  LISTN=0; GEON=0
+  if [ "$LISTS_MODE" != off ] && [ -x "$DD/lists.sh" ]; then
+    { ipset list -n 2>/dev/null | grep -qx $LISTSET; } || "$DD/lists.sh" load >/dev/null 2>&1   # после загрузки роутера — из кэша
+    LISTN=$(list_n $LISTSET); GEON=$(list_n $GEOSET); LISTN=${LISTN:-0}; GEON=${GEON:-0}
+  fi
+  h=$(printf 'g5|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$LISTS_MODE" "$([ "$LISTN" -gt 0 ] && echo L)$([ "$GEON" -gt 0 ] && echo G)" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$(for s in $EXTRA_SUBNETS; do sub_iface "$s"; done | tr '\n' ' ')" | md5sum | cut -c1-12)
   if [ "$(cat $HASHF 2>/dev/null)" != "$h" ] || ! chains_ok; then
     if [ "$LEAK_GUARD" = yes ]; then build_leak "$W"; else rm_chain iptables filter FORWARD $CF; rm_chain ip6tables filter FORWARD $CF; fi
     build_dom
@@ -153,6 +177,7 @@ remove(){
   rm_chain iptables filter FORWARD $CF; rm_chain ip6tables filter FORWARD $CF
   rm_chain iptables mangle PREROUTING $CD; rm_chain iptables mangle PREROUTING $CX
   ipset destroy $DOMSET 2>/dev/null; ipset destroy ${DOMSET}6 2>/dev/null; ipset destroy $DIRSET 2>/dev/null; rm -f "$WANF"
+  ipset destroy $LISTSET 2>/dev/null; ipset destroy $GEOSET 2>/dev/null
   rm -f $HASHF
 }
 
@@ -192,6 +217,13 @@ check(){
     ipset list -n 2>/dev/null | grep -qx $DOMSET && echo "OK     набор $DOMSET: адресов $(ipset list $DOMSET 2>/dev/null | sed -n '/^Members:/,$p' | tail -n +2 | grep -c .) (наполняется по мере DNS-запросов клиентов)" || { echo "FAIL   набора $DOMSET нет"; rc=1; }
     echo "INFO   клиенты: ${TUN_CLIENTS:-вся LAN (br+)}"
   fi
+  if [ "$LISTS_MODE" != off ]; then
+    local ln gn; ln=$(list_n $LISTSET); gn=$(list_n $GEOSET)
+    case "$LISTS_MODE" in
+      blocked) [ "${ln:-0}" -gt 0 ] && echo "OK     списки: через туннель только заблокированное ($ln сетей)" || { echo "WARN   списки: набор $LISTSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
+      geoip)   [ "${gn:-0}" -gt 0 ] && echo "OK     GeoIP: напрямую $(echo "$GEO_COUNTRIES" | tr 'a-z' 'A-Z') ($gn сетей), остальное через туннель" || { echo "WARN   GeoIP: набор $GEOSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
+    esac
+  fi
   if [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ]; then
     if iptables -t mangle -S PREROUTING 2>/dev/null | grep '^-A' | tail -n1 | grep -q -- "-j $CX"; then echo "OK     исключения ($DIRECT_DOMAINS $DIRECT_SUBNETS): правило стоит последним в mangle PREROUTING (после PBR UniFi)"
     else echo "FAIL   правило исключений не стоит последним в mangle PREROUTING"; rc=1; fi
@@ -200,7 +232,13 @@ check(){
 }
 
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; while :; do apply; sleep 5 & wait $!; done;;
+  run)    trap 'exit 0' TERM INT; k=0
+          while :; do
+            apply
+            # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
+            if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
+            k=$((k + 1)); sleep 5 & wait $!
+          done;;
   apply)  rm -f "$HASHF"; apply;;      # ручной запуск всегда пересобирает цепочки
   remove) remove;;
   check)  check;;
