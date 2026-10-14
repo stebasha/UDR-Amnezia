@@ -157,6 +157,10 @@ class MQTT:
                         break
                 else:
                     i = -1
+                # пакеты HA — команды в несколько байт: длина больше 256 КБ (или длиннее 4 байт) — брокер не тот или сбой,
+                # копить такой пакет в памяти роутера незачем
+                if n > 256 * 1024 or (i == -1 and len(self.buf) > 5) or i > 5:
+                    raise OSError("брокер прислал слишком большой пакет")
                 if i > 0 and len(self.buf) >= i + n:
                     t, body = self.buf[0] & 0xF0, self.buf[i:i + n]
                     self.buf = self.buf[i + n:]

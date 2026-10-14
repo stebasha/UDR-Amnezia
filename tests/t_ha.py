@@ -215,6 +215,13 @@ def main():
             out, errs = srv.communicate()
         if FAILS:
             print(errs[-1500:])
+    # ---------- брокер шлёт пакет с огромной длиной: соединение рвётся, память не копится
+    code = ("import socket, sys; sys.path.insert(0, %r); import ha\n"
+            "a, b = socket.socketpair(); m = ha.MQTT.__new__(ha.MQTT); m.sock = a; m.buf = b''\n"
+            "b.sendall(bytes([0x30, 0xff, 0xff, 0xff, 0x7f]) + b'x' * 1000)\n"
+            "try:\n    m.read_packet(2); print('NO')\nexcept OSError as ex:\n    print('ERR', ex)\n") % os.path.join(R, "awg")
+    p = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=30)
+    check("MQTT: пакет больше 256 КБ — разрыв, а не накопление", "ERR" in p.stdout and "большой" in p.stdout, p.stdout + p.stderr[-300:])
     print("\nha: %d ошибок" % len(FAILS))
     sys.exit(1 if FAILS else 0)
 
