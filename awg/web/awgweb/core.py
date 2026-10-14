@@ -1011,9 +1011,19 @@ def kernel_events():
     rc, out = run(["journalctl", "-k", "--since", "-24h", "-q", "--no-pager", "-o", "cat"], timeout=10)
     if rc != 0:
         return {"oom": -1, "io": -1, "lines": []}
-    oom = [l for l in out.splitlines() if re.search(r"Out of memory|oom-kill|Killed process", l)]
+    # одно завершение — одна строка «Killed process» (вокруг неё ядро пишет ещё 2–3 строки про OOM: их не считаем).
+    # «Memory cgroup out of memory» — служба упёрлась в свой собственный лимит (так бывает у UniFi Network, Java):
+    # это не нехватка памяти роутера, другие процессы не затронуты.
+    kills = []
+    for l in out.splitlines():
+        m = re.search(r"(Memory cgroup out of memory|Out of memory)[^:]*: Killed process \d+ \(([^)]*)\)", l)
+        if m:
+            kills.append({"cg": m.group(1).startswith("Memory cgroup"), "name": m.group(2), "line": l})
     io = [l for l in out.splitlines() if re.search(r"I/O error|EXT4-fs error|UBIFS error|squashfs error|Buffer I/O", l)]
-    return {"oom": len(oom), "io": len(io), "lines": (oom + io)[-6:]}
+    return {"oom": len(kills), "oom_sys": sum(not k["cg"] for k in kills),
+            "oom_cg": collections.Counter(k["name"] for k in kills if k["cg"]),
+            "oom_sys_names": collections.Counter(k["name"] for k in kills if not k["cg"]),
+            "io": len(io), "lines": ([k["line"] for k in kills] + io)[-6:]}
 
 
 def system_health(cpu=None, hist=None):
@@ -1110,8 +1120,13 @@ def system_health(cpu=None, hist=None):
         else:
             ck("ct", "ok", "Соединений: %d из %d" % (ct_n, ct_m))
     # ядро
-    if ke["oom"] > 0:
-        ck("oom", "warn", "За сутки ядро %d раз завершало процессы из-за нехватки памяти" % ke["oom"], "журнал: journalctl -k | grep -i oom")
+    if ke.get("oom_sys", ke["oom"]) > 0:
+        names = ", ".join("%s ×%d" % kv for kv in (ke.get("oom_sys_names") or {}).items())
+        ck("oom", "warn", "За сутки памяти роутера не хватило %d раз, ядро завершало процессы%s" % (ke.get("oom_sys", ke["oom"]), ": " + names if names else ""),
+           "журнал: journalctl -k | grep -i 'Killed process'")
+    for name, n in sorted((ke.get("oom_cg") or {}).items()):
+        ck("oomcg-" + name, "info", "Процесс %s %d раз упирался в свой лимит памяти и перезапускался" % (name, n),
+           "это лимит самой службы (у unifi — приложение UniFi Network), а не нехватка памяти роутера; если часто — перезапустите UniFi Network или обновите прошивку")
     if ke["io"] > 0:
         ck("io", "warn", "За сутки ошибок ввода-вывода: %d" % ke["io"], "возможен износ флеш-памяти: сделайте резервную копию")
     if up < 900:

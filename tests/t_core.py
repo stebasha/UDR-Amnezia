@@ -163,5 +163,19 @@ open(S.HA_F, "w").write('MQTT_HOST="ha.lan"\nMQTT_PORT="8883"\nMQTT_USER="u"\nMQ
 check("HA: другой брокер без пароля — отказ", raises(S.api_ha_set, FakeH(), {"host": "evil.lan", "port": "8883", "user": "u", "tls": "yes"}))
 check("HA: тот же брокер, но без TLS — пароль ввести заново", raises(S.api_ha_set, FakeH(), {"host": "ha.lan", "port": "8883", "user": "u", "tls": "no"})
       and "MQTT_TLS=\"yes\"" in C.read_file(S.HA_F))
+# OOM: одно завершение — одно событие; лимит службы (memcg, как у UniFi Network) — не нехватка памяти роутера (job28)
+KLOG = """localhost:27117 invoked oom-killer: gfp_mask=0x100cca(GFP_HIGHUSER_MOVABLE), order=0, oom_score_adj=0
+oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=app.slice,mems_allowed=0,oom_memcg=/app.slice/app-unifi.slice/unifi.service
+Memory cgroup out of memory: Killed process 13302 (unifi) total-vm:36052632kB, anon-rss:772960kB, file-rss:0kB
+python3 invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0
+oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/system.slice/awg-web.service
+Out of memory: Killed process 777 (python3) total-vm:100000kB, anon-rss:90000kB
+oom_reaper: reaped process 777 (python3), now anon-rss:0kB"""
+_run = C.run
+C.run = lambda *a, **k: (0, KLOG)
+ke = C.kernel_events()
+C.run = _run
+check("OOM: два завершения, а не семь строк; одно — лимит службы unifi", ke["oom"] == 2 and ke["oom_sys"] == 1 and dict(ke["oom_cg"]) == {"unifi": 1}
+      and dict(ke["oom_sys_names"]) == {"python3": 1}, ke)
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

@@ -1040,7 +1040,8 @@ window.AWG_EN = {
  "30 дн": "30 d",
  "Скачать CSV": "Download CSV",
  "Сводки копятся раз в час — загляните позже": "Hourly summaries accumulate — check back later",
- "период: 24h, 7d или 30d": "range: 24h, 7d or 30d"
+ "период: 24h, 7d или 30d": "range: 24h, 7d or 30d",
+ "(ещё в пределах лимита служб: ": "(plus within service limits: "
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -1087,6 +1088,9 @@ window.AWG_EN = {
     [/^✔ маршрут (\S+) убран: .*$/, "✔ route $1 removed: traffic of its UniFi profile goes as without the kit"],
     [/^маршрут (\S+): автоматический выбор$/, "route $1: automatic selection"],
     [/^маршрут (\S+): выбран (\S+) .*$/, "route $1: $2 selected (the watchdog switches if the channel responds)"],
+    [/^За сутки памяти роутера не хватило (\d+) раз, ядро завершало процессы(.*)$/, "Router ran out of memory $1 times in 24 h, the kernel killed processes$2"],
+    [/^Процесс (\S+) (\d+) раз упирался в свой лимит памяти и перезапускался$/, "Process $1 hit its own memory limit $2 times and was restarted"],
+    [/^это лимит самой службы .*$/, "this is the service's own limit (for unifi — the UniFi Network app), not a router memory shortage; if frequent, restart UniFi Network or update the firmware"],
     [/^адрес сменился: введите (заголовок вебхука|токен ntfy|API-токен 3x-ui|пароль брокера MQTT) заново.*$/, "the address has changed: enter the secret again (the saved one is not sent to a different host)"]
   ]
 };
