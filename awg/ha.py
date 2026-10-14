@@ -6,6 +6,7 @@ Home Assistant сам находит устройство «UDR-Amnezia» (ин�
   датчики — активный канал, режим (авто/вручную), по каждому туннелю: связь, handshake, RTT, потери, трафик;
             kill switch, состояние, число замечаний, процессор, память, температура, свободно на /data;
   select «Канал» — авто или конкретный туннель (то же, что «Активировать»/«Автовыбор» в панели);
+  дополнительные маршруты (#22, #40) — по каждому: канал, связь, select «Маршрут …: канал» (авто или туннель цепочки);
   кнопки — перезапуск туннеля; перезагрузка роутера — только если HA_ALLOW_REBOOT=yes.
 
 Настройки — /data/awg/ha.env (панель: «Настройки → Home Assistant»):
@@ -39,6 +40,7 @@ STATE = BASE + "/state"
 SET_MODE = BASE + "/set/mode"
 SET_RESTART = BASE + "/set/restart"
 SET_REBOOT = BASE + "/set/reboot"
+SET_ROUTE = BASE + "/set/route/"     # + ID маршрута (#40): auto или туннель
 
 
 def log(msg):
@@ -182,6 +184,22 @@ class Act:
         P.audit(self.user, "mqtt", a, d)
 
 
+def overview():
+    """Состояние для HA: как в панели, плюс дополнительные маршруты."""
+    ov = P.overview()
+    try:
+        ov["routes"] = [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+    except Exception as ex:   # маршруты — не повод не публиковать остальное
+        log("маршруты: %s" % ex)
+        ov["routes"] = []
+    return ov
+
+
+def shape(ov):
+    """Что определяет набор сущностей: туннели и маршруты с их цепочками."""
+    return [t["name"] for t in ov["tunnels"]], [(r["id"], r["label"], tuple(r["tunnels"])) for r in ov.get("routes", [])]
+
+
 def device(ov):
     return {"identifiers": [NODE], "name": "UDR-Amnezia (%s)" % ov["host"], "manufacturer": "UDR-Amnezia",
             "model": "AmneziaWG на UniFi Dream Router", "sw_version": ov.get("version", "")}
@@ -220,6 +238,13 @@ def discovery(ov, c):
         out.append(("%s/button/%s/%s_restart/config" % (c["prefix"], NODE, n),
                     {"name": lab + ": перезапустить", "unique_id": "%s_%s_restart" % (NODE, n), "object_id": "%s_%s_restart" % (NODE, n),
                      "device": dev, "availability_topic": AVAIL, "command_topic": SET_RESTART, "payload_press": n, "icon": "mdi:restart"}))
+    for r in ov.get("routes", []):
+        rid, lab = r["id"], "Маршрут " + (r["label"] or r["id"])
+        v = "value_json.routes['%s']" % rid
+        ent("sensor", "route_%s_active" % rid, lab + ": канал", value_template="{{ %s.active or 'нет' }}" % v, icon="mdi:routes")
+        ent("binary_sensor", "route_%s_up" % rid, lab + ": связь", value_template="{{ 'ON' if %s.up else 'OFF' }}" % v, device_class="connectivity")
+        ent("select", "route_%s_mode" % rid, lab + ": выбор канала", command_topic=SET_ROUTE + rid, options=["auto"] + list(r["tunnels"]),
+            value_template="{{ %s.mode }}" % v, icon="mdi:swap-horizontal")
     if c["reboot"]:
         out.append(("%s/button/%s/reboot/config" % (c["prefix"], NODE),
                     {"name": "Перезагрузить роутер", "unique_id": NODE + "_reboot", "object_id": NODE + "_reboot", "device": dev,
@@ -235,6 +260,8 @@ def snapshot(ov):
         "cpu": round(ov["sys"]["cpu"] or 0, 1), "mem": ov["sys"]["mem_pct"], "temp": ov["sys"]["temp"], "data_free_mb": ov["data_free_mb"],
         "tunnels": {t["name"]: {"up": t["status"] in ("active", "standby"), "handshake": t["handshake"] if t["handshake"] >= 0 else None,
                                 "rtt": num(t["rtt"]), "loss": num(t["loss"]), "rx": t["rx"], "tx": t["tx"]} for t in ov["tunnels"]},
+        "routes": {r["id"]: {"active": r["active"], "mode": r["forced"] or "auto", "up": r["service"] == "active" and bool(r["active"])}
+                   for r in ov.get("routes", [])},
     }
 
 
@@ -252,6 +279,10 @@ def handle(topic, payload, c):
             a.act("switch", payload)
             return "ручной выбор %s передан сторожу" % payload
         return "неизвестный канал «%s»" % payload[:40]
+    if topic.startswith(SET_ROUTE):
+        rid = topic[len(SET_ROUTE):]
+        r = P.api_route_switch(a, {"id": rid, "tunnel": payload})
+        return r.get("msg", "маршрут %s: %s" % (rid, payload))
     if topic == SET_RESTART:
         if payload in names:
             r = P.api_tunnel_restart(a, {"name": payload})
@@ -270,18 +301,25 @@ def handle(topic, payload, c):
     return ""
 
 
-def publish_all(m, c, ov, with_config=True):
+def publish_all(m, c, ov, with_config=True, old=None):
+    """→ темы конфигов, если публиковались. old — прежние: исчезнувшие (убранный туннель или маршрут) удаляются из HA."""
+    topics = None
     if with_config:
-        for topic, cfg in discovery(ov, c):
+        d = discovery(ov, c)
+        topics = {t for t, _ in d}
+        for topic in sorted((old or set()) - topics):
+            m.publish(topic, b"", retain=True)
+        for topic, cfg in d:
             m.publish(topic, cfg, retain=True)
     m.publish(AVAIL, "online", retain=True)
     m.publish(STATE, snapshot(ov), retain=True)
+    return topics
 
 
 def run_once(c):
     m = MQTT(c["host"], c["port"], c["user"], c["pass"], c["tls"])
     m.connect(will_topic=AVAIL, will_payload=b"offline")
-    ov = P.overview()
+    ov = overview()
     publish_all(m, c, ov)
     m.disconnect()
     return len(discovery(ov, c))
@@ -290,7 +328,7 @@ def run_once(c):
 def remove(c):
     m = MQTT(c["host"], c["port"], c["user"], c["pass"], c["tls"])
     m.connect()
-    ov = P.overview()
+    ov = overview()
     for topic, _ in discovery(ov, dict(c, reboot=True)):
         m.publish(topic, b"", retain=True)
     m.publish(STATE, b"", retain=True)
@@ -309,16 +347,18 @@ def serve():
         try:
             m = MQTT(c["host"], c["port"], c["user"], c["pass"], c["tls"])
             m.connect(will_topic=AVAIL, will_payload=b"offline")
-            m.subscribe([SET_MODE, SET_RESTART] + ([SET_REBOOT] if c["reboot"] else []))
+            m.subscribe([SET_MODE, SET_RESTART, SET_ROUTE + "+"] + ([SET_REBOOT] if c["reboot"] else []))
             names = None
+            topics = None
             log("подключено к %s:%d" % (c["host"], c["port"]))
             pause = 5
             next_pub = 0
             while True:
                 if time.time() >= next_pub:
-                    ov = P.overview()
-                    cur = [t["name"] for t in ov["tunnels"]]
-                    publish_all(m, c, ov, with_config=cur != names)   # туннели добавили/убрали — пересобрать сущности
+                    ov = overview()
+                    cur = shape(ov)
+                    tp = publish_all(m, c, ov, with_config=cur != names, old=topics)   # туннели или маршруты поменялись — пересобрать
+                    topics = tp if tp is not None else topics
                     names = cur
                     next_pub = time.time() + c["interval"]
                 if time.time() - m.last_tx > 30:

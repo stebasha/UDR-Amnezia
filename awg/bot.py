@@ -284,6 +284,11 @@ def scr_main(chat):
     lines.append("\n<i>обновлено %s</i>" % time.strftime("%H:%M:%S"))
     rows = [[("🔄 Обновить", "m:main"), ("🔀 Каналы", "m:tun")], [("📜 События", "m:ev"), ("📈 Статистика", "m:stats")],
             [("🩺 Проверки", "m:chk"), ("🖥 Роутер", "m:sys")], [("👥 Клиенты", "m:cl"), ("🔔 Уведомления", "m:mute")]]
+    rl = routes_list()
+    if rl:
+        bad = [r["id"] for r in rl if not (r["service"] == "active" and r["active"])]
+        lines.insert(-1, "🧭 Маршруты: %d%s" % (len(rl), " · 🔴 без канала: " + esc(", ".join(bad)) if bad else " · все работают"))
+        rows.insert(2, [("🧭 Маршруты", "m:rt")])
     if role(chat) == "admin":
         rows.append([("⚙️ Службы", "m:svc"), ("❓ Помощь", "m:help")])
     else:
@@ -329,6 +334,62 @@ def scr_tunnel(chat, name):
         rows.append([("⚡ Скорость", "spd:" + name), ("♻️ Перезапустить", "rsq:" + name)])
     rows.append([("⬅️ Каналы", "m:tun"), ("🏠 Меню", "m:main")])
     return "\n".join(lines), rows
+
+
+def routes_list():
+    try:
+        return [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+    except Exception as ex:
+        log("маршруты: %r" % ex)
+        return []
+
+
+def scr_routes(chat):
+    """Дополнительные маршруты (#22, #40): у каждого свой профиль PBR, своя цепочка туннелей и свой сторож."""
+    rl = routes_list()
+    if not rl:
+        return ("<b>🧭 Маршруты</b>\nДополнительных маршрутов нет. Их создают в веб-панели: Настройки → Маршруты."
+                , [[("⬅️ Назад", "m:main")]])
+    lines = ["<b>🧭 Маршруты</b>", ""]
+    rows = []
+    for r in rl:
+        ok = r["service"] == "active" and r["active"]
+        lines.append("%s <b>%s</b>%s — %s%s" % ("🟢" if ok else "🔴", esc(r["id"]), " (%s)" % esc(r["label"]) if r["label"] else "",
+                     "канал <b>%s</b>" % esc(r["active"]) if r["active"] else "нет рабочего канала (kill switch)",
+                     ", вручную" if r["forced"] else ""))
+        rows.append([("%s %s" % ("🟢" if ok else "🔴", r["label"] or r["id"]), "r:" + r["id"])])
+    rows.append([("🔄 Обновить", "m:rt"), ("⬅️ Назад", "m:main")])
+    return "\n".join(lines), rows
+
+
+def scr_route(chat, rid):
+    r = next((x for x in routes_list() if x["id"] == rid), None)
+    if not r:
+        return "Маршрута %s нет" % esc(rid), [[("⬅️ Маршруты", "m:rt")]]
+    tl = {t["name"]: t for t in P.overview()["tunnels"]}
+    lines = ["<b>🧭 %s</b>%s" % (esc(r["id"]), " · " + esc(r["label"]) if r["label"] else ""),
+             "Профиль UniFi: %s · таблица %s" % (esc(r["rail"]), esc(r["table"])),
+             "Сторож: %s · %s" % ("работает" if r["service"] == "active" else "🔴 " + esc(r["service"]),
+                                  "вручную: " + esc(r["forced"]) if r["forced"] else "автовыбор"), ""]
+    rows = []
+    for i, n in enumerate(r["tunnels"]):
+        t = tl.get(n, {})
+        mark = "✅" if n == r["active"] else {"standby": "⚪", "active": "⚪", "nohs": "🟡", "down": "🔴"}.get(t.get("status"), "⚪")
+        lines.append("%s %d. %s — handshake %s" % (mark, i + 1, esc(n), fa(t.get("handshake", -1))))
+        if role(chat) == "admin" and n != r["active"] and t.get("status") not in (None, "down"):
+            rows.append([("🔀 %s" % n, "rtq:%s:%s" % (rid, n))])
+    if role(chat) == "admin" and r["forced"]:
+        rows.append([("🤖 Вернуть автовыбор", "rtw:%s:auto" % rid)])
+    rows.append([("⬅️ Маршруты", "m:rt"), ("🏠 Меню", "m:main")])
+    return "\n".join(lines), rows
+
+
+def do_route_switch(chat, rid, t):
+    try:
+        r = P.api_route_switch(Act(chat), {"id": rid, "tunnel": t})
+        return ("✅ " if r["ok"] else "⚠️ ") + esc(r["msg"])
+    except Exception as ex:
+        return "⚠️ " + esc(ex)
 
 
 def ev_line(e):
@@ -422,11 +483,11 @@ def scr_svc(chat):
 
 
 HELP = ("<b>❓ Команды</b>\n/menu — меню кнопками\n/status — состояние\n/tunnels — каналы\n/router — роутер\n/events — события\n"
-        "/clients — клиенты в туннеле\n/domain сайт — проверить сайт\n/switch имя — сделать канал активным\n/auto — вернуть автовыбор\n"
-        "/report — отчёт файлом\n/id — chat id\n\nДобавить людей: веб-панель → Настройки → Telegram (администраторы и «только просмотр»).")
+        "/clients — клиенты в туннеле\n/routes — дополнительные маршруты\n/domain сайт — проверить сайт\n/switch имя — сделать канал активным\n/auto — вернуть автовыбор\n"
+        "/route ID канал|auto — канал маршрута\n/report — отчёт файлом\n/id — chat id\n\nДобавить людей: веб-панель → Настройки → Telegram (администраторы и «только просмотр»).")
 
 SCREENS = {"main": scr_main, "tun": scr_tun, "ev": scr_ev, "stats": scr_stats, "chk": scr_chk, "sys": scr_sys, "cl": scr_cl,
-           "mute": scr_mute, "svc": scr_svc, "help": lambda c: (HELP, [[("⬅️ Назад", "m:main")]])}
+           "mute": scr_mute, "svc": scr_svc, "rt": scr_routes, "help": lambda c: (HELP, [[("⬅️ Назад", "m:main")]])}
 ADMIN_ONLY = ("svc",)
 
 
@@ -508,6 +569,8 @@ def on_callback(q):
         edit(chat, mid, *screen(chat, arg))
     elif k == "t":
         edit(chat, mid, *scr_tunnel(chat, arg))
+    elif k == "r":
+        edit(chat, mid, *scr_route(chat, arg))
     elif k == "test":
         edit(chat, mid, "⏳ Проверяю %s: HTTPS, DNS, внешний IP, MTU…" % esc(arg), [[("⬅️ " + arg, "t:" + arg)]])
         run_job(chat, "test", arg)
@@ -533,6 +596,14 @@ def on_callback(q):
     elif k == "auto":
         r2 = P.api_tunnel_auto(Act(chat), {})
         edit(chat, mid, "🤖 " + esc(r2["msg"]), [[("🔀 Каналы", "m:tun"), ("🏠 Меню", "m:main")]])
+    elif k == "rtq" and arg.count(":") == 1:
+        rid, _, t = arg.partition(":")
+        edit(chat, mid, "Маршрут <b>%s</b>: сделать <b>%s</b> активным каналом? Сторож маршрута не будет возвращаться на первый, пока вы не включите автовыбор." % (esc(rid), esc(t)),
+             [[("✅ Да, переключить", "rtw:%s:%s" % (rid, t)), ("✖️ Отмена", "r:" + rid)]])
+    elif k == "rtw" and arg.count(":") == 1:
+        rid, _, t = arg.partition(":")
+        edit(chat, mid, "⏳ Маршрут %s → %s…" % (esc(rid), esc(t)))
+        edit(chat, mid, do_route_switch(chat, rid, t), [[("⬅️ " + rid, "r:" + rid), ("🧭 Маршруты", "m:rt")]])
     elif k == "rsq":
         edit(chat, mid, "Перезапустить туннель <b>%s</b>? Несколько секунд трафик через него не идёт." % esc(arg),
              [[("♻️ Да", "rs:" + arg), ("✖️ Отмена", "t:" + arg)]])
@@ -571,7 +642,7 @@ def on_message(m):
             send(chat, "⛔ Нет доступа. Ваш chat id: <code>%s</code>\nАдминистратор может добавить его в веб-панели: Настройки → Telegram." % chat)
         log("игнорирую чужой чат %s" % chat)
         return
-    if time.time() - LAST[chat] < 0.7:
+    if time.time() - LAST[chat] < 0.7 and not TEST["on"]:   # защита от дребезга; в тестах сообщения идут подряд
         return
     LAST[chat] = time.time()
     w = WAIT.pop(chat, None)
@@ -594,6 +665,8 @@ def on_message(m):
         send(chat, *scr_stats(chat))
     elif cmd == "/clients":
         send(chat, *scr_cl(chat))
+    elif cmd == "/routes":
+        send(chat, *scr_routes(chat))
     elif cmd == "/help":
         send(chat, HELP)
     elif cmd == "/id":
@@ -612,7 +685,7 @@ def on_message(m):
         run_job(chat, "self")
     elif cmd == "/ip":
         run_job(chat, "ip")
-    elif not admin and cmd in ("/switch", "/auto", "/restart", "/report"):
+    elif not admin and cmd in ("/switch", "/auto", "/restart", "/report", "/route"):
         send(chat, "⛔ Это действие доступно только администраторам")
     elif cmd == "/switch":
         names = P.tunnels()
@@ -622,6 +695,14 @@ def on_message(m):
             send(chat, "Укажите канал: /switch main | backup | имя (%s)" % ", ".join(names))
         else:
             send(chat, do_switch(chat, name), [[("🔀 Каналы", "m:tun")]])
+    elif cmd == "/route":
+        rid, _, t = arg.partition(" ")
+        r = next((x for x in routes_list() if x["id"] == rid), None)
+        t = t.strip()
+        if not r or not (t == "auto" or t in r["tunnels"]):
+            send(chat, "Формат: /route ID канал|auto. Маршруты: %s" % (", ".join("%s (%s)" % (x["id"], " ".join(x["tunnels"])) for x in routes_list()) or "нет"))
+        else:
+            send(chat, do_route_switch(chat, rid, t), [[("⬅️ " + rid, "r:" + rid)]])
     elif cmd == "/auto":
         send(chat, "🤖 " + esc(P.api_tunnel_auto(Act(chat), {})["msg"]))
     elif cmd == "/restart":
@@ -741,6 +822,7 @@ def main():
         {"command": "menu", "description": "меню кнопками"}, {"command": "status", "description": "состояние"},
         {"command": "tunnels", "description": "каналы"}, {"command": "router", "description": "роутер: CPU, память, диск"},
         {"command": "events", "description": "события"}, {"command": "clients", "description": "клиенты в туннеле"},
+        {"command": "routes", "description": "дополнительные маршруты"},
         {"command": "domain", "description": "проверить сайт"}, {"command": "help", "description": "помощь"}]})
     threading.Thread(target=monitor, daemon=True).start()
     off = P.read_file(OFFF).strip() or "0"

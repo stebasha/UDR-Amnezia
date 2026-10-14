@@ -46,5 +46,30 @@ check("чужой чат получает свой id", c999 and "999" in c999[0
 check("лишние обновления не ломают бота", "пропускаю обновление типа my_chat_member" in out.stderr.decode(), out.stderr.decode()[-500:])
 check("offset сохранён", open(os.path.join(dd, "bot.offset")).read().strip() == "8")
 check("переключение не выполнено по кнопке просмотра", not os.path.exists(os.path.join(L, "run", "awg-force")))
+# ---------- маршруты (#40)
+os.makedirs(os.path.join(dd, "route.d"), exist_ok=True)
+open(os.path.join(dd, "route.d", "us.env"), "w").write('RAIL_IF="wgclt2"\nPRIO="32507"\nMARK="0x6c0000/0x7e0000"\nTABLE="179"\nTUNNELS="awgbackup awgmain"\nLABEL="США"\n')
+open(os.path.join(L, "run", "awg-state-us"), "w").write("ACTIVE=awgbackup\n")
+upd2 = {"ok": True, "result": [
+    {"update_id": 20, "message": {"chat": {"id": 111}, "text": "/routes"}},
+    {"update_id": 21, "callback_query": {"id": "e", "data": "r:us", "message": {"message_id": 9, "chat": {"id": 111}}}},
+    {"update_id": 22, "callback_query": {"id": "f", "data": "rtw:us:awgmain", "message": {"message_id": 9, "chat": {"id": 333}}}},
+    {"update_id": 23, "callback_query": {"id": "g", "data": "rtq:us:awgmain", "message": {"message_id": 9, "chat": {"id": 222}}}},
+    {"update_id": 24, "message": {"chat": {"id": 222}, "text": "/route us awgmain"}},
+    {"update_id": 25, "message": {"chat": {"id": 111}, "text": "/route us nope"}},
+]}
+json.dump(upd2, open(f, "w"))
+out = subprocess.run(["python3", os.path.join(R, "awg/bot.py"), "--once-from", f], env=envv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+calls = [json.loads(l) for l in out.stdout.decode().splitlines() if l.startswith("{")]
+m = by("111")
+check("маршруты: список с каналом и кнопкой", m and "США" in m[0]["params"]["text"] and "awgbackup" in m[0]["params"]["text"] and "r:us" in btns(m[0]), (m[:1], out.stderr.decode()[-400:]))
+check("маршрут: цепочка и переключение на другой канал", len(m) > 1 and "1. awgbackup" in m[1]["params"]["text"] and "rtq:us:awgmain" in btns(m[1]), m[1:2])
+c333 = by("333")
+check("маршрут: просмотр не переключает", any("только администраторам" in c["params"]["text"] for c in c333), c333)
+c222 = by("222")
+check("маршрут: подтверждение переключения", c222 and "rtw:us:awgmain" in btns(c222[0]), c222[:1])
+fu = os.path.join(L, "run", "awg-force-us")
+check("маршрут: /route переключает канал", len(c222) > 1 and c222[1]["params"]["text"].startswith("✅") and os.path.exists(fu) and "awgmain" in open(fu).read(), (c222[1:2], out.stderr.decode()[-300:]))
+check("маршрут: неверный канал — подсказка", any("Формат: /route" in c["params"]["text"] for c in m), m)
 print("bot: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)
