@@ -20,6 +20,7 @@ echo "== t_bot (Telegram-бот)"; python3 "$H/t_bot.py" || rc=1
 echo "== t_ha (Home Assistant)"; python3 "$H/t_ha.py" || rc=1
 echo "== t_report (отчёт и учёт трафика)"; python3 "$H/t_report.py" || rc=1
 echo "== t_autotune (автоподбор при деградации)"; python3 "$H/t_autotune.py" || rc=1
+echo "== t_core (защитные функции панели)"; python3 "$H/t_core.py" || rc=1
 echo "== панель в браузере (если есть playwright)"
 out=$(AWG_UI_OPTIONAL=1 python3 "$H/t_ui.py" 2>&1); r=$?; echo "$out" | grep -E "^(FAIL|ui:)"; [ $r = 0 ] || rc=1
 echo "== перевод панели"; command -v node >/dev/null && { python3 "$ROOT/tools/i18n-check.py" | tail -1 || rc=1; }
