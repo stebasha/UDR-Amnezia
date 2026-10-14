@@ -135,12 +135,25 @@ case "$cmd" in
     say "· подбор обфускации $T ($([ "$MODE" = server ] && echo "роутер и VPS $VID" || echo "только роутер, сервер не меняется")): текущий набор и ещё $N"
     event "подбор обфускации $T: начат ($MODE, наборов $N)"
     cp -p "$CF" "$CF.pre-tune"
+    # прерванный подбор (остановка службы, срок задачи, Ctrl+C) не оставляет туннель на пробном наборе
+    restore_base(){
+      trap - EXIT INT TERM
+      [ -f "$CF.pre-tune" ] || return 0
+      say "· подбор прерван: возвращаю исходный набор"
+      if [ "$MODE" = server ]; then apply_server "$T" "$VID" "$BASE" >/dev/null 2>&1 || true
+      else cat "$CF.pre-tune" > "$CF"; up_tun "$T"; fi
+      rm -f "$CF.pre-tune" "$RES.new"; event "подбор обфускации $T: прерван, исходный набор возвращён"
+    }
+    trap 'restore_base; exit 1' INT TERM
+    trap 'restore_base' EXIT
     say "· 0: текущий набор $BASE"
     if [ "$MODE" = server ]; then measure "$T" "$(( $(date +%s) - 300 ))" base
     else try_client "$BASE"; fi                      # как и остальные: пересоздать и мерить с нуля — сравнение честное
     row 0 "$BASE"
     say "    → $( [ "$M_OK" = 1 ] && echo "работает: потери $M_LOSS%, задержка $M_RTT мс, скорость $M_MBPS Мбит/с, оценка $M_SCORE" || echo "не работает")"
     for i in $(seq 1 "$N"); do
+      # основной канал упал, и сторож перевёл трафик на этот туннель — подбор прекращаем, рабочий трафик не трогаем
+      if [ -z "$ACT" ] && is_active "$T"; then say "▲ $T стал активным каналом: подбор прекращён"; break; fi
       if [ "$MODE" = server ]; then P=$(gen_server); else P=$(gen_client "$i"); fi
       say "· $i: $P"
       t0=$(date +%s)
@@ -155,7 +168,7 @@ case "$cmd" in
     say "· возвращаю исходный набор"
     if [ "$MODE" = server ]; then apply_server "$T" "$VID" "$BASE" >/dev/null || say "▲ исходный набор на VPS не подтвердился: смотрите «Свой VPS → Журнал»"
     else cat "$CF.pre-tune" > "$CF"; up_tun "$T"; fi
-    rm -f "$CF.pre-tune"
+    rm -f "$CF.pre-tune"; trap - EXIT INT TERM
     mv -f "$RES.new" "$RES"; chmod 600 "$RES"
     best=$(awk -F'\t' '!/^#/ && $2==1 {print $7"\t"$1"\t"$8}' "$RES" | sort -s -t"$(printf '\t')" -k1,1nr | head -n1)
     if [ -n "$best" ]; then

@@ -67,5 +67,14 @@ ck "server: через vps.sh obfs --file, без уведомлений и ко
 ck "server: S1/S2/H1–H4 в наборах, в конце исходный набор на обеих сторонах" 'awk -F"\t" "\$1==1 {print \$8}" $DD/tune.tsv | grep -q "S1=.*H4=" && grep -q "^S1 = 30" $DD/backup.conf && grep -q "^H4 = 4444" $DD/backup.conf'
 printf '[Interface]\nPrivateKey = k\nAddress = 10.8.1.2/32\nJc = 4\nJmin = 40\nJmax = 70\nH1 = 100-200\n\n[Peer]\nPublicKey = p\n' > $DD/backup.conf
 ck "server: AWG 2.0/3.x (диапазоны H) — отказ с подсказкой client" '! "$TN" run awgbackup server 2 > $T/o && grep -q "используйте client" $T/o'
+# прерванный подбор (остановка, срок задачи) возвращает исходный набор; канал стал активным — подбор прекращается
+cp $DD/backup.conf $T/bk1
+TUNE_WAIT=3 "$TN" run awgbackup client 6 > $T/r3 2>&1 & TP=$!
+sleep 5; kill -TERM $TP; wait $TP 2>/dev/null
+ck "прерванный подбор: исходный набор возвращён и применён, копия убрана" 'cmp -s $DD/backup.conf $T/bk1 && cmp -s $STUB/applied.awgbackup $T/bk1 && [ ! -e $DD/backup.conf.pre-tune ] && grep -q "подбор прерван" $T/r3'
+"$TN" run awgbackup client 6 > $T/r4 2>&1 & TP=$!
+sleep 4; echo "ACTIVE=awgbackup" > "$STATEF"; wait $TP
+ck "туннель стал активным посреди подбора: подбор прекращён, исходный набор на месте" 'grep -q "стал активным каналом: подбор прекращён" $T/r4 && cmp -s $DD/backup.conf $T/bk1 && [ "$(grep -vc "^#" $DD/tune.tsv)" -lt 7 ]'
+echo "ACTIVE=awgmain" > "$STATEF"
 echo "== tune: ошибок $fails"
 [ $fails = 0 ]
