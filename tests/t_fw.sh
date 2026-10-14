@@ -118,4 +118,14 @@ old_w=$(PATH="$T/mgbin:$PATH"; want); want_from "$(cat "$T/mg")"
 ck "self: want_from совпадает с прежним want (правила как на роутере)" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ]' || printf '%s\n---\n%s\n' "$old_w" "$W"
 HZ=$(getconf CLK_TCK); pstart_v pv $$
 ck "self: время старта процесса — как у прежнего pstart" '[ "$pv" = "$(pstart $$)" ]'
+# --- awg-self (1.7.1): бюджет внешних команд в обычном проходе службы (в 1.7.0 — ~58)
+SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
+for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables ipset md5sum flock logger getent pidof ss dnsmasq; do
+  printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \
+    "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
+done
+chmod +x $SH/*
+PATH=$SH:$PATH bash "$COMP/self.sh" run > /dev/null 2>&1 &
+SP=$!; sleep 3; : > $CNT; sleep 10; ns=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $SP; wait $SP 2>/dev/null
+ck "self: обычный проход — не больше 6 внешних команд (проходов $np, команд $ns; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ns" -le $((6 * np)) ]'
 echo "fw: провалов $fails"; [ $fails = 0 ]
