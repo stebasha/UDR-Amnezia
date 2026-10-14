@@ -1094,6 +1094,9 @@ MIN_DWELL=${MIN_DWELL:-120}               # после любого перекл
 TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
+RECHECK_AFTER=${RECHECK_AFTER:-120}       # более приоритетный канал не отвечает столько секунд — проверять его реже:
+RECHECK_SLOW=${RECHECK_SLOW:-30}          #   раз в столько секунд,
+RECHECK_MAX=${RECHECK_MAX:-60}            #   а после 10 минут — раз в столько
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
 SIM=${SIM:-/tmp/awg-sim-down}             # флаг имитации падения основного канала
 FORCEF=${FORCEF:-/run/awg-force}
@@ -1359,7 +1362,7 @@ ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
 n=$(dedup); [ "${n:-0}" -gt 0 ] &amp;&amp; log "убрано дубликатов правил iptables: $n"
 
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
-declare -A OKS QOK
+declare -A OKS QOK RDEAD RNEXT
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
 <span class="c"># сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)</span>
 ensure_tunnels
@@ -1380,7 +1383,7 @@ switch_to(){  # switch_to индекс тип сообщение
   idx=$1; fails=0; qbad=0; both_flag=0; epoch last_sw
   set_active "$idx"                      # сначала маршрут на новый туннель, потом сброс записей: иначе они тут же создадутся заново
   [ "$idx" != "$prev" ] &amp;&amp; ct_flush "$old"
-  for k in "${!TUNS[@]}"; do OKS[$k]=0; done
+  for k in "${!TUNS[@]}"; do OKS[$k]=0; RDEAD[$k]=0; RNEXT[$k]=0; done
   ev "$2" "$3"
 }
 
@@ -1437,7 +1440,9 @@ while true; do
 <span class="c">    # ---- возврат на более приоритетный ----</span>
     for ((k=0; k&lt;idx; k++)); do
       t=${TUNS[$k]}
+      [ "${OKS[$k]}" = 0 ] &amp;&amp; [ "$now" -lt "${RNEXT[$k]:-0}" ] &amp;&amp; continue    # давно лежит — проверяем реже (ниже)
       if check "$t" &amp;&amp; [ "${QOK[$k]}" = 1 ]; then
+        RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] &amp;&amp; { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
           if [ "$k" -eq 0 ]; then log "ВОЗВРАТ на основной канал $t"; else log "возврат на более приоритетный канал $t"; fi
@@ -1446,6 +1451,12 @@ while true; do
       else
         [ "${OKS[$k]}" != 0 ] &amp;&amp; log "$t снова сбоит, отсчёт возврата сброшен"
         OKS[$k]=0
+<span class="c">        # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз</span>
+<span class="c">        # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож</span>
+<span class="c">        # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.</span>
+        [ "${RDEAD[$k]:-0}" = 0 ] &amp;&amp; RDEAD[$k]=$now
+        if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+        elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
       fi
     done
   fi
@@ -1458,7 +1469,7 @@ while true; do
     last_q=$now
     active=${TUNS[$idx]}
     if probe "$active"; then qbad=$((qbad+1)); else qbad=0; fi
-    for ((k=0; k&lt;idx; k++)); do probe "${TUNS[$k]}" &amp;&amp; QOK[$k]=0 || QOK[$k]=1; done
+    for ((k=0; k&lt;idx; k++)); do [ "$now" -lt "${RNEXT[$k]:-0}" ] &amp;&amp; continue; probe "${TUNS[$k]}" &amp;&amp; QOK[$k]=0 || QOK[$k]=1; done
     if [ $qbad -ge "$QUALITY_FAILS" ] &amp;&amp; [ $(( now - last_sw )) -ge "$MIN_DWELL" ]; then
       for k in "${!TUNS[@]}"; do
         [ "$k" = "$idx" ] &amp;&amp; continue
@@ -1488,7 +1499,7 @@ while true; do
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 515 строк">Показать целиком · 515 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 526 строк">Показать целиком · 526 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR

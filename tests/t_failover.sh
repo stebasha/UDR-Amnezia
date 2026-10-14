@@ -138,6 +138,17 @@ FP4=$!; sleep 2; : > $T/inodes
 for _ in $(seq 12); do stat -c %i $T/state2 >> $T/inodes 2>/dev/null; sleep 0.5; done
 ck "состояние без изменений: файл не переписывается каждый проход" '[ "$(sort -u $T/inodes | wc -l)" -le 2 ] && . $T/state2 && [ "$ACTIVE" = awgmain ] && [ -n "$UPDATED" ]'
 kill -TERM $FP4; wait $FP4 2>/dev/null
+# ---- давно лежащий основной канал проверяется реже (1.7.1): проход не растягивается на проверки мёртвого туннеля
+S4=$T/s4; mkdir -p $S4/up $S4/links $S4/loss $S4/rtt $T/dd4; touch $S4/up/awgbackup $S4/links/awgmain $S4/links/awgbackup
+printf 'TABLE=192\nMARK=0x7e0000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=no\n' > $T/dd4/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd4/up.sh; chmod +x $T/dd4/up.sh
+STUB=$S4 DD=$T/dd4 AWG_SYSNET=$S4/links STATEF=$T/st4 FORCEF=$T/f4 INTERVAL=1 FAIL_MAX=2 RECHECK_AFTER=2 RECHECK_SLOW=30 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P4=$!; sleep 7
+c1=$(grep -c -x awgmain $S4/curl.log); sleep 6; c2=$(grep -c -x awgmain $S4/curl.log)
+ck "основной лежит дольше RECHECK_AFTER: за 6 с не больше одной проверки (запросов HTTPS: $((c2 - c1)))" '. $T/st4; [ "$ACTIVE" = awgbackup ] && [ $((c2 - c1)) -le 3 ]'
+rm -f $S4/up/awgbackup; : > $S4/curl.log; sleep 5
+ck "при этом падение запасного замечается без задержки" 'grep -q "|both|" $T/dd4/events.log'
+kill -TERM $P4; wait $P4 2>/dev/null
 # ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
 # время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
 # в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.

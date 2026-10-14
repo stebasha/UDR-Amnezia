@@ -117,6 +117,9 @@ MIN_DWELL=${MIN_DWELL:-120}               # после любого перекл
 TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
+RECHECK_AFTER=${RECHECK_AFTER:-120}       # более приоритетный канал не отвечает столько секунд — проверять его реже:
+RECHECK_SLOW=${RECHECK_SLOW:-30}          #   раз в столько секунд,
+RECHECK_MAX=${RECHECK_MAX:-60}            #   а после 10 минут — раз в столько
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
 SIM=${SIM:-/tmp/awg-sim-down}             # флаг имитации падения основного канала
 FORCEF=${FORCEF:-/run/awg-force}
@@ -382,7 +385,7 @@ ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
 n=$(dedup); [ "${n:-0}" -gt 0 ] && log "убрано дубликатов правил iptables: $n"
 
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
-declare -A OKS QOK
+declare -A OKS QOK RDEAD RNEXT
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
 # сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)
 ensure_tunnels
@@ -403,7 +406,7 @@ switch_to(){  # switch_to индекс тип сообщение
   idx=$1; fails=0; qbad=0; both_flag=0; epoch last_sw
   set_active "$idx"                      # сначала маршрут на новый туннель, потом сброс записей: иначе они тут же создадутся заново
   [ "$idx" != "$prev" ] && ct_flush "$old"
-  for k in "${!TUNS[@]}"; do OKS[$k]=0; done
+  for k in "${!TUNS[@]}"; do OKS[$k]=0; RDEAD[$k]=0; RNEXT[$k]=0; done
   ev "$2" "$3"
 }
 
@@ -460,7 +463,9 @@ while true; do
     # ---- возврат на более приоритетный ----
     for ((k=0; k<idx; k++)); do
       t=${TUNS[$k]}
+      [ "${OKS[$k]}" = 0 ] && [ "$now" -lt "${RNEXT[$k]:-0}" ] && continue    # давно лежит — проверяем реже (ниже)
       if check "$t" && [ "${QOK[$k]}" = 1 ]; then
+        RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] && { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
           if [ "$k" -eq 0 ]; then log "ВОЗВРАТ на основной канал $t"; else log "возврат на более приоритетный канал $t"; fi
@@ -469,6 +474,12 @@ while true; do
       else
         [ "${OKS[$k]}" != 0 ] && log "$t снова сбоит, отсчёт возврата сброшен"
         OKS[$k]=0
+        # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз
+        # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож
+        # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.
+        [ "${RDEAD[$k]:-0}" = 0 ] && RDEAD[$k]=$now
+        if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+        elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
       fi
     done
   fi
@@ -481,7 +492,7 @@ while true; do
     last_q=$now
     active=${TUNS[$idx]}
     if probe "$active"; then qbad=$((qbad+1)); else qbad=0; fi
-    for ((k=0; k<idx; k++)); do probe "${TUNS[$k]}" && QOK[$k]=0 || QOK[$k]=1; done
+    for ((k=0; k<idx; k++)); do [ "$now" -lt "${RNEXT[$k]:-0}" ] && continue; probe "${TUNS[$k]}" && QOK[$k]=0 || QOK[$k]=1; done
     if [ $qbad -ge "$QUALITY_FAILS" ] && [ $(( now - last_sw )) -ge "$MIN_DWELL" ]; then
       for k in "${!TUNS[@]}"; do
         [ "$k" = "$idx" ] && continue
