@@ -575,7 +575,8 @@ check(){
 }
 
 case "${1:-run}" in
-  run)       trap 'exit 0' TERM INT; exec {SLEEPFD}<> <(:); while :; do apply; read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null; done;;
+  run)       STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}<> <(:)    # сигнал — флажок (см. failover.sh)
+             while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null; done; exit 0;;
   apply)     rm -f "$HASHF" "$SLOWF.ts" /tmp/awg-self.legacy-checked; apply;;   # ручной запуск всегда пересобирает цепочку
   reconnect) reconnect;;
   remove)    remove;;

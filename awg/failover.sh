@@ -367,7 +367,12 @@ ct_flush(){  # ct_flush ТУННЕЛЬ — сбросить записи conntra
 index_of(){ local k; for k in "${!TUNS[@]}"; do [ "${TUNS[$k]}" = "$1" ] && { echo "$k"; return 0; }; done; return 1; }
 
 [ "$1" = cleanup ] && { cleanup "$2"; exit 0; }
-trap 'cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0' INT TERM
+# сигнал только ставит флажок, остановка — в основном цикле. Обработчик, запущенный посреди «read -t» (паузы), bash
+# прерывает, когда истекает время паузы: при длинной уборке сторож не завершался (уборка обрывалась после записи в журнал,
+# дальше шёл обычный цикл) — systemd ждал 90 с и убивал его
+STOP=""
+trap 'STOP=1' INT TERM
+stop_now(){ cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0; }
 
 # kill switch сразу, ещё до паузы и проверок: пока маршрута в туннель нет, трафик PBR не уйдёт в WAN
 ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
@@ -404,6 +409,7 @@ switch_to(){  # switch_to индекс тип сообщение
 
 exec {SLEEPFD}<> <(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
 while true; do
+  [ -n "$STOP" ] && stop_now
   ensure_tunnels
   prepare
   epoch now
@@ -501,5 +507,6 @@ while true; do
     fi
   fi
   write_state
+  [ -n "$STOP" ] && stop_now
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2>/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done

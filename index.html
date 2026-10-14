@@ -1344,7 +1344,12 @@ ct_flush(){  # ct_flush ТУННЕЛЬ — сбросить записи conntra
 index_of(){ local k; for k in "${!TUNS[@]}"; do [ "${TUNS[$k]}" = "$1" ] &amp;&amp; { echo "$k"; return 0; }; done; return 1; }
 
 [ "$1" = cleanup ] &amp;&amp; { cleanup "$2"; exit 0; }
-trap 'cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0' INT TERM
+<span class="c"># сигнал только ставит флажок, остановка — в основном цикле. Обработчик, запущенный посреди «read -t» (паузы), bash</span>
+<span class="c"># прерывает, когда истекает время паузы: при длинной уборке сторож не завершался (уборка обрывалась после записи в журнал,</span>
+<span class="c"># дальше шёл обычный цикл) — systemd ждал 90 с и убивал его</span>
+STOP=""
+trap 'STOP=1' INT TERM
+stop_now(){ cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0; }
 
 <span class="c"># kill switch сразу, ещё до паузы и проверок: пока маршрута в туннель нет, трафик PBR не уйдёт в WAN</span>
 ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
@@ -1381,6 +1386,7 @@ switch_to(){  # switch_to индекс тип сообщение
 
 exec {SLEEPFD}&lt;&gt; &lt;(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
 while true; do
+  [ -n "$STOP" ] &amp;&amp; stop_now
   ensure_tunnels
   prepare
   epoch now
@@ -1478,10 +1484,11 @@ while true; do
     fi
   fi
   write_state
+  [ -n "$STOP" ] &amp;&amp; stop_now
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 508 строк">Показать целиком · 508 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 515 строк">Показать целиком · 515 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1800,7 +1807,8 @@ check(){
   return $rc
 }
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; exec {SLEEPFD}&lt;&gt; &lt;(:); while :; do apply; read -r -t 5 -u "$SLEEPFD" _ 2&gt;/dev/null; done;;
+  run)    STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}&lt;&gt; &lt;(:)       # сигнал — флажок (см. failover.sh)
+          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] &amp;&amp; read -r -t 5 -u "$SLEEPFD" _ 2&gt;/dev/null; done; exit 0;;
   apply)  apply;;
   remove) load; EXTRA_SUBNETS=""; cleanup;;
   check)  check;;
@@ -1808,7 +1816,7 @@ case "${1:-run}" in
   *)      echo "использование: $0 [run|apply|remove|check|status]"; exit 1;;
 esac
 EOF
-chmod 755 /data/awg/subnets.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 124 строк">Показать целиком · 124 строк</button></figure>
+chmod 755 /data/awg/subnets.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 125 строк">Показать целиком · 125 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-subnets.service &lt;&lt;'EOF'
 [Unit]
 Description=AWG: route VPN-server subnets (WireGuard Server, Teleport) through the tunnel

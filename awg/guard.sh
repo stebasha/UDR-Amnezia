@@ -353,13 +353,13 @@ check(){
 }
 
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; k=0; exec {SLEEPFD}<> <(:)   # пауза — read -t на канале, в который никто не пишет
-          while :; do
+  run)    STOP=""; trap 'STOP=1' TERM INT; k=0; exec {SLEEPFD}<> <(:)   # пауза — read -t на канале, в который никто не пишет
+          while [ -z "$STOP" ]; do      # сигнал — флажок: выход из обработчика посреди read -t bash может оборвать
             apply
             # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
             if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
-            k=$((k + 1)); read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null
-          done;;
+            k=$((k + 1)); [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null
+          done; exit 0;;
   apply)  rm -f "$HASHF"; apply;;      # ручной запуск всегда пересобирает цепочки
   remove) remove;;
   check)  check;;

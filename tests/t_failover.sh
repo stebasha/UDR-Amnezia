@@ -138,5 +138,22 @@ FP4=$!; sleep 2; : > $T/inodes
 for _ in $(seq 12); do stat -c %i $T/state2 >> $T/inodes 2>/dev/null; sleep 0.5; done
 ck "состояние без изменений: файл не переписывается каждый проход" '[ "$(sort -u $T/inodes | wc -l)" -le 2 ] && . $T/state2 && [ "$ACTIVE" = awgmain ] && [ -n "$UPDATED" ]'
 kill -TERM $FP4; wait $FP4 2>/dev/null
+# ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
+# время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
+# в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.
+mkdir -p $T/slow; printf '#!/bin/bash\nsleep 1.5\n' > $T/slow/logger; chmod +x $T/slow/logger
+hung=0; nostop=0
+for i in 1 2 3; do
+  S3=$T/s3-$i; mkdir -p $S3/up $S3/links $S3/loss $S3/rtt $T/dd3-$i; touch $S3/up/awgmain $S3/links/awgmain
+  printf 'TABLE=191\nMARK=0x7c0000/0x7e0000\nMAIN=awgmain\nQUALITY=no\n' > $T/dd3-$i/awg.env
+  printf '#!/bin/bash\nexit 0\n' > $T/dd3-$i/up.sh; chmod +x $T/dd3-$i/up.sh
+  PATH=$T/slow:$PATH STUB=$S3 DD=$T/dd3-$i AWG_SYSNET=$S3/links STATEF=$T/st3-$i FORCEF=$T/f3-$i INTERVAL=1 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+  P3=$!; sleep 4.$((RANDOM % 10)); kill -TERM $P3
+  for _ in $(seq 1 16); do kill -0 $P3 2>/dev/null || break; sleep 0.5; done
+  if kill -0 $P3 2>/dev/null; then hung=$((hung + 1)); kill -9 $P3; fi
+  wait $P3 2>/dev/null
+  grep -q "|stop|" $T/dd3-$i/events.log 2>/dev/null || nostop=$((nostop + 1))
+done
+ck "остановка посреди паузы: сторож завершается и пишет stop (зависло $hung, без stop $nostop из 3)" '[ $hung = 0 ] && [ $nostop = 0 ]'
 echo "failover: провалов $fails"
 rm -rf "$T"; exit $fails
