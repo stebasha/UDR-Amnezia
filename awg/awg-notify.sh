@@ -129,31 +129,34 @@ report() {
 # ---------- реакция на строку журнала сторожа ----------
 last_both=0
 on_line() {
-  local l="$1" now title extra lastsw
+  local l="$1" now title extra lastsw rt="" evf=$EV
   now=$(date +%s)
+  # дополнительный маршрут (#22, #34): строка «… маршрут ID: …» из failover-ID.log — своя приставка, в суточную статистику
+  # основного канала не идёт
+  if [[ $l =~ ^[0-9-]+\ [0-9:]+\ маршрут\ ([a-z][a-z0-9]{0,11}):\  ]]; then rt=${BASH_REMATCH[1]}; evf=/dev/null; fi
   case "$l" in
     *ДЕГРАДАЦИЯ*)
-      echo "$now|switch" >> "$EV"
+      echo "$now|switch" >> "$evf"
       title="📉 Канал деградировал, переключение на ${l##* }"
       extra="Потери или задержка выше порога. PBR-трафик идёт через ${l##* }." ;;
     *"ПЕРЕКЛЮЧЕНИЕ вручную"*)
-      echo "$now|switch" >> "$EV"
+      echo "$now|switch" >> "$evf"
       title="🛠 Ручное переключение на ${l##* }"
       extra="Вернуть автоматический выбор: awgctl auto (или /auto боту)." ;;
     *ПЕРЕКЛЮЧЕНИЕ*)
-      echo "$now|switch" >> "$EV"
+      echo "$now|switch" >> "$evf"
       title="⚠️ Переключение на запасной канал ${l##* }"
       extra="Активный канал не проходит проверку. PBR-трафик идёт через ${l##* }." ;;
     *ВОЗВРАТ*|*"возврат на"*)
       lastsw=$(awk -F'|' '$2=="switch"{t=$1} END{print t}' "$EV" 2>/dev/null)
-      echo "$now|return" >> "$EV"
+      echo "$now|return" >> "$evf"
       title="✅ Возврат на канал ${l##* }"
       extra="PBR-трафик снова через ${l##* }."
       [ -n "$lastsw" ] && extra="$extra На запасном проработали: $(fd $((now - lastsw)))." ;;
     *"оба канала не отвечают"*|*"единственный канал"*)
-      [ $((now - last_both)) -lt 300 ] && return
-      last_both=$now
-      echo "$now|both" >> "$EV"
+      [ -z "$rt" ] && [ $((now - last_both)) -lt 300 ] && return
+      [ -z "$rt" ] && last_both=$now
+      echo "$now|both" >> "$evf"
       title="🛑 Нет рабочего канала"
       extra="PBR-трафик заблокирован (утечки в WAN нет)." ;;
     *"правило PBR профиля"*)
@@ -164,7 +167,8 @@ on_line() {
       extra="PBR-трафик снова идёт через туннель." ;;
     *) return ;;
   esac
-  sleep 4   # даём маршрутам устояться
+  sleep "${NOTIFY_SETTLE:-4}"   # даём маршрутам устояться
+  [ -n "$rt" ] && title="🔀 Маршрут $rt — ${title}"
   send "<b>${title}</b> · $H"$'\n'"$(printf '%s' "$extra" | esc)"$'\n'"<pre>$(snapshot | esc)</pre>"$'\n'"<code>$(printf '%s' "$l" | trunc 200 | esc)</code>"
 }
 
@@ -207,11 +211,14 @@ daemon() {
   [ -f "$ST" ] || save_base
   monitor & MON=$!
   trap 'kill $MON 2>/dev/null' EXIT INT TERM
-  sleep 20   # после загрузки даём туннелям подняться
+  sleep "${NOTIFY_BOOT_WAIT:-20}"   # после загрузки даём туннелям подняться
   up=$(awk '{print int($1)}' /proc/uptime)
   if [ "$up" -lt 900 ]; then t="🔄 Роутер загрузился, наблюдатель запущен"; else t="🟢 Наблюдатель awg-notify перезапущен"; fi
   send "<b>$t</b> · $H"$'\n'"<pre>$(snapshot | esc)</pre>"
-  tail -n0 -F "$LOGF" 2>/dev/null | while IFS= read -r l; do on_line "$l"; done
+  # журналы сторожа: основной и дополнительных маршрутов (routes.sh перезапускает awg-notify при их добавлении и удалении)
+  local logs=("$LOGF") f
+  for f in "$DD"/failover-*.log; do [ -f "$f" ] && logs+=("$f"); done
+  tail -q -n0 -F "${logs[@]}" 2>/dev/null | while IFS= read -r l; do on_line "$l"; done
 }
 
 case "${1:-daemon}" in
