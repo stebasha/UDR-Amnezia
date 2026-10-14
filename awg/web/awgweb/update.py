@@ -153,7 +153,7 @@ def api_update_run(h, d):
     # установщик берётся из той же версии, что и скрипты; AWG_REF фиксирует проверенный релиз (новый, вышедший между
     # проверкой и запуском, не подхватится незаметно)
     script = ('cd /; export AWG_YES=1 AWG_REPO="$1" AWG_CHANNEL="$2" AWG_BRANCH="$3" AWG_REF="$4" AWG_REF_KIND="$5"; '
-              'f=$(mktemp); if curl -fsSL -m 120 "https://raw.githubusercontent.com/$1/$4/install.sh" -o "$f" && bash -n "$f"; then '
+              'f=$(mktemp); if curl -fsSL --proto =https --proto-redir =https -m 120 "https://raw.githubusercontent.com/$1/$4/install.sh" -o "$f" && bash -n "$f"; then '
               'bash "$f" --update; rc=$?; else echo "не удалось скачать install.sh"; rc=1; fi; rm -f "$f"; echo "[код $rc]"; exit $rc')
     rc, out = run(["systemd-run", "--unit=awg-update", "--collect", "--quiet", "-p", "StandardOutput=append:" + UPD_LOG,
                    "-p", "StandardError=append:" + UPD_LOG, "/bin/bash", "-c", script, "awg-update", repo, ch, br, ref, kind], timeout=20)

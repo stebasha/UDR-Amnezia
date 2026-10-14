@@ -111,7 +111,8 @@ class TG:
                 if doc:
                     cmd += ["-F", "document=@%s" % doc]
                     for k, v in (params or {}).items():
-                        cmd += ["-F", "%s=%s" % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))]
+                        # --form-string: значение, начинающееся с @ или <, curl иначе понял бы как имя файла для отправки
+                        cmd += ["--form-string", "%s=%s" % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))]
                 else:
                     if tmp is None:
                         fd, tmp = tempfile.mkstemp(prefix=".bot-", dir=DD)

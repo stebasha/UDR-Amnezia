@@ -119,7 +119,7 @@ ship_tg(){  # ship_tg ФАЙЛ — документом администрато
   for c in "${chats[@]}"; do
     for i in "${ifs[@]}"; do
       code=$(printf 'url = "https://api.telegram.org/bot%s/sendDocument"\n' "$TG_TOKEN" | curl -4 -s -m 60 ${i:+--interface "$i"} -o /dev/null -w '%{http_code}' -K - \
-        -F "chat_id=$c" -F "document=@$1" -F "caption=💾 Резервная копия UDR-Amnezia · $(hostname) · $(date '+%F %H:%M'). Пароль — ваш пароль автокопии." 2>/dev/null)
+        --form-string "chat_id=$c" -F "document=@$1" --form-string "caption=💾 Резервная копия UDR-Amnezia · $(hostname) · $(date '+%F %H:%M'). Пароль — ваш пароль автокопии." 2>/dev/null)
       [ "$code" = 200 ] && { ok=0; break; }
     done
     [ "$code" = 200 ] || echo "Telegram: чат $c — HTTP ${code:-000}"
