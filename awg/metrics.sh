@@ -14,35 +14,39 @@ TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
 mkdir -p "$OUTD"; chmod 755 "$OUTD"
 
 collect(){
-  local t a ts rx tx act l r n
+  local t a ts rx tx act l r n now line; local -A HS=() EVC=() SV=()
   # shellcheck source=/dev/null
   [ -r "$STATEF" ] && . "$STATEF"
   act=${ACTIVE:-}
+  printf -v now '%(%s)T' -1
+  # одним вызовом: handshake всех туннелей, счётчики событий, активность служб (раз в 15 с — без лишних процессов)
+  while read -r t _ ts; do [[ $ts =~ ^[0-9]+$ ]] || continue; [ -z "${HS[$t]:-}" ] || [ "$ts" -gt "${HS[$t]}" ] && HS[$t]=$ts; done \
+    < <($AWG show all latest-handshakes 2>/dev/null)
+  while read -r n a; do EVC[$n]=$a; done < <(awk -F'|' '{c[$2]++} END{for (k in c) print k, c[k]}' "$DD/events.log" 2>/dev/null)
+  local svcs=(awg-failover) u i=0
+  for u in awg-subnets awg-self awg-guard awg-notify awg-bot; do [ -f "/etc/systemd/system/$u.service" ] && svcs+=("$u"); done
+  while read -r line; do SV[${svcs[$i]}]=$line; i=$((i + 1)); done < <(systemctl is-active "${svcs[@]}" 2>/dev/null)
   echo "# HELP awg_tunnel_up 1 если handshake свежее 180 с"
   echo "# TYPE awg_tunnel_up gauge"
   for t in $TUNS; do
-    ts=$($AWG show "$t" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}')
-    if [ -z "$ts" ] || [ "$ts" = 0 ]; then a=-1; else a=$(( $(date +%s) - ts )); fi
+    ts=${HS[$t]:-0}
+    if [ "$ts" = 0 ]; then a=-1; else a=$(( now - ts )); fi
     echo "awg_handshake_age_seconds{tunnel=\"$t\"} $a"
     [ "$a" -ge 0 ] && [ "$a" -lt 180 ] && echo "awg_tunnel_up{tunnel=\"$t\"} 1" || echo "awg_tunnel_up{tunnel=\"$t\"} 0"
-    rx=$(cat /sys/class/net/$t/statistics/rx_bytes 2>/dev/null || echo 0); tx=$(cat /sys/class/net/$t/statistics/tx_bytes 2>/dev/null || echo 0)
-    echo "awg_rx_bytes_total{tunnel=\"$t\"} $rx"
-    echo "awg_tx_bytes_total{tunnel=\"$t\"} $tx"
+    rx=0; tx=0; { read -r rx < "/sys/class/net/$t/statistics/rx_bytes"; read -r tx < "/sys/class/net/$t/statistics/tx_bytes"; } 2>/dev/null
+    echo "awg_rx_bytes_total{tunnel=\"$t\"} ${rx:-0}"
+    echo "awg_tx_bytes_total{tunnel=\"$t\"} ${tx:-0}"
     echo "awg_active{tunnel=\"$t\"} $([ "$t" = "$act" ] && echo 1 || echo 0)"
     eval "l=\${LOSS_$t:-}; r=\${RTT_$t:-}"
     [ -n "$l" ] && echo "awg_probe_loss_percent{tunnel=\"$t\"} $l"
     [ -n "$r" ] && echo "awg_probe_rtt_ms{tunnel=\"$t\"} $r"
   done
   echo "awg_forced $([ -n "$FORCED" ] && echo 1 || echo 0)"
-  for n in switch return degrade both force; do
-    echo "awg_events_total{type=\"$n\"} $(awk -F'|' -v t=$n '$2==t{c++} END{print c+0}' "$DD/events.log" 2>/dev/null)"
-  done
-  for n in awg-failover awg-subnets awg-self awg-guard awg-notify awg-bot; do
-    [ "$n" = awg-failover ] || [ -f "/etc/systemd/system/$n.service" ] && echo "awg_service_up{service=\"$n\"} $(systemctl is-active --quiet $n 2>/dev/null && echo 1 || echo 0)"
-  done
+  for n in switch return degrade both force; do echo "awg_events_total{type=\"$n\"} ${EVC[$n]:-0}"; done
+  for u in "${svcs[@]}"; do echo "awg_service_up{service=\"$u\"} $([ "${SV[$u]:-}" = active ] && echo 1 || echo 0)"; done
   echo "awg_data_free_bytes $(( $(df -Pk "$DD" 2>/dev/null | awk 'NR==2{print $4}') * 1024 ))"
-  echo "awg_state_updated_seconds_ago $(( $(date +%s) - ${UPDATED:-0} ))"
-  echo "awg_scrape_timestamp_seconds $(date +%s)"
+  echo "awg_state_updated_seconds_ago $(( now - ${UPDATED:-0} ))"
+  echo "awg_scrape_timestamp_seconds $now"
 }
 
 serve(){

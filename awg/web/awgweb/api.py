@@ -254,7 +254,8 @@ def api_settings_set(h, d):
 
 
 def api_services(h, q):
-    return {"services": {u: {"installed": svc_installed(u) or u == "awg-failover", "active": svc_active(u),
+    sv = svc_states(SERVICES)
+    return {"services": {u: {"installed": svc_installed(u) or u == "awg-failover", "active": sv[u],
                              "enabled": u in units_list(), "info": SERVICE_INFO[u],
                              "available": os.path.exists(os.path.join(DD, u + ".service"))} for u in SERVICES}}
 

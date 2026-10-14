@@ -191,11 +191,12 @@ class Sampler(threading.Thread):
     def minute(self):
         st = state()
         pt = {"t": now(), "active": st.get("ACTIVE", ""), "tun": {}, "routes": route_states()}
+        hsm = hs_all()
         with self.lock:
             for t in tunnels():
                 a = self.acc.pop(t, [0, 0, 0])
                 n = a[2] or 1
-                pt["tun"][t] = {"rx": int(a[0] / n), "tx": int(a[1] / n), "hs": hs_age(t),
+                pt["tun"][t] = {"rx": int(a[0] / n), "tx": int(a[1] / n), "hs": hsm.get(t, -1),
                                 "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, ""), "qm": st.get("QMETH_" + t, "")}
             self.hist["points"].append(pt)
             self.hist["points"] = self.hist["points"][-1440:]
@@ -345,10 +346,10 @@ def stats_from_events(days=7, route=None):
             "off_main_sec": off, "on_main_pct": round(100 - off * 100.0 / (days * 86400), 2)}
 
 
-def tunnel_info(t, e, st, active):
+def tunnel_info(t, e, st, active, hsm=None):
     cp = conf_path(t, e)
     text = read_file(cp)
-    hs = hs_age(t) if link_exists(t) else -1
+    hs = (hsm.get(t, -1) if hsm is not None else hs_age(t)) if link_exists(t) else -1
     ep = conf_get(text, "Endpoint")
     role = "main" if t == (e.get("MAIN") or "awgmain") else ("backup" if t == e.get("BACKUP") else "extra")
     up = link_exists(t)
@@ -378,9 +379,11 @@ def overview():
     tb = pbr_table_routes(table)
     m = re.search(r"^default dev (awg\S+)", tb, re.M)
     active = m.group(1) if m else ""
-    tl = [tunnel_info(t, e, st, active) for t in tunnels(e)]
-    fo = svc_active("awg-failover")
-    services = {u: {"installed": svc_installed(u) or u == "awg-failover", "active": svc_active(u), "info": SERVICE_INFO[u]}
+    hsm = hs_all()
+    tl = [tunnel_info(t, e, st, active, hsm) for t in tunnels(e)]
+    sv = svc_states(SERVICES)
+    fo = sv["awg-failover"]
+    services = {u: {"installed": svc_installed(u) or u == "awg-failover", "active": sv[u], "info": SERVICE_INFO[u]}
                 for u in SERVICES}
     wan = wan_if(e)
     alerts = []

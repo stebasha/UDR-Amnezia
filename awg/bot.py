@@ -338,7 +338,7 @@ def scr_tunnel(chat, name):
 
 def routes_list():
     try:
-        return [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+        return P.routes_brief(extra_only=True)
     except Exception as ex:
         log("маршруты: %r" % ex)
         return []
@@ -811,8 +811,11 @@ def monitor():
             for c in h["checks"]:
                 if c["level"] in ("warn", "crit"):
                     cur["sys:" + c["key"]] = (c["level"], "%s %s%s" % (LV[c["level"]], c["text"], "\n↳ " + c["advice"] if c["advice"] else ""))
-            for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify", "awg-ha"):
-                if P.svc_installed(u) and u in P.units_list() and not P.svc_active(u):
+            watch = [u for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify", "awg-ha")
+                     if P.svc_installed(u) and u in P.units_list()]
+            sv = P.svc_states(watch) if watch else {}
+            for u in watch:
+                if not sv.get(u):
                     cur["svc:" + u] = ("warn", "🛑 Служба %s остановлена" % u)
             for s in P.env().get("EXTRA_SUBNETS", "").split():
                 rc, out = P.run(["ip", "-4", "route", "show", "table", "all", "to", s], timeout=5)

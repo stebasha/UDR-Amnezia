@@ -244,6 +244,21 @@ def hs_age(t):
     return -1 if ts == 0 else max(0, now() - ts)
 
 
+def hs_all():
+    """Возраст handshake всех туннелей одним вызовом awg (у интерфейса с несколькими peer — самый свежий). → {имя: сек | -1}"""
+    out = run([os.path.join(DD, "awg"), "show", "all", "latest-handshakes"], timeout=5)[1]
+    res = {}
+    for line in out.splitlines():
+        p = line.split()
+        if len(p) < 3 or not p[2].isdigit():
+            continue
+        ts = int(p[2])
+        age = -1 if ts == 0 else max(0, now() - ts)
+        if p[0] not in res or (age >= 0 and (res[p[0]] < 0 or age < res[p[0]])):
+            res[p[0]] = age
+    return res
+
+
 def awg_show(t, what):
     rc, out = run([os.path.join(DD, "awg"), "show", t, what], timeout=5)
     return out.strip() if rc == 0 else ""
@@ -266,6 +281,15 @@ def state():
 
 def svc_active(u):
     return run(["systemctl", "is-active", "--quiet", u], timeout=5)[0] == 0
+
+
+def svc_states(units):
+    """Активность нескольких служб одним вызовом systemctl (по строке на службу, в том же порядке). → {служба: bool}"""
+    units = list(units)
+    out = run(["systemctl", "is-active"] + units, timeout=8)[1].split()
+    if len(out) != len(units):          # непривычный ответ — по одной, как раньше
+        return {u: svc_active(u) for u in units}
+    return {u: out[i] == "active" for i, u in enumerate(units)}
 
 
 def svc_installed(u):

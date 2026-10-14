@@ -1,4 +1,5 @@
 #!/bin/bash
 S=${STUB:?}
-case "$1" in is-active) shift; [ "$1" = --quiet ] && shift; [ -e "$S/svc/$1" ] && { echo active; exit 0; } || { echo inactive; exit 3; };; esac
+case "$1" in is-active) shift; q=0; [ "$1" = --quiet ] && { q=1; shift; }
+  rc=0; for u in "$@"; do if [ -e "$S/svc/$u" ]; then [ $q = 1 ] || echo active; else [ $q = 1 ] || echo inactive; rc=3; fi; done; exit $rc;; esac
 exit 0

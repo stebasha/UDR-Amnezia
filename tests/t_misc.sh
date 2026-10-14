@@ -113,4 +113,11 @@ printf '{"ok":true,"result":[{"update_id":7,\n"message":{"message_id":5,"from":{
 ck "бот: chat id разбирается (python3)" '[ "$(bash -c "source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
 ck "бот: chat id разбирается без python3" '[ "$(bash -c "command(){ [ \"\$2\" = python3 ] && return 1; builtin command \"\$@\"; }; source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
 rm -f "$BJ"
+# метрики (1.7.1): один вызов awg/systemctl/awk на сбор, вывод — как раньше
+MD=$T/mdd; mkdir -p "$MD" "$STUB/hs" "$STUB/svc"; echo 30 > "$STUB/hs/awgmain"; touch "$STUB/svc/awg-failover"
+printf 'MAIN=awgmain\nBACKUP=awgbackup\nTABLE=178\n' > "$MD/awg.env"; ln -sf "$H/stubs5/awg" "$MD/awg"
+printf 'ACTIVE=awgmain\nFORCED=\nUPDATED=1\nLOSS_awgmain=0\nRTT_awgmain=41\n' > "$T/mstate"
+printf '1|switch|a\n2|switch|b\n3|return|c\n' > "$MD/events.log"
+mo=$(DD=$MD STATEF=$T/mstate PATH="$H/stubs5:$PATH" bash "$COMP/metrics.sh" once)
+ck "метрики: handshake, активный канал, события, служба" 'echo "$mo" | grep -qx "awg_handshake_age_seconds{tunnel=\"awgmain\"} 30" && echo "$mo" | grep -qx "awg_tunnel_up{tunnel=\"awgbackup\"} 0" && echo "$mo" | grep -qx "awg_active{tunnel=\"awgmain\"} 1" && echo "$mo" | grep -qx "awg_events_total{type=\"switch\"} 2" && echo "$mo" | grep -qx "awg_service_up{service=\"awg-failover\"} 1"'
 echo "misc: провалов $fails"; [ $fails = 0 ]

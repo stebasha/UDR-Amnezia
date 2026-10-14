@@ -188,7 +188,7 @@ def overview():
     """Состояние для HA: как в панели, плюс дополнительные маршруты."""
     ov = P.overview()
     try:
-        ov["routes"] = [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+        ov["routes"] = P.routes_brief(extra_only=True)
     except Exception as ex:   # маршруты — не повод не публиковать остальное
         log("маршруты: %s" % ex)
         ov["routes"] = []
