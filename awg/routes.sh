@@ -48,7 +48,7 @@ check_tunnels(){  # check_tunnels "Т1 Т2…" → CT_OUT (нормализов�
   [ $n -ge 1 ] && [ $n -le 6 ] || die "туннелей в маршруте: от 1 до 6"
   CT_OUT=${out# }
 }
-check_label(){ [ ${#1} -le 40 ] && [[ ! $1 =~ [\"\'\`\$\\\<\>\&] ]] || die "недопустимые символы в названии"; }
+check_label(){ [ ${#1} -le 40 ] && [[ ! $1 =~ [\"\'\`\$\\\<\>\&] ]] && [[ ! $1 =~ [[:cntrl:]] ]] || die "недопустимые символы в названии"; }
 env_put(){  # env_put КЛЮЧ ЗНАЧЕНИЕ — в awg.env
   local f=$DD/awg.env
   if grep -q "^$1=" "$f" 2>/dev/null; then
