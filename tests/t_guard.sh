@@ -17,6 +17,8 @@ DIRECT_SUBNETS="10.99.0.0/16"
 EXTRA_SUBNETS="192.168.3.0/24"
 ENV
 G="bash $COMP/guard.sh"
+ck "служба не включена — check: INFO, не FAIL" '$G check | grep -q "^INFO   awg-guard не включён" && ! $G check | grep -q "^FAIL"'
+echo awg-guard > $DD/.units
 # имитируем UniFi: в mangle PREROUTING уже есть её переход
 iptables -t mangle -A PREROUTING -j UBIOS_PREROUTING_PBR
 $G apply

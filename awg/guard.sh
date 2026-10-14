@@ -160,6 +160,11 @@ check(){
   load
   local rc=0 w
   [ -n "$MARK" ] || { echo "FAIL   нет MARK в awg.env (запустите awg-detect.sh)"; return 1; }
+  # служба не включена — её правил и не должно быть: это не сбой, а выбор (защита — только blackhole в таблице PBR)
+  if ! grep -qx awg-guard "$DD/.units" 2>/dev/null && ! systemctl is-active --quiet awg-guard 2>/dev/null; then
+    echo "INFO   awg-guard не включён: от утечек защищает только blackhole в таблице PBR (вторая линия — «Маршрутизация → Защита от утечек»)"
+    return 0
+  fi
   if [ "$LEAK_GUARD" = yes ]; then
     if iptables -S FORWARD 2>/dev/null | grep '^-A' | head -n1 | grep -q -- "-j $CF"; then echo "OK     IPv4: цепочка $CF стоит первой в FORWARD (помеченный трафик в WAN не выпускается)"
     else echo "FAIL   IPv4: цепочка $CF не стоит первой в FORWARD (служба awg-guard запущена?)"; rc=1; fi
