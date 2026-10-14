@@ -50,6 +50,16 @@ ck "forget: правила awgmain целы" '[ "$(cnt nat "-A POSTROUTING -o aw
     [ "$(cnt "${r%%|*}" "-A ${r#*|}")" = 1 ] || exit 1
   done ) && r=0 || r=1
 ck "сторож: правила туннеля — по одному после двух проходов (сверка по цепочкам)" '[ $r = 0 ]'
+# --- route_ok по формату настоящего роутера (job25): «scope link metric 5 » с пробелом в конце; metric 50 — не metric 5
+( source <(sed -n '/^route_ok(){/,/^}/p' "$COMP/failover.sh")
+  TABLE=178; METRIC=5; TUNS=(awgmain awgbackup)
+  ip(){ printf '%s\n' "${RT[@]}"; }
+  RT=("default dev awgbackup scope link metric 5 " "blackhole default metric 200 "); route_ok awgbackup || exit 1
+  RT=("default dev awgbackup scope link metric 50 " "blackhole default metric 200 "); route_ok awgbackup && exit 2
+  RT=("default dev awgbackup scope link metric 5 " "default dev awgmain scope link metric 7 " "blackhole default metric 200 "); route_ok awgbackup && exit 3
+  RT=("default dev awgbackup scope link metric 5"); route_ok awgbackup && exit 4
+  exit 0 ) && r=0 || r=$?
+ck "сторож: «таблица уже верная» — формат роутера, metric 50 и чужой туннель не считаются (код $r)" '[ $r = 0 ]'
 # --- guard: занятая блокировка не ломает цепочки и не плодит переходы
 bash "$COMP/guard.sh" apply
 ck "guard: один переход в FORWARD" '[ "$(cnt filter "-A FORWARD -j AWG_GUARD")" = 1 ]'

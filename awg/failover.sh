@@ -301,7 +301,7 @@ route_ok(){  # таблица PBR уже такая, как нужно: марш
   cur=$(ip -4 route show table "$TABLE" 2>/dev/null) || return 1
   while IFS= read -r l; do
     case "$l" in
-      "default dev $1 "*"metric $METRIC"*) ok_a=1;;
+      "default dev $1 "*"metric $METRIC"|"default dev $1 "*"metric $METRIC "*) ok_a=1;;   # не «metric 50» при METRIC=5
       "blackhole default"*"metric 200"*) ok_b=1;;
       "default dev "*) for j in "${TUNS[@]}"; do [[ $l == "default dev $j "* ]] && return 1; done;;
     esac
