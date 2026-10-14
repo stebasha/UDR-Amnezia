@@ -133,6 +133,22 @@ def up_tunnel(t, timeout=60, wait=30):
         return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
 
 
+def url_origin(u):
+    """(схема, узел, порт) адреса: сохранённый секрет (токен, заголовок) идёт только туда же, куда шёл раньше."""
+    try:
+        x = urllib.parse.urlparse(str(u or ""))
+        return (x.scheme.lower(), (x.hostname or "").lower(), x.port or {"https": 443, "http": 80}.get(x.scheme.lower()))
+    except ValueError:
+        return ("", "", None)
+
+
+def keep_secret(old_url, new_url, what):
+    """Прежний секрет можно оставить, только если адрес ведёт туда же (схема, узел, порт). Иначе — ввести заново:
+    смена адреса с сохранённым токеном отправила бы его на новый узел (украденная сессия панели → чужой сервер)."""
+    if url_origin(old_url) != url_origin(new_url):
+        raise ValueError("адрес сменился: введите %s заново (прежний на другой узел не отправляется)" % what)
+
+
 def parse_env_text(text):
     res = {}
     for line in text.splitlines():

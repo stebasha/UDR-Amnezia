@@ -135,5 +135,29 @@ except ValueError as ex:
 check("3x-ui: переадресация на другой хост — отказ, токен не отправлен", away and not any(x[1] == "/steal" for x in SEEN), SEEN)
 check("3x-ui: переадресация на тот же хост работает", XU.xui_req("GET", "/same", p=pp) == 7, SEEN)
 srv.shutdown()
+# сохранённый секрет (заголовок вебхука, токен ntfy, токен 3x-ui) не уходит на новый узел без повторного ввода
+check("keep_secret: тот же узел, другой путь — можно", not raises(C.keep_secret, "https://h.example/a", "https://h.example/b", "x"))
+check("keep_secret: другой узел, схема или порт — нельзя", raises(C.keep_secret, "https://h.example/a", "https://evil.example/a", "x")
+      and raises(C.keep_secret, "https://h.example/a", "http://h.example/a", "x") and raises(C.keep_secret, "https://h.example/a", "https://h.example:8443/a", "x"))
+import awgweb.server as S  # noqa: E402
+
+
+class FakeH:
+    user = "admin"
+
+    def act(self, *a):
+        pass
+
+
+open(C.HOOKS_F, "w").write('HOOK_URL="https://hooks.example/abc"\nHOOK_HEADER="X-Key: s3cret"\nNTFY_URL="https://ntfy.example/t"\nNTFY_TOKEN="tk_1"\n')
+check("вебхук: новый узел без заголовка — отказ, файл не тронут", raises(S.api_hooks_set, FakeH(), {"hook": "https://evil.example/x", "ntfy": "https://ntfy.example/t"})
+      and "hooks.example" in C.read_file(C.HOOKS_F))
+check("ntfy: новый узел без токена — отказ", raises(S.api_hooks_set, FakeH(), {"ntfy": "https://evil.example/t"}))
+json_db = '{"panels": {"p1": {"label": "x", "url": "https://xui.example:2053/p", "token": "tokentoken1", "insecure": false, "host": ""}}, "tunnels": {}}'
+open(S.XUI_DB_F, "w").write(json_db)
+check("3x-ui: новый адрес без токена — отказ, токен не перенесён", raises(S.api_xui_set, FakeH(), {"id": "p1", "url": "https://evil.example:2053/p"})
+      and S.xui_db()["panels"]["p1"]["url"] == "https://xui.example:2053/p")
+check("3x-ui: тот же узел — прежний токен остаётся", S.api_xui_set(FakeH(), {"id": "p1", "url": "https://xui.example:2053/p2"})["ok"]
+      and S.xui_db()["panels"]["p1"]["token"] == "tokentoken1")
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

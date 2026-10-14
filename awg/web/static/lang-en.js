@@ -1086,6 +1086,7 @@ window.AWG_EN = {
     [/^✔ маршрут (\S+): профиль (\S+) → (.*) \(сторож (\S+)\)$/, "✔ route $1: profile $2 → $3 (watchdog $4)"],
     [/^✔ маршрут (\S+) убран: .*$/, "✔ route $1 removed: traffic of its UniFi profile goes as without the kit"],
     [/^маршрут (\S+): автоматический выбор$/, "route $1: automatic selection"],
-    [/^маршрут (\S+): выбран (\S+) .*$/, "route $1: $2 selected (the watchdog switches if the channel responds)"]
+    [/^маршрут (\S+): выбран (\S+) .*$/, "route $1: $2 selected (the watchdog switches if the channel responds)"],
+    [/^адрес сменился: введите (заголовок вебхука|токен ntfy|API-токен 3x-ui) заново.*$/, "the address has changed: enter the secret again (the saved one is not sent to a different host)"]
   ]
 };

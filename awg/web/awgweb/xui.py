@@ -327,7 +327,10 @@ def api_xui_set(h, d):
         url = str(d.get("url", "")).strip().rstrip("/")
         if not XUI_URL_RE.match(url):
             raise ValueError("адрес 3x-ui: https://узел:порт/секретный-путь (как в браузере, без /panel)")
-        tok = str(d.get("token", "")).strip() or old.get("token", "")
+        tok = str(d.get("token", "")).strip()
+        if not tok and old.get("token"):
+            keep_secret(old.get("url", ""), url, "API-токен 3x-ui")
+            tok = old["token"]
         if not XUI_TOKEN_RE.match(tok):
             raise ValueError("API-токен 3x-ui: возьмите в 3x-ui («Учетная запись → Токен API», область admin) и вставьте целиком")
         host = str(d.get("host", "")).strip()
