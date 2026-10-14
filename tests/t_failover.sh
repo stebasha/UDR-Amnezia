@@ -170,6 +170,21 @@ STUB=$S5 DD=$T/dd5 AWG_SYSNET=$S5/links STATEF=$T/st5 FORCEF=$T/f5 INTERVAL=1 QU
 P5=$!; sleep 7; kill -TERM $P5; wait $P5 2>/dev/null
 np=$(grep -c -x awgmain $S5/ping.log 2>/dev/null)
 ck "ICMP закрыт, TCP работает: пробы по TCP, ping — дважды для уверенности, а не каждую пробу (ping: $np)" '[ "${np:-0}" -le 2 ]'
+# ---- бюджет процессов (1.7.1): в обычном проходе сторож запускает не больше 8 внешних команд (в 1.7.0 — ~27).
+# Обёртки в начале PATH считают каждый запуск и передают его настоящей команде (или заглушке).
+SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
+for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables curl ping logger conntrack flock md5sum; do
+  printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \
+    "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
+done
+chmod +x $SH/*
+S7=$T/s7; mkdir -p $S7/up $S7/links $S7/loss $S7/rtt $T/dd7; for i in awgmain awgbackup; do touch $S7/up/$i $S7/links/$i; done
+printf 'TABLE=195\nMARK=0x740000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=no\n' > $T/dd7/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd7/up.sh; chmod +x $T/dd7/up.sh
+mkdir -p $T/ipt7; ln -sf "$HERE/stubs2/iptables" $T/ipt7/iptables; ln -sf "$HERE/stubs2/iptables" $T/ipt7/ip6tables   # iptables с состоянием
+PATH=$SH:$T/ipt7:$PATH STUB=$S7 DD=$T/dd7 AWG_SYSNET=$S7/links STATEF=$T/st7 FORCEF=$T/f7 INTERVAL=1 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P7=$!; sleep 5; : > $CNT; sleep 10; n7=$(grep -c . $CNT); kill -TERM $P7; wait $P7 2>/dev/null
+ck "обычный проход: не больше 8 внешних команд (за 10 проходов: $n7; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$n7" -le 80 ]'
 # ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
 # время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
 # в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.
