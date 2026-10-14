@@ -149,6 +149,14 @@ ck "основной лежит дольше RECHECK_AFTER: за 6 с не бо�
 rm -f $S4/up/awgbackup; : > $S4/curl.log; sleep 5
 ck "при этом падение запасного замечается без задержки" 'grep -q "|both|" $T/dd4/events.log'
 kill -TERM $P4; wait $P4 2>/dev/null
+# ---- ICMP через туннель не ходит, TCP ходит: пробы качества — по TCP, без пяти пингов каждый раз (1.7.1)
+S5=$T/s5; mkdir -p $S5/up $S5/links $S5/loss $S5/rtt $S5/noicmp $T/dd5; for i in awgmain awgbackup; do touch $S5/up/$i $S5/links/$i $S5/noicmp/$i; done
+printf 'TABLE=193\nMARK=0x780000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=yes\n' > $T/dd5/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd5/up.sh; chmod +x $T/dd5/up.sh
+STUB=$S5 DD=$T/dd5 AWG_SYSNET=$S5/links STATEF=$T/st5 FORCEF=$T/f5 INTERVAL=1 QUALITY_INTERVAL=1 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P5=$!; sleep 7; kill -TERM $P5; wait $P5 2>/dev/null
+np=$(grep -c -x awgmain $S5/ping.log 2>/dev/null)
+ck "ICMP закрыт, TCP работает: пробы по TCP, ping — дважды для уверенности, а не каждую пробу (ping: $np)" '[ "${np:-0}" -le 2 ]'
 # ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
 # время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
 # в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.

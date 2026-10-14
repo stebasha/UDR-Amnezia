@@ -202,9 +202,14 @@ probe_tcp(){
   [ $n -gt 0 ] || n=1
   QLOSS[$i]=$(( (n-ok)*100/n )); QRTT[$i]=0; [ $ok -gt 0 ] && QRTT[$i]=$(( sum/ok )); QMETH[$i]=tcp
 }
+declare -A ICMP_OFF ICMP_MISS
 probe(){
-  local i=$1 out l r
-  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] || [ "${QMETH[$i]:-icmp}" = icmp ]; then
+  local i=$1 out l r now
+  epoch now
+  # ICMP через этот туннель не ходит, а TCP ходит — 5 пингов (~2,5 с) каждую пробу не тратим полчаса
+  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] && [ "$now" -lt "${ICMP_OFF[$i]:-0}" ]; then
+    probe_tcp "$i"
+  else
     out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2>/dev/null)
     l=$(echo "$out" | awk '/packet loss/{for(k=1;k<=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
     r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
@@ -213,8 +218,22 @@ probe(){
   fi
   if [ "${ICMP_SEEN[$i]:-0}" = 1 ]; then
     QLOSS[$i]=$l; QRTT[$i]=${r:-0}; QMETH[$i]=icmp
-  else
+    # ICMP раньше ходил, а теперь не ходит совсем — сначала TCP: оператор мог закрыть ICMP, а канал жив
+    if [ "$l" = 100 ]; then
+      probe_tcp "$i"
+      if [ "${QLOSS[$i]}" -lt 100 ]; then
+        # дважды подряд: ICMP нет, TCP есть — оператор закрыл ICMP; один раз — мог просто ожить канал между пробами
+        ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+        [ "${ICMP_MISS[$i]}" -ge 2 ] && { ICMP_SEEN[$i]=0; ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+      else QLOSS[$i]=100; QRTT[$i]=0; QMETH[$i]=icmp; fi      # не отвечает ничего — канал лежит, метод остаётся ICMP
+    else ICMP_MISS[$i]=0
+    fi
+  elif [ "$now" -ge "${ICMP_OFF[$i]:-0}" ]; then
     probe_tcp "$i"; l=${QLOSS[$i]}
+    if [ "${QLOSS[$i]}" -lt 100 ]; then
+      ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+      [ "${ICMP_MISS[$i]}" -ge 2 ] && { ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+    fi
   fi
   [ "${QLOSS[$i]}" -ge "$QUALITY_LOSS" ] && return 0
   [ "$QUALITY_RTT" -gt 0 ] && [ "${QRTT[$i]}" -ge "$QUALITY_RTT" ] && return 0

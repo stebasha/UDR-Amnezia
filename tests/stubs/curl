@@ -1,5 +1,7 @@
 #!/bin/bash
 S=${STUB:?}
-i=""; while [ $# -gt 0 ]; do [ "$1" = --interface ] && i=$2; shift; done
+i=""; w=""; while [ $# -gt 0 ]; do case "$1" in --interface) i=$2;; -w) w=$2;; esac; shift; done
 echo "$i" >> "$S/curl.log"
-if [ -e "$S/up/$i" ]; then printf 200; else printf 000; exit 28; fi
+# -w '%{time_connect}' (пробы качества) — время в секундах, как у настоящего curl; иначе — код HTTP
+if [ -e "$S/up/$i" ]; then [ "$w" = '%{time_connect}' ] && printf 0.020000 || printf 200
+else [ "$w" = '%{time_connect}' ] && printf 0.000000 || printf 000; exit 28; fi
