@@ -96,5 +96,44 @@ try:
 except ValueError as ex:
     bomb_ok = "слишком большая" in str(ex)
 check("vpn://: распаковка ограничена 2 МБ", bomb_ok)
+# 3x-ui: токен не уходит по переадресации на другой хост; на тот же хост — можно
+import http.server, threading as _th  # noqa: E401,E402
+import awgweb.xui as XU  # noqa: E402
+SEEN = []
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        SEEN.append((self.headers.get("Host", ""), self.path, self.headers.get("Authorization", "")))
+        if self.path == "/away":
+            self.send_response(302)
+            self.send_header("Location", "http://localhost:%d/steal" % self.server.server_port)
+            self.end_headers()
+        elif self.path == "/same":
+            self.send_response(302)
+            self.send_header("Location", "/ok")
+            self.end_headers()
+        else:
+            b = b'{"success": true, "obj": 7}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
+
+
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+_th.Thread(target=srv.serve_forever, daemon=True).start()
+pp = {"url": "http://127.0.0.1:%d" % srv.server_port, "token": "SECRET-T"}
+try:
+    XU.xui_req("GET", "/away", p=pp)
+    away = False
+except ValueError as ex:
+    away = "переадресует" in str(ex)
+check("3x-ui: переадресация на другой хост — отказ, токен не отправлен", away and not any(x[1] == "/steal" for x in SEEN), SEEN)
+check("3x-ui: переадресация на тот же хост работает", XU.xui_req("GET", "/same", p=pp) == 7, SEEN)
+srv.shutdown()
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)
