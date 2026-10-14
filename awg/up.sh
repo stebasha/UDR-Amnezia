@@ -2,11 +2,13 @@
 # up.sh — поднимает туннели AmneziaWG из конфигов в /data/awg
 #   up.sh            все туннели: MAIN, BACKUP и TUNNELS_EXTRA (из awg.env)
 #   up.sh awgmain    один туннель (интерфейс пересоздаётся; так применяют новый конфиг)
+#   up.sh --conf-of ИМЯ   имя файла конфига туннеля (для сторожа)
+# IPv6 (#23): при LEAK_V6=route IPv6-адрес из Address тоже назначается, AllowedIPs = 0.0.0.0/0, ::/0.
 # Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, <имя>.conf — дополнительные.
 DD=${DD:-/data/awg}
 cd "$DD" || exit 1
 [ -r awg.env ] && . ./awg.env
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}
 umask 077
 
 conf_of(){
@@ -41,7 +43,7 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
 }
 
 bring_up(){
-  local n=$1 conf raw tmp addr mtu
+  local n=$1 conf raw tmp addr addr6="" mtu allowed="0.0.0.0\/0"
   conf=$(conf_of "$n")
   [ -z "$conf" ] && { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
@@ -53,9 +55,13 @@ bring_up(){
   [ -z "$addr" ] && { echo "ОШИБКА: в $conf нет IPv4-адреса в строке Address"; rm -f "$raw"; return 1; }
   case "$addr" in */*) ;; *) addr=$addr/32 ;; esac
   [[ "$mtu" =~ ^[0-9]+$ ]] || mtu=1380
-  # убираем директивы wg-quick; маршрутизирует сторож, поэтому AllowedIPs = только IPv4 default
+  if [ "$LEAK_V6" = route ]; then     # IPv6 через туннель (#23): адрес IPv6 из Address, если сервер его выдал
+    addr6=$(awk -F'=' 'tolower($1) ~ /^[ \t]*address[ \t]*$/ {print $2; exit}' "$raw" | tr ',' '\n' | tr -d ' \t' | grep -m1 ':')
+    [ -n "$addr6" ] && { case "$addr6" in */*) ;; *) addr6=$addr6/128 ;; esac; allowed="0.0.0.0\/0, ::\/0"; }
+  fi
+  # убираем директивы wg-quick; маршрутизирует сторож, поэтому AllowedIPs = только default (IPv4, и IPv6 при #23)
   grep -v -i -E '^[[:space:]]*(Address|DNS|MTU|Table|PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=' "$raw" \
-    | sed -E 's/^[[:space:]]*AllowedIPs[[:space:]]*=.*/AllowedIPs = 0.0.0.0\/0/' > "$tmp"
+    | sed -E "s/^[[:space:]]*AllowedIPs[[:space:]]*=.*/AllowedIPs = $allowed/" > "$tmp"
   rm -f "$raw"
   resolve_endpoint "$tmp" "$n"
 
@@ -68,11 +74,13 @@ bring_up(){
   fi
   rm -f "$tmp"
   ip addr add "$addr" dev "$n"
+  if [ -n "$addr6" ]; then sysctl -qw "net.ipv6.conf.$n.disable_ipv6=0" 2>/dev/null; ip -6 addr add "$addr6" dev "$n" nodad 2>/dev/null; fi
   ip link set "$n" up mtu "$mtu"
   sysctl -qw "net.ipv4.conf.$n.rp_filter=0" 2>/dev/null
-  echo "$n поднят: адрес $addr, MTU $mtu, конфиг $conf"
+  echo "$n поднят: адрес $addr${addr6:+ и $addr6}, MTU $mtu, конфиг $conf"
 }
 
+if [ "$1" = --conf-of ]; then conf_of "$2"; exit 0; fi
 if [ -n "$1" ]; then bring_up "$1"; exit $?; fi
 rc=0
 bring_up "$MAIN" || rc=1

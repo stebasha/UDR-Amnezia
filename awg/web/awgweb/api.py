@@ -168,11 +168,27 @@ def api_tunnel_add(h, d):
     return {"ok": rc == 0, "msg": out.strip()}
 
 
+def routes_using(t):
+    """Дополнительные маршруты (#22), в цепочке которых есть туннель t."""
+    out = []
+    try:
+        names = sorted(os.listdir(os.path.join(DD, "route.d")))
+    except OSError:
+        names = []
+    for f in names:
+        if f.endswith(".env") and t in parse_env_text(read_file(os.path.join(DD, "route.d", f))).get("TUNNELS", "").split():
+            out.append(f[:-4])
+    return out
+
+
 def tunnel_remove(t):
     """Убрать дополнительный туннель из сторожа вместе с правилами (конфиг остаётся). Общая для API и 3x-ui."""
     e = env()
     if t not in e.get("TUNNELS_EXTRA", "").split():
         raise ValueError("удалять из панели можно только дополнительные туннели; основной и запасной — через установщик")
+    used = routes_using(t)
+    if used:
+        raise ValueError("туннель %s входит в маршрут %s: сначала уберите его оттуда («Маршруты»)" % (t, ", ".join(used)))
     with LOCK:
         env_set({"TUNNELS_EXTRA": " ".join(x for x in e.get("TUNNELS_EXTRA", "").split() if x != t)})
         if svc_active("awg-failover"):

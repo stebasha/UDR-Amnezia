@@ -1,11 +1,11 @@
   // ===================================================================== НАСТРОЙКИ
-  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['vps', T('Свой VPS')], ['xui', '3x-ui'], ['system', T('Система и обновление')]];
+  const SET_TABS = [['failover', T('Переключение')], ['services', T('Службы')], ['telegram', 'Telegram'], ['ha', 'Home Assistant'], ['users', T('Пользователи и 2FA')], ['web', T('Панель и сертификат')], ['backups', T('Резервные копии')], ['routes', T('Маршруты')], ['vps', T('Свой VPS')], ['xui', '3x-ui'], ['system', T('Система и обновление')]];
   PAGES.settings = function (main, sub) {
     const cur = SET_TABS.some((t) => t[0] === sub) ? sub : 'failover';
     add(main, [head(T('Настройки')), tabs(SET_TABS, cur, (id) => { location.hash = '#/settings/' + id; })]);
     const body = el('div', { class: 'stack' });
     main.appendChild(body);
-    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, vps: setVps, xui: setXui, system: setSystem })[cur](body);
+    ({ failover: setFailover, services: setServices, telegram: setTelegram, ha: setHa, users: setUsers, web: setWeb, backups: setBackups, routes: setRoutes, vps: setVps, xui: setXui, system: setSystem })[cur](body);
   };
   async function setFailover(body) {
     try {

@@ -45,6 +45,12 @@ echo "$out" | sed 's/^/        /'
 sed -i 's/^TUN_DOMAINS=.*/TUN_DOMAINS=""/; s/^DIRECT_DOMAINS=.*/DIRECT_DOMAINS=""/; s/^DIRECT_SUBNETS=.*/DIRECT_SUBNETS=""/' $DD/awg.env
 $G apply
 ck "домены выключены: правил маркировки нет" '! iptables -t mangle -S AWG_DOM_PRE | grep -q MARK'
+# дополнительный маршрут (#22): его метка тоже не выпускается в WAN; IPv6 через туннель (#23) — защита IPv6 остаётся
+mkdir -p $DD/route.d; printf 'RAIL_IF="wgclt2"\nMARK="0x6c0000/0x7e0000"\nTABLE="179"\nTUNNELS="awgmain"\n' > $DD/route.d/r2.env
+printf 'LEAK_V6=route\n' >> $DD/awg.env
+$G apply
+ck "маршрут r2: DROP его метки в WAN (IPv4 и IPv6)" 'iptables -S AWG_GUARD | grep -q -- "-o eth3 -m mark --mark 0x6c0000/0x7e0000 -j DROP" && ip6tables -S AWG_GUARD | grep -q -- "-o eth3 -m mark --mark 0x6c0000/0x7e0000 -j REJECT"'
+ck "IPv6 через туннель: REJECT помеченного IPv6 в WAN остаётся" 'ip6tables -S AWG_GUARD | grep -q -- "-o eth3 -m mark --mark 0x6a0000/0x7e0000 -j REJECT"'
 $G remove
 ck "remove: цепочек нет" '! iptables -S FORWARD | grep -q AWG_GUARD && ! iptables -t mangle -S PREROUTING | grep -q AWG_ && ! ip6tables -S FORWARD | grep -q AWG_GUARD'
 echo "guard: провалов $fails"; rm -rf $T; exit $fails

@@ -849,11 +849,13 @@ grep -E -c '^(Address|Endpoint|Jc)' /data/awg/main.conf</code></pre></figure>
 <span class="c"># up.sh — поднимает туннели AmneziaWG из конфигов в /data/awg</span>
 <span class="c">#   up.sh            все туннели: MAIN, BACKUP и TUNNELS_EXTRA (из awg.env)</span>
 <span class="c">#   up.sh awgmain    один туннель (интерфейс пересоздаётся; так применяют новый конфиг)</span>
+<span class="c">#   up.sh --conf-of ИМЯ   имя файла конфига туннеля (для сторожа)</span>
+<span class="c"># IPv6 (#23): при LEAK_V6=route IPv6-адрес из Address тоже назначается, AllowedIPs = 0.0.0.0/0, ::/0.</span>
 <span class="c"># Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, &lt;имя&gt;.conf — дополнительные.</span>
 DD=${DD:-/data/awg}
 cd "$DD" || exit 1
 [ -r awg.env ] &amp;&amp; . ./awg.env
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}
 umask 077
 
 conf_of(){
@@ -888,7 +890,7 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
 }
 
 bring_up(){
-  local n=$1 conf raw tmp addr mtu
+  local n=$1 conf raw tmp addr addr6="" mtu allowed="0.0.0.0\/0"
   conf=$(conf_of "$n")
   [ -z "$conf" ] &amp;&amp; { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
@@ -900,9 +902,13 @@ bring_up(){
   [ -z "$addr" ] &amp;&amp; { echo "ОШИБКА: в $conf нет IPv4-адреса в строке Address"; rm -f "$raw"; return 1; }
   case "$addr" in */*) ;; *) addr=$addr/32 ;; esac
   [[ "$mtu" =~ ^[0-9]+$ ]] || mtu=1380
-<span class="c">  # убираем директивы wg-quick; маршрутизирует сторож, поэтому AllowedIPs = только IPv4 default</span>
+  if [ "$LEAK_V6" = route ]; then     # IPv6 через туннель (#23): адрес IPv6 из Address, если сервер его выдал
+    addr6=$(awk -F'=' 'tolower($1) ~ /^[ \t]*address[ \t]*$/ {print $2; exit}' "$raw" | tr ',' '\n' | tr -d ' \t' | grep -m1 ':')
+    [ -n "$addr6" ] &amp;&amp; { case "$addr6" in */*) ;; *) addr6=$addr6/128 ;; esac; allowed="0.0.0.0\/0, ::\/0"; }
+  fi
+<span class="c">  # убираем директивы wg-quick; маршрутизирует сторож, поэтому AllowedIPs = только default (IPv4, и IPv6 при #23)</span>
   grep -v -i -E '^[[:space:]]*(Address|DNS|MTU|Table|PreUp|PostUp|PreDown|PostDown|SaveConfig)[[:space:]]*=' "$raw" \
-    | sed -E 's/^[[:space:]]*AllowedIPs[[:space:]]*=.*/AllowedIPs = 0.0.0.0\/0/' &gt; "$tmp"
+    | sed -E "s/^[[:space:]]*AllowedIPs[[:space:]]*=.*/AllowedIPs = $allowed/" &gt; "$tmp"
   rm -f "$raw"
   resolve_endpoint "$tmp" "$n"
 
@@ -915,11 +921,13 @@ bring_up(){
   fi
   rm -f "$tmp"
   ip addr add "$addr" dev "$n"
+  if [ -n "$addr6" ]; then sysctl -qw "net.ipv6.conf.$n.disable_ipv6=0" 2&gt;/dev/null; ip -6 addr add "$addr6" dev "$n" nodad 2&gt;/dev/null; fi
   ip link set "$n" up mtu "$mtu"
   sysctl -qw "net.ipv4.conf.$n.rp_filter=0" 2&gt;/dev/null
-  echo "$n поднят: адрес $addr, MTU $mtu, конфиг $conf"
+  echo "$n поднят: адрес $addr${addr6:+ и $addr6}, MTU $mtu, конфиг $conf"
 }
 
+if [ "$1" = --conf-of ]; then conf_of "$2"; exit 0; fi
 if [ -n "$1" ]; then bring_up "$1"; exit $?; fi
 rc=0
 bring_up "$MAIN" || rc=1
@@ -928,7 +936,7 @@ for t in $TUNNELS_EXTRA; do bring_up "$t" || rc=1; done
 exit $rc
 EOF
 chmod 755 /data/awg/up.sh
-/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 85 строк">Показать целиком · 85 строк</button></figure>
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 93 строк">Показать целиком · 93 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
   </div></div>
 
@@ -973,6 +981,10 @@ chmod 755 /data/awg/up.sh
 <span class="c">#   failover.sh cleanup        убрать свои маршруты из таблицы PBR</span>
 <span class="c">#   failover.sh dedup          убрать дубликаты правил iptables для туннелей awg* (накапливались у версий без -w)</span>
 <span class="c">#   failover.sh forget ИМЯ     убрать все правила iptables для интерфейса ИМЯ (туннель удалён из схемы)</span>
+<span class="c">#   failover.sh --route ID …   то же для дополнительного маршрута (#22): свой профиль VPN Client UniFi (рельса), своя</span>
+<span class="c">#                              таблица и метка PBR, своя цепочка туннелей — из route.d/ID.env (служба awg-failover-ID)</span>
+<span class="c"># IPv6 через туннель (#23, LEAK_V6=route, по желанию): IPv6 с меткой PBR — в таблицу PBR IPv6 на активный туннель,</span>
+<span class="c"># если у туннеля есть IPv6-адрес; иначе unreachable (устройство сразу переходит на IPv4). NAT66 на туннеле.</span>
 <span class="c"># Туннели по приоритету: MAIN, BACKUP, затем TUNNELS_EXTRA из awg.env. Активен один, остальные на подхвате:</span>
 <span class="c">#  - падение активного (FAIL_MAX проверок подряд) → переход на первый живой по приоритету;</span>
 <span class="c">#  - возврат на более приоритетный: он должен быть жив и «здоров» RECOVER_SEC секунд подряд;</span>
@@ -993,6 +1005,22 @@ DD=${DD:-/data/awg}
 RS_ENV=$RECOVER_SEC                # RECOVER_SEC из окружения важнее awg.env (для тестов)
 [ -r "$DD/awg.env" ] &amp;&amp; . "$DD/awg.env"
 [ -n "$RS_ENV" ] &amp;&amp; RECOVER_SEC=$RS_ENV
+LEAK_V6=${LEAK_V6:-block}
+
+<span class="c"># дополнительный маршрут (#22): своя рельса UniFi, таблица, метка и цепочка туннелей; состояние и ручной выбор — свои</span>
+ROUTE=""
+if [ "${1:-}" = --route ]; then
+  ROUTE=${2:-}; shift 2 || shift
+  [[ $ROUTE =~ ^[a-z][a-z0-9]{0,11}$ ]] &amp;&amp; [ -r "$DD/route.d/$ROUTE.env" ] || { echo "ОШИБКА: нет маршрута ${ROUTE:-?} ($DD/route.d/ID.env)"; exit 1; }
+  TABLE=""; MARK=""; PRIO=""; RAIL_IF=""; TUNNELS=""
+<span class="c">  # shellcheck disable=SC1090</span>
+  . "$DD/route.d/$ROUTE.env"
+  read -r MAIN BACKUP TUNNELS_EXTRA &lt;&lt;&lt; "$TUNNELS"
+  [ -n "$MAIN" ] || { echo "ОШИБКА: в маршруте $ROUTE нет туннелей (TUNNELS)"; exit 1; }
+  ROUTE_ONLY=""
+  STATEF=${STATEF:-/run/awg-state}-$ROUTE; FORCEF=${FORCEF:-/run/awg-force}-$ROUTE; SIM=${SIM:-/tmp/awg-sim-down}-$ROUTE
+  AWG_NO_FWCHECK=1
+fi
 
 <span class="c"># правила iptables одного туннеля (их же убирает forget). Записаны так, как их печатает «iptables -S»:</span>
 <span class="c"># тогда наличие правила проверяется по одному снимку таблицы, без отдельного вызова iptables на каждое правило.</span>
@@ -1026,12 +1054,17 @@ dedup(){
   echo "$removed"
 }
 
+<span class="c"># те же правила для IPv6 через туннель (#23): NAT66, MSS, FORWARD</span>
+ip6tables(){ command ip6tables -w 10 "$@"; }
+
 forget(){  # убрать правила интерфейса (все копии)
   local i=$1 l t r
   [ -n "$i" ] || return 1
   while IFS='|' read -r t r; do
 <span class="c">    # shellcheck disable=SC2086</span>
     for _ in 1 2 3 4 5 6 7 8 9 10; do iptables -t "$t" -D $r 2&gt;/dev/null || break; done
+<span class="c">    # shellcheck disable=SC2086</span>
+    if command -v ip6tables &gt;/dev/null; then for _ in 1 2 3 4 5 6 7 8 9 10; do ip6tables -t "$t" -D $r 2&gt;/dev/null || break; done; fi
   done &lt; &lt;(fw_rules "$i")
   for _ in 1 2 3 4 5 6 7 8 9 10; do iptables -t mangle -D POSTROUTING -o "$i" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2&gt;/dev/null || break; done
   iptables -t mangle -S PREROUTING 2&gt;/dev/null | grep -E -- "^-A PREROUTING -i $i -p tcp .*TCPMSS --set-mss" | sed 's/^-A /-D /' | while read -r r; do
@@ -1066,18 +1099,21 @@ SIM=${SIM:-/tmp/awg-sim-down}             # флаг имитации паден
 FORCEF=${FORCEF:-/run/awg-force}
 STATEF=${STATEF:-/run/awg-state}
 EVF=$DD/events.log
-LOGF=$DD/failover.log
+LOGF=$DD/failover${ROUTE:+-$ROUTE}.log
 
-TUNS=("$MAIN"); [ -n "$BACKUP" ] &amp;&amp; TUNS+=("$BACKUP")
-for t in ${TUNNELS_EXTRA:-}; do TUNS+=("$t"); done
+<span class="c"># туннели только для дополнительных маршрутов (ROUTE_ONLY, #22) основной маршрут не использует; основной туннель — всегда</span>
+TUNS=("$MAIN")
+for t in $BACKUP ${TUNNELS_EXTRA:-}; do case " ${ROUTE_ONLY:-} " in *" $t "*) continue;; esac; TUNS+=("$t"); done
 N=${#TUNS[@]}
+V6=0; [ "$LEAK_V6" = route ] &amp;&amp; command -v ip6tables &gt;/dev/null &amp;&amp; V6=1
+RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
 
 log(){
-  local m; m="$(date '+%F %T') $*"
+  local m; m="$(date '+%F %T') $RT$*"
   echo "$m"; logger -t awg-failover "$*" 2&gt;/dev/null; echo "$m" &gt;&gt; "$LOGF"
   if [ "$(wc -l &lt; "$LOGF")" -gt 1000 ]; then tail -n 500 "$LOGF" &gt; "$LOGF.tmp" &amp;&amp; mv "$LOGF.tmp" "$LOGF"; fi
 }
-ev(){ echo "$(date +%s)|$1|$2" &gt;&gt; "$EVF"; if [ "$(wc -l &lt; "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" &gt; "$EVF.tmp" &amp;&amp; mv "$EVF.tmp" "$EVF"; fi; }
+ev(){ echo "$(date +%s)|$1|$RT$2" &gt;&gt; "$EVF"; if [ "$(wc -l &lt; "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" &gt; "$EVF.tmp" &amp;&amp; mv "$EVF.tmp" "$EVF"; fi; }
 
 <span class="c"># Канал жив, если через него открывается HTTPS хотя бы к одному из независимых узлов TARGETS</span>
 <span class="c"># (отказ одного сайта канал не роняет). Если HTTPS не прошёл ни к одному — пробуем ping (ICMP у части</span>
@@ -1150,6 +1186,40 @@ prepare(){
 <span class="c">  # правило PBR (если UniFi его потерял) добавляем со своей меткой proto 99: так удаление отличит его от правила UniFi</span>
   ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null \
     || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
+  [ "$V6" = 1 ] &amp;&amp; prepare6
+  return 0
+}
+prepare6(){  # IPv6 через туннель (#23): правило PBR IPv6 и NAT66/MSS/FORWARD для каждого туннеля
+  local i t r S6
+  ip -6 rule show 2&gt;/dev/null | grep -q "fwmark $MARK" || ip -6 rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null
+  for t in nat mangle filter; do
+    S6=$(ip6tables -t "$t" -S 2&gt;/dev/null) || continue
+    for i in "${TUNS[@]}"; do
+      while IFS='|' read -r tt r; do
+        [ "$tt" = "$t" ] || continue
+        grep -q -x -F -- "-A $r" &lt;&lt;&lt; "$S6" &amp;&amp; continue
+<span class="c">        # shellcheck disable=SC2086</span>
+        { ip6tables -t "$t" -C $r 2&gt;/dev/null; [ $? -eq 1 ] &amp;&amp; ip6tables -t "$t" -I $r 2&gt;/dev/null; }
+      done &lt; &lt;(fw_rules "$i")
+    done
+  done
+}
+has_v6(){ ip -6 -o addr show dev "$1" scope global 2&gt;/dev/null | grep -q inet6; }
+v6_sync(){  # при включённом IPv6 через туннель: туннель с IPv6 в конфиге, но без адреса на интерфейсе — поднять заново
+  local i cf
+  for i in "${TUNS[@]}"; do
+    cf=$("$DD/up.sh" --conf-of "$i" 2&gt;/dev/null); [ -n "$cf" ] &amp;&amp; [ -f "$DD/$cf" ] || continue
+    grep -i -E '^[[:space:]]*Address[[:space:]]*=' "$DD/$cf" | grep -q ':' || continue
+    ip link show "$i" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ! has_v6 "$i" &amp;&amp; { log "$i: IPv6 через туннель — поднимаю заново с IPv6-адресом"; up_once "$i" force; }
+  done
+  return 0
+}
+v6_off(){  # IPv6 через туннель выключен: убрать свои правило и маршруты IPv6 (правила UniFi не трогаем — только proto 99)
+  ip -6 rule show 2&gt;/dev/null | grep "fwmark $MARK" | grep -q "proto 99" &amp;&amp; ip -6 rule del fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null
+  local j
+  for j in "${TUNS[@]}"; do ip -6 route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
+  ip -6 route del unreachable default metric 200 table "$TABLE" 2&gt;/dev/null   # маршруты UniFi в таблице не трогаем
+  return 0
 }
 
 declare -A NEXT_TRY
@@ -1160,8 +1230,14 @@ ensure_tunnels(){
     [ "${NEXT_TRY[$i]:-0}" -gt "$now" ] &amp;&amp; continue
     NEXT_TRY[$i]=$((now + 30))
     log "$i отсутствует, поднимаю"
-    "$DD/up.sh" "$i" &gt;/dev/null 2&gt;&amp;1 || log "$i: не удалось поднять (проверьте: $DD/up.sh $i)"
+    up_once "$i" || log "$i: не удалось поднять (проверьте: $DD/up.sh $i)"
   done
+}
+<span class="c"># поднять туннель один раз, даже если его одновременно поднимает сторож другого маршрута (#22); force — пересоздать</span>
+up_once(){
+  if command -v flock &gt;/dev/null; then
+    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] &amp;&amp; ip link show "$1" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; exit 0; "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1 ) 9&gt;"${AWG_RUN:-/run}/awg-up-$1.lock"
+  else "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1; fi
 }
 
 set_active(){
@@ -1170,12 +1246,19 @@ set_active(){
   ip link show "$a" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip route replace default dev "$a" metric $METRIC table "$TABLE"
   for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
   ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+  if [ "$V6" = 1 ]; then
+    if ip link show "$a" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; has_v6 "$a"; then ip -6 route replace default dev "$a" metric $METRIC table "$TABLE" 2&gt;/dev/null
+    else ip -6 route del default metric $METRIC table "$TABLE" 2&gt;/dev/null; fi
+    for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip -6 route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
+<span class="c">    # у активного туннеля нет IPv6: отказ сразу (устройства переходят на IPv4), а не тишина и не WAN</span>
+    ip -6 route replace unreachable default metric 200 table "$TABLE" 2&gt;/dev/null
+  fi
 }
 
 cleanup(){  # cleanup [all] — убрать маршруты туннелей; blackhole остаётся (kill switch на время перезапуска), all — и его
   local j
-  for j in "${TUNS[@]}"; do ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
-  [ "$1" = all ] &amp;&amp; ip route del blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+  for j in "${TUNS[@]}"; do ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; ip -6 route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
+  [ "$1" = all ] &amp;&amp; { ip route del blackhole default metric 200 table "$TABLE" 2&gt;/dev/null; v6_off; }
   return 0
 }
 
@@ -1186,11 +1269,30 @@ write_state(){
     echo "FORCED=$forced"
     echo "UPDATED=$(date +%s)"
     echo "TUNNELS=\"${TUNS[*]}\""
+    echo "ROUTE=$ROUTE"; echo "RAIL=${RAIL_IF:-}"; echo "TABLE=$TABLE"; echo "V6=$V6"
     for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
   } &gt; "$STATEF.tmp" &amp;&amp; mv "$STATEF.tmp" "$STATEF"
 }
 
 tun_addr(){ ip -4 -o addr show dev "$1" 2&gt;/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1; }
+tun_addr6(){ ip -6 -o addr show dev "$1" scope global 2&gt;/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1; }
+<span class="c"># туннель активен у сторожа другого маршрута (#22)? Тогда его соединения не сбрасываем: они чужие и живые</span>
+busy_elsewhere(){
+  local f base=$STATEF
+  [ -n "$ROUTE" ] &amp;&amp; base=${STATEF%-"$ROUTE"}
+  for f in "$base" "$base"-*; do
+    [ "$f" = "$STATEF" ] &amp;&amp; continue
+    [ -f "$f" ] &amp;&amp; grep -qx "ACTIVE=$1" "$f" 2&gt;/dev/null &amp;&amp; return 0
+  done
+  return 1
+}
+ct_flush(){  # ct_flush ТУННЕЛЬ — сбросить записи conntrack, заNATенные на адрес туннеля
+  command -v conntrack &gt;/dev/null || return 0
+  busy_elsewhere "$1" &amp;&amp; return 0
+  local a; a=$(tun_addr "$1"); [ -n "$a" ] &amp;&amp; conntrack -D -q "$a" &gt;/dev/null 2&gt;&amp;1
+  if [ "$V6" = 1 ]; then a=$(tun_addr6 "$1"); [ -n "$a" ] &amp;&amp; conntrack -D -f ipv6 -q "$a" &gt;/dev/null 2&gt;&amp;1; fi
+  return 0
+}
 index_of(){ local k; for k in "${!TUNS[@]}"; do [ "${TUNS[$k]}" = "$1" ] &amp;&amp; { echo "$k"; return 0; }; done; return 1; }
 
 [ "$1" = cleanup ] &amp;&amp; { cleanup "$2"; exit 0; }
@@ -1209,25 +1311,22 @@ for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
 <span class="c"># сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)</span>
 ensure_tunnels
 <span class="c"># сторож начинает с основного канала: записи conntrack, заNATенные на другие туннели (например, на запасной до перезапуска), сбросить</span>
+if [ "$V6" = 1 ]; then v6_sync; else v6_off; fi
 set_active 0
-if command -v conntrack &gt;/dev/null; then
-  for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; a=$(tun_addr "${TUNS[$k]}"); [ -n "$a" ] &amp;&amp; conntrack -D -q "$a" &gt;/dev/null 2&gt;&amp;1; done
-fi
+for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; ct_flush "${TUNS[$k]}"; done
 <span class="c"># прошивка UniFi сменилась? (#9) — восстановление и самопроверка в фоне, сторож не ждёт</span>
 [ -x "$DD/awg-restore.sh" ] &amp;&amp; [ -z "${AWG_NO_FWCHECK:-}" ] &amp;&amp; { setsid "$DD/awg-restore.sh" --fw-check &gt;&gt; "$DD/restore.log" 2&gt;&amp;1 &lt; /dev/null &amp; }
-log "старт: основной $MAIN, запасной ${BACKUP:-нет}${TUNNELS_EXTRA:+, дополнительные $TUNNELS_EXTRA}, таблица $TABLE, возврат через ${RECOVER_SEC}с, качество: $QUALITY"
+log "старт: туннели ${TUNS[*]}, таблица $TABLE${RAIL_IF:+ (профиль $RAIL_IF)}, возврат через ${RECOVER_SEC}с, качество: $QUALITY$( [ "$V6" = 1 ] &amp;&amp; echo ", IPv6 через туннель")"
 ev start "основной $MAIN, всего туннелей $N"
 
 switch_to(){  # switch_to индекс тип сообщение
-  local old=${TUNS[$idx]} oa
+  local old=${TUNS[$idx]}
 <span class="c">  # соединения, заNATенные на адрес прежнего туннеля, иначе так и пойдут в новый туннель со старым адресом и умрут</span>
 <span class="c">  # (UDP с постоянным портом — VoIP, игры, WireGuard клиентов — не восстановились бы сами)</span>
   local prev=$idx
   idx=$1; fails=0; qbad=0; both_flag=0; last_sw=$(date +%s)
   set_active "$idx"                      # сначала маршрут на новый туннель, потом сброс записей: иначе они тут же создадутся заново
-  if [ "$idx" != "$prev" ] &amp;&amp; command -v conntrack &gt;/dev/null; then
-    oa=$(tun_addr "$old"); [ -n "$oa" ] &amp;&amp; conntrack -D -q "$oa" &gt;/dev/null 2&gt;&amp;1
-  fi
+  [ "$idx" != "$prev" ] &amp;&amp; ct_flush "$old"
   for k in "${!TUNS[@]}"; do OKS[$k]=0; done
   ev "$2" "$3"
 }
@@ -1333,7 +1432,7 @@ while true; do
   sleep "$INTERVAL"
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 368 строк">Показать целиком · 368 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 459 строк">Показать целиком · 459 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -2636,6 +2735,13 @@ for u in awg-web awg-bot awg-ha awg-metrics awg-guard awg-self awg-subnets awg-n
   [ -f "$SYSD/$u.service" ] || systemctl list-unit-files "$u.service" 2&gt;/dev/null | grep -q "^$u" || continue
   systemctl disable --now "$u" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/$u.service"; echo "служба $u удалена"
 done
+<span class="c"># сторожа дополнительных маршрутов (#22): awg-failover-ID; их таблицы — вместе с blackhole</span>
+for f in "$D"/route.d/*.env; do
+  [ -r "$f" ] || continue; id=$(basename "$f" .env)
+  systemctl disable --now "awg-failover-$id" &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/awg-failover-$id.service"
+  [ -x "$D/failover.sh" ] &amp;&amp; "$D/failover.sh" --route "$id" cleanup all &gt;/dev/null 2&gt;&amp;1
+  echo "маршрут $id: служба awg-failover-$id удалена"
+done
 systemctl disable --now awg-backup.timer &gt;/dev/null 2&gt;&amp;1; rm -f "$SYSD/awg-backup.timer" "$SYSD/awg-backup.service"
 systemctl daemon-reload 2&gt;/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2&gt;/dev/null
@@ -2680,7 +2786,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 65 строк">Показать целиком · 65 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 72 строк">Показать целиком · 72 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 

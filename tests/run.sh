@@ -8,7 +8,7 @@ rc=0
 export AWG_BINDIR=$T/bin; mkdir -p "$AWG_BINDIR"
 echo "== синтаксис"; bash -n "$INST" && echo "  install.sh: ok" || rc=1
 for f in "$ROOT"/awg/*.sh "$ROOT"/server/*.sh "$H"/*.sh; do bash -n "$f" || { echo "  синтаксическая ошибка: $f"; rc=1; }; done
-for t in t_failover t_guard t_fw t_misc t_backup t_notify t_vps; do echo "== $t"; bash "$H/$t.sh" "$ROOT/awg" || rc=1; done
+for t in t_failover t_guard t_fw t_misc t_backup t_notify t_vps t_routes; do echo "== $t"; bash "$H/$t.sh" "$ROOT/awg" || rc=1; done
 echo "== t_installer"; bash "$H/t_installer.sh" "$INST" || rc=1
 echo "== t_web (веб-панель)"
 python3 "$ROOT/tools/check-modules.py" | sed 's/^/  /' || rc=1

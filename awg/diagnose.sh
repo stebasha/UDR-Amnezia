@@ -147,7 +147,7 @@ if [ -n "$TABLE" ] && [ -n "$MARK" ]; then
   # ---------------------------------------------------------------- 5. IPv6
   sec "5. IPv6"
   if ip -6 route show default 2>/dev/null | grep -q . && ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
-    if [ "${LEAK_GUARD:-no}" = yes ] && [ "${LEAK_V6:-block}" = block ]; then ok "у WAN есть IPv6; помеченный PBR-трафик по IPv6 в WAN не выпускается"
+    if [ "${LEAK_GUARD:-no}" = yes ] && { [ "${LEAK_V6:-block}" = block ] || [ "${LEAK_V6:-block}" = route ]; }; then ok "у WAN есть IPv6; помеченный PBR-трафик по IPv6 в WAN не выпускается"
     else wa "у WAN есть IPv6, а блокировки IPv6 для трафика под PBR нет: сайты с IPv6 могут открываться мимо туннеля" "включите awg-guard с LEAK_V6=block или отключите IPv6 в сетях с такими устройствами"; fi
   else ok "IPv6 в интернет у роутера нет — утечки по IPv6 исключены"; fi
 fi
