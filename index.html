@@ -1535,6 +1535,9 @@ blackhole default metric 200
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
+<span class="c"># одновременно один запуск: сторож (--fw-check) и on_boot.d (--if-needed) после смены прошивки стартуют вместе —</span>
+<span class="c"># без замка оба восстанавливали бы службы и слали два сообщения. Второй дождётся первого и увидит, что всё сделано.</span>
+command -v flock &gt;/dev/null &amp;&amp; { exec 9&gt;"${AWG_RUN:-/run}/awg-restore.lock"; } 2&gt;/dev/null &amp;&amp; flock -w 300 9
 ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha"
 <span class="c"># что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть</span>
 if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] &amp;&amp; UNITS="$UNITS $u"; done; fi
@@ -1603,7 +1606,7 @@ $fw_changed
 fi
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 80 строк">Показать целиком · 80 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 83 строк">Показать целиком · 83 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 

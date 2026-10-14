@@ -86,6 +86,9 @@ ck "прошивка: первый запуск — только запомни�
 out=$(fw); ck "прошивка: без смены — ничего" '[ -z "$out" ] && [ ! -s "$F/dd/events.log" ]'
 out=$(fw env FWVER=5.1.2)
 ck "прошивка: смена → восстановление, событие с самопроверкой" 'echo "$out" | grep -q "сменилась прошивка" && grep -q "|firmware|прошивка: os=5.0.10 net=10.0.1 → os=5.1.2 net=10.0.1; службы восстановлены; самопроверка: OK: 29" "$F/dd/events.log" && [ "$(cat "$F/dd/.fwver")" = "os=5.1.2 net=10.0.1" ]'
+# два запуска сразу (сторож и on_boot.d после прошивки): восстановление и событие — один раз
+fw env FWVER=5.2.0 FW_SETTLE=1 >/dev/null & fw env FWVER=5.2.0 FW_SETTLE=1 >/dev/null; wait
+ck "прошивка: два запуска одновременно — одно событие" '[ "$(grep -c "→ os=5.2.0" "$F/dd/events.log")" = 1 ]'
 # автокопия (#12): прошивка стёрла таймер — on_boot.d (--if-needed) возвращает его по backup.env
 cp "$COMP/backup.sh" "$COMP/awg-backup.service" "$F/dd/"; printf 'BK_AUTO="daily"\n' > "$F/dd/backup.env"; touch "$F/bashrc"
 out=$(PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin bash "$F/dd/awg-restore.sh" --if-needed 2>&1)
