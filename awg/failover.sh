@@ -217,7 +217,10 @@ prepare(){
   # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.
   local i t r rules
   declare -A S
-  for t in nat mangle filter; do S[$t]=$'\n'$(iptables -t "$t" -S 2>/dev/null)$'\n' || return 0; done
+  # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)
+  S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2>/dev/null)$'\n' || return 0
+  S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2>/dev/null)$'\n' || return 0
+  S[filter]=$'\n'$(iptables -t filter -S FORWARD 2>/dev/null)$'\n' || return 0
   for i in "${TUNS[@]}"; do
     [ -n "${FWR[$i]:-}" ] || FWR[$i]=$(fw_rules "$i")
     while IFS='|' read -r t r; do
@@ -237,7 +240,8 @@ prepare6(){  # IPv6 через туннель (#23): правило PBR IPv6 и 
   local i t r S6
   ip -6 rule show 2>/dev/null | grep -q "fwmark $MARK" || ip -6 rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2>/dev/null
   for t in nat mangle filter; do
-    S6=$(ip6tables -t "$t" -S 2>/dev/null) || continue
+    if [ "$t" = nat ]; then S6=$(ip6tables -t nat -S POSTROUTING 2>/dev/null) || continue
+    else S6=$(ip6tables -t "$t" -S FORWARD 2>/dev/null) || continue; fi
     for i in "${TUNS[@]}"; do
       while IFS='|' read -r tt r; do
         [ "$tt" = "$t" ] || continue

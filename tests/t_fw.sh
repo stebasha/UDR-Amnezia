@@ -41,6 +41,15 @@ bash "$COMP/failover.sh" forget awgbackup
 ck "forget: правил awgbackup не осталось" '! iptables -t nat -S | grep -q awgbackup && ! iptables -t mangle -S | grep -q awgbackup && ! iptables -S | grep -q awgbackup'
 ck "forget: правила awgmain целы" '[ "$(cnt nat "-A POSTROUTING -o awgmain -j MASQUERADE")" = 1 ]'
 
+# --- сторож (1.7.1): правила туннеля сверяются по цепочкам POSTROUTING/FORWARD; второй проход ничего не добавляет
+( source <(sed -n '/^iptables(){/p;/^ensure(){/p;/^fw_rules(){/,/^}/p;/^declare -A FWR/,/^}/p' "$COMP/failover.sh")
+  TUNS=(awgq); MARK=0x6a0000/0x7e0000; TABLE=178; PRIO=32504; V6=0
+  prepare; prepare
+  for r in "nat|POSTROUTING -o awgq -j MASQUERADE" "mangle|FORWARD -o awgq -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" \
+           "filter|FORWARD -i awgq -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"; do
+    [ "$(cnt "${r%%|*}" "-A ${r#*|}")" = 1 ] || exit 1
+  done ) && r=0 || r=1
+ck "сторож: правила туннеля — по одному после двух проходов (сверка по цепочкам)" '[ $r = 0 ]'
 # --- guard: занятая блокировка не ломает цепочки и не плодит переходы
 bash "$COMP/guard.sh" apply
 ck "guard: один переход в FORWARD" '[ "$(cnt filter "-A FORWARD -j AWG_GUARD")" = 1 ]'
