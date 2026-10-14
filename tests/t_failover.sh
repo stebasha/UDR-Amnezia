@@ -149,6 +149,19 @@ ck "основной лежит дольше RECHECK_AFTER: за 6 с не бо�
 rm -f $S4/up/awgbackup; : > $S4/curl.log; sleep 5
 ck "при этом падение запасного замечается без задержки" 'grep -q "|both|" $T/dd4/events.log'
 kill -TERM $P4; wait $P4 2>/dev/null
+# ---- основной отвечает, но с потерями, дольше RECHECK_AFTER: это не «лежит» — возврат, как только качество вернулось
+S6=$T/s6; mkdir -p $S6/up $S6/links $S6/loss $S6/rtt $T/dd6; for i in awgmain awgbackup; do touch $S6/up/$i $S6/links/$i; done
+printf 'TABLE=194\nMARK=0x760000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=yes\n' > $T/dd6/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd6/up.sh; chmod +x $T/dd6/up.sh
+echo 80 > $S6/loss/awgmain
+STUB=$S6 DD=$T/dd6 AWG_SYSNET=$S6/links STATEF=$T/st6 FORCEF=$T/f6 INTERVAL=1 QUALITY_INTERVAL=1 QUALITY_FAILS=2 MIN_DWELL=0 RECOVER_SEC=3 \
+  RECHECK_AFTER=2 RECHECK_SLOW=60 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P6=$!; sleep 9
+a6=$(. $T/st6 2>/dev/null; echo "$ACTIVE")
+rm -f $S6/loss/awgmain; sleep 10
+b6=$(. $T/st6 2>/dev/null; echo "$ACTIVE")
+kill -TERM $P6; wait $P6 2>/dev/null
+ck "основной с потерями: ушли на запасной ($a6), качество вернулось — вернулись ($b6), без отсрочки RECHECK_SLOW" '[ "$a6" = awgbackup ] && [ "$b6" = awgmain ]'
 # ---- ICMP через туннель не ходит, TCP ходит: пробы качества — по TCP, без пяти пингов каждый раз (1.7.1)
 S5=$T/s5; mkdir -p $S5/up $S5/links $S5/loss $S5/rtt $S5/noicmp $T/dd5; for i in awgmain awgbackup; do touch $S5/up/$i $S5/links/$i $S5/noicmp/$i; done
 printf 'TABLE=193\nMARK=0x780000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=yes\n' > $T/dd5/awg.env

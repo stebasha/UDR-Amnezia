@@ -483,7 +483,8 @@ while true; do
     for ((k=0; k<idx; k++)); do
       t=${TUNS[$k]}
       [ "${OKS[$k]}" = 0 ] && [ "$now" -lt "${RNEXT[$k]:-0}" ] && continue    # давно лежит — проверяем реже (ниже)
-      if check "$t" && [ "${QOK[$k]}" = 1 ]; then
+      alive=0; check "$t" && alive=1
+      if [ $alive = 1 ] && [ "${QOK[$k]}" = 1 ]; then
         RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] && { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
@@ -496,9 +497,14 @@ while true; do
         # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз
         # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож
         # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.
-        [ "${RDEAD[$k]:-0}" = 0 ] && RDEAD[$k]=$now
-        if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
-        elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+        # Отвечает, но с плохим качеством — не «лежит»: проверяется как обычно (иначе проба качества, которая его
+        # оправдает, тоже откладывалась бы).
+        if [ $alive = 1 ]; then RDEAD[$k]=0; RNEXT[$k]=0
+        else
+          [ "${RDEAD[$k]:-0}" = 0 ] && RDEAD[$k]=$now
+          if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+          elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+        fi
       fi
     done
   fi

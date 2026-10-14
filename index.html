@@ -1460,7 +1460,8 @@ while true; do
     for ((k=0; k&lt;idx; k++)); do
       t=${TUNS[$k]}
       [ "${OKS[$k]}" = 0 ] &amp;&amp; [ "$now" -lt "${RNEXT[$k]:-0}" ] &amp;&amp; continue    # давно лежит — проверяем реже (ниже)
-      if check "$t" &amp;&amp; [ "${QOK[$k]}" = 1 ]; then
+      alive=0; check "$t" &amp;&amp; alive=1
+      if [ $alive = 1 ] &amp;&amp; [ "${QOK[$k]}" = 1 ]; then
         RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] &amp;&amp; { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
@@ -1473,9 +1474,14 @@ while true; do
 <span class="c">        # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз</span>
 <span class="c">        # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож</span>
 <span class="c">        # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.</span>
-        [ "${RDEAD[$k]:-0}" = 0 ] &amp;&amp; RDEAD[$k]=$now
-        if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
-        elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+<span class="c">        # Отвечает, но с плохим качеством — не «лежит»: проверяется как обычно (иначе проба качества, которая его</span>
+<span class="c">        # оправдает, тоже откладывалась бы).</span>
+        if [ $alive = 1 ]; then RDEAD[$k]=0; RNEXT[$k]=0
+        else
+          [ "${RDEAD[$k]:-0}" = 0 ] &amp;&amp; RDEAD[$k]=$now
+          if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+          elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+        fi
       fi
     done
   fi
@@ -1518,7 +1524,7 @@ while true; do
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 545 строк">Показать целиком · 545 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 551 строк">Показать целиком · 551 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
