@@ -2,6 +2,14 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "байт": "bytes",
+ "Если из туннеля за проход (5 с) пришло столько данных, канал жив без отдельного запроса HTTPS. 0 — проверять всегда.": "If this much data came from the tunnel during a pass (5 s), the channel is alive without a separate HTTPS request. 0 — always check.",
+ "Даже при живом трафике настоящая проверка HTTPS — не реже этого.": "Even with live traffic, a real HTTPS check runs at least this often.",
+ "Приоритетный канал, который не отвечает дольше этого, проверяется реже: проверка мёртвого туннеля не тормозит слежение за рабочим.": "A higher-priority channel that has not responded for longer than this is checked less often, so checking a dead tunnel does not slow down watching the working one.",
+ "Как часто тогда проверять недоступный канал. Возврат на него запаздывает не больше чем на это время.": "How often to check the unreachable channel then. Returning to it is delayed by at most this time.",
+ "Как часто проверять канал, недоступный дольше 10 минут.": "How often to check a channel that has been unreachable for more than 10 minutes.",
+ "Экономия ресурсов роутера": "Router resource saving",
+ "Значения по умолчанию подходят почти всем: меньше запросов через туннели и процессов на роутере без потери скорости переключения.": "The defaults suit almost everyone: fewer requests through the tunnels and fewer processes on the router without slower switching.",
  "Автоподбор": "Auto-tune",
  "Списки": "Lists",
  "Подбирать самому при деградации": "Tune automatically on degradation",

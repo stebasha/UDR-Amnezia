@@ -518,6 +518,11 @@ SETTINGS = {
     "QUALITY_LOSS": (v_int(5, 100), ["awg-failover"], "Порог потерь, %"),
     "QUALITY_RTT": (v_int(0, 5000), ["awg-failover"], "Порог задержки, мс (0 — не учитывать)"),
     "MIN_DWELL": (v_int(0, 3600), ["awg-failover"], "Не переключаться по качеству после смены, с"),
+    "CHECK_RX_MIN": (v_int(0, 104857600), ["awg-failover"], "Трафик из туннеля за проход, при котором проверка не нужна, байт"),
+    "CHECK_MAX_AGE": (v_int(10, 3600), ["awg-failover"], "Настоящая проверка канала не реже, с"),
+    "RECHECK_AFTER": (v_int(0, 3600), ["awg-failover"], "Недоступный приоритетный канал проверять реже через, с"),
+    "RECHECK_SLOW": (v_int(5, 600), ["awg-failover"], "Тогда проверять раз в, с"),
+    "RECHECK_MAX": (v_int(5, 3600), ["awg-failover"], "После 10 минут — раз в, с"),
     "EXTRA_SUBNETS": (v_subnets, ["awg-subnets", "awg-guard"], "Подсети VPN-сервера роутера"),
     "TUN_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Домены через туннель"),
     "TUN_CLIENTS": (v_hosts, ["awg-guard"], "Для каких клиентов (пусто — вся LAN)"),
@@ -540,6 +545,7 @@ SETTINGS = {
     "METRICS_PORT": (v_int(1024, 65535, True), ["awg-metrics"], "Порт метрик Prometheus"),
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
+            "CHECK_RX_MIN": "65536", "CHECK_MAX_AGE": "60", "RECHECK_AFTER": "120", "RECHECK_SLOW": "30", "RECHECK_MAX": "60",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
             "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no"}
 
