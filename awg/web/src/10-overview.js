@@ -40,6 +40,8 @@
       el('div', { class: 'grid g-2' },
         card(T('Клиенты в туннеле'), clBox, { icon: 'users', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/clients' }, T('Все')) }),
         card(T('Доступность каналов'), upBox, { icon: 'okc' })),
+      el('div', { class: 'spacer' }),
+      reportCard(),
     ]);
     function kpi(lbl, ic, val, sub, extra, tone, go, hint) {
       const k = el('button', { class: 'card kpi' + (tone ? ' t-' + tone : ''), type: 'button', title: hint || '', onclick: go },

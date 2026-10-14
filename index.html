@@ -2620,6 +2620,7 @@ awgctl drift<span class="c">                  # сверка правил и с�
   <p>Переключатель EN/RU — в верхней строке и на странице входа (запоминается в браузере). Вывод скриптов на роутере остаётся русским. Вывод любой команды можно скопировать или скачать файлом, журналы — кнопкой «Скачать», отчёт для помощи скачивается сам после сбора.</p>
   <h3>Home Assistant и токены API</h3>
   <p>С версии 1.5 роутер появляется в Home Assistant сам, через MQTT discovery: «Настройки → Home Assistant» — адрес брокера (Mosquitto или встроенный брокер HA), логин, пароль, TLS — и «Проверить подключение». В HA появится устройство «UDR-Amnezia»: активный канал, состояние, kill switch, процессор, память, температура; по каждому туннелю — связь, handshake, RTT, потери, трафик; выбор канала (авто или туннель) и кнопки перезапуска туннелей. Кнопка перезагрузки роутера в HA выключена, пока её явно не включить. Служба — <code>awg-ha</code>, действия из HA попадают в журнал панели.</p>
+  <p>С 1.7 в HA есть и дополнительные маршруты: по каждому — активный канал, связь и выбор канала (авто или туннель из цепочки маршрута). Добавили или убрали маршрут — сущности в HA появляются и исчезают сами.</p>
   <p>Для REST и скриптов — токены API: «Настройки → Пользователи и 2FA → Токены API». Права «только чтение» или «управление»; токен показывается один раз; пароли, сеансы, ключи туннелей, перезагрузка и настройки панели токену недоступны никогда. Пример: <code>curl -k -H "Authorization: Bearer awg_…" https://192.168.1.1:4443/api/overview</code>. Сеансы панели с 1.5 переживают её перезапуск и обновление.</p>
   <h3>Сертификат UniFi для панели</h3>
   <p>Если у веб-интерфейса роутера настоящий сертификат (свой домен, автообновление в UniFi), панель возьмёт его: «Настройки → Панель и сертификат → Источник: сертификат UniFi». Панель перечитывает файлы раз в минуту, поэтому продление подхватывается без перезапуска. Имена из сертификата разрешены для входа: открывайте <code>https://ваше.имя:4443/</code>. Файлы UniFi панель только читает.</p>
@@ -2677,6 +2678,7 @@ systemctl restart awg-web<span class="c">      # после правки /data/a
 
   <h3>Telegram: бот с кнопками и несколько получателей</h3>
   <p>Поверх уведомлений части 10. С версии 1.4.1 бот работает меню кнопками: <code>/menu</code> показывает состояние (активный канал, handshake, качество, запасной канал, процессор, память, диск, замечания) и кнопки «Каналы», «События», «Статистика», «Проверки», «Роутер», «Клиенты», «Уведомления», «Службы». Сообщение обновляется на месте, переключение канала и перезапуск — с подтверждением. Под каждым уведомлением о переключении есть кнопки «Состояние» и «Каналы».</p>
+  <p>С 1.7 — дополнительные маршруты: кнопка «Маршруты» (или <code>/routes</code>) — канал и сторож каждого маршрута, его цепочка туннелей с handshake; администратор выбирает канал маршрута кнопкой (с подтверждением) или командой <code>/route ID канал|auto</code>.</p>
   <ul>
     <li><b>Несколько человек.</b> В <code>telegram.env</code> (или в веб-панели: Настройки → Telegram) <code>TG_CHAT</code> — администраторы (всё), <code>TG_VIEWERS</code> — только просмотр: видят состояние и получают уведомления, но не переключают каналы и не трогают службы. Чат id — через пробел. Чужому чату бот отвечает только его id, чтобы его было легко добавить.</li>
     <li><b>Тишина.</b> Кнопка «Уведомления»: выключить на 1 час, 8 часов или сутки для своего чата. Сообщение «🛑 Нет рабочего канала» приходит всегда.</li>
@@ -2715,6 +2717,31 @@ awgctl routes remove us</code></pre></figure>
   <p>По умолчанию IPv6 устройств под PBR блокируется, и они идут по IPv4 через туннель. Если сервер выдал туннелю IPv6-адрес (строка <code>Address</code> в конфиге с IPv6), можно пустить и IPv6 через туннель: «<b>Маршрутизация → Защита от утечек → IPv6 → Через туннель</b>» (<code>LEAK_V6=route</code>). Сторож добавляет правило IPv6 для метки PBR (своё, <code>proto 99</code>) и маршрут IPv6 в таблице PBR на активный туннель с NAT66 и MSS. У активного туннеля нет IPv6 — маршрут <code>unreachable</code>: устройство сразу переходит на IPv4. В WAN помеченный IPv6 не выпускается в любом случае; правила и маршруты IPv6 самой UniFi не трогаются.</p>
   <div class="note n-warn"><b>Условие</b><p>Работает, только если UniFi помечает IPv6-трафик устройств под PBR (правила PBR для IPv6). Иначе <code>guard.sh check</code> и самопроверка подскажут: надёжнее отключить IPv6 в сетях с такими устройствами.</p></div>
 
+  <h3>Списки и GeoIP — по желанию (1.7)</h3>
+  <p>По умолчанию устройства под PBR идут через туннель целиком. «<b>Маршрутизация → Списки и GeoIP</b>» (<code>LISTS_MODE</code>) меняет это для основного и дополнительных маршрутов:</p>
+  <div class="tw"><table>
+    <tr><th>Режим</th><th>Через туннель</th><th>Напрямую</th></tr>
+    <tr><td>Всё (<code>off</code>, по умолчанию)</td><td>весь трафик устройств под PBR</td><td>только исключения</td></tr>
+    <tr><td>Только заблокированное (<code>blocked</code>)</td><td>адреса из списков заблокированного (по умолчанию antifilter.download, <code>LIST_URLS</code>) и домены через туннель</td><td>всё остальное</td></tr>
+    <tr><td>Всё, кроме стран (<code>geoip</code>)</td><td>всё, кроме адресов выбранных стран</td><td>адреса стран <code>GEO_COUNTRIES</code>, например <code>ru cn by kz</code>: умный дом с серверами в Китае, местные сервисы</td></tr>
+  </table></div>
+  <p>Списки скачиваются раз в сутки (служба <code>awg-guard</code> проверяет раз в час), напрямую, а если не открываются — через туннель. Ответ, не похожий на список, отбрасывается: остаётся прежний. Частные сети и мусор из списков не берутся. Адреса лежат в наборах ipset <code>AWG_LIST</code> и <code>AWG_GEO</code>, правило снимает метку PBR в конце mangle PREROUTING, как у исключений; правила UniFi не меняются. Пока набор пуст, всё идёт через туннель — утечки нет. Самопроверка и диагностика показывают число сетей и возраст списков.</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">списки по SSH</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl lists<span class="c">                 # режим, страны, сетей в наборах, когда обновлено</span>
+awgctl lists update<span class="c">          # скачать сейчас (при ошибке остаются прежние)</span></code></pre></figure>
+  <div class="note n-warn"><b>Правило в UniFi</b><p>Режимы только сужают то, что UniFi уже отправила в туннель. Для «Всё, кроме стран» правило Policy-Based Route для устройства должно вести в VPN Client весь его трафик (назначение — Internet / любое), а не отдельные домены или адреса.</p></div>
+  <div class="note n-info"><b>Важно</b><p>Список и GeoIP работают по IP-адресам. Сайт за CDN может делить адреса с другими сайтами, поэтому для отдельных сайтов надёжнее «Домены через туннель» и исключения по доменам — они действуют вместе со списками.</p></div>
+
+  <h3>DNS устройств: перехват — по желанию (1.7)</h3>
+  <p>Телевизоры, приставки и умный дом часто спрашивают DNS не у роутера, а у «зашитого» сервера (8.8.8.8, 114.114.114.114). Тогда домены через туннель, исключения по доменам и правила UniFi по доменам их не видят, а провайдер видит и может подменить ответы. «<b>Маршрутизация → DNS устройств → Перехват DNS устройств</b>» (<code>DNS_INTERCEPT=yes</code>): такие запросы (порт 53) заворачиваются на DNS роутера — для всей LAN или для клиентов из <code>DNS_CLIENTS</code>. Вместе с «Весь DNS роутера через туннель» (<code>DNS_ALL_TUNNEL=yes</code>) DNS этих устройств уходит через туннель.</p>
+  <ul>
+    <li><code>DNS_BLOCK_DOT=yes</code> — ещё отказ DNS-over-TLS (порт 853, «Частный DNS» Android) и DNS по IPv6 к чужим серверам: устройства переходят на обычный DNS через роутер. DNS-over-HTTPS в браузерах так не перехватить — его отключают в браузере.</li>
+    <li>Правило стоит последним в nat PREROUTING: фильтр контента UniFi (свой перехват DNS) срабатывает раньше и не обходится. Запросы к самому роутеру не трогаются.</li>
+  </ul>
+
+  <h3>Отчёт за неделю и трафик по устройствам (1.7)</h3>
+  <p>«<b>Обзор → Отчёт</b>» (7 или 30 дней), в Telegram — <code>/week</code> и каждый понедельник сам: доля времени на основном канале и переключения; по каждому туннелю — доступность (минуты со свежим handshake), средние RTT и потери, трафик, сколько был активным; средняя скорость по замерам; по дополнительным маршрутам — время на первом канале, на остальных и без канала. События маршрутов больше не смешиваются со статистикой основного канала.</p>
+  <p>Трафик по устройствам — по желанию: переключатель в карточке отчёта (<code>TRAFFIC_ACCT=yes</code>). Роутер считает, сколько каждое устройство LAN отправило в туннели и получило из них: своя цепочка <code>AWG_ACC</code> в mangle FORWARD с наборами ipset со счётчиками (<code>AWG_ACC_UP</code>, <code>AWG_ACC_DN</code>) — правила только считают и на трафик не влияют. Раз в 10 минут счётчики сводятся по суткам (62 дня, по MAC, имена — из аренд DHCP). Выключение убирает правила.</p>
+
   <h3>Автоподбор параметров обфускации (1.6)</h3>
   <p>Если провайдер начал узнавать или замедлять AmneziaWG: «<b>Инструменты → Подбор параметров обфускации</b>» (или <code>awgctl tune</code>). Роутер меряет текущий набор и N новых: у каждого handshake, интернет, потери, задержка и скорость (5 МБ), итог — оценка и лучший набор. В конце туннель возвращается на исходный набор; лучший ставится только по кнопке «Применить» (с паролем, прежний конфиг остаётся в «Истории»). По умолчанию подбор идёт только на неактивном канале.</p>
   <div class="tw"><table>
@@ -2722,6 +2749,7 @@ awgctl routes remove us</code></pre></figure>
     <tr><td>Только роутер</td><td><code>Jc</code>, <code>Jmin</code>, <code>Jmax</code> — мусорные пакеты перед handshake: принимающая сторона их отбрасывает и не сверяет</td><td>любые: провайдер VPN, 3x-ui, свой VPS</td></tr>
     <tr><td>Роутер и свой VPS</td><td>ещё <code>S1</code>, <code>S2</code>, <code>H1</code>–<code>H4</code> — согласованно на сервере и роутере, с откатом обеих сторон</td><td>туннель на <code>awg-server</code> вашего VPS (AWG 1.x с числовыми H)</td></tr>
   </table></div>
+  <p><b>Сам при деградации (1.7):</b> «Подбирать самому при деградации» (<code>AUTO_TUNE=yes</code>, нужен Telegram-бот). Если неактивный канал 15 минут без handshake или с потерями выше порога (обычно основной, после того как провайдер начал его резать и сторож ушёл на запасной), роутер сам запускает подбор «только роутер» — не чаще раза в сутки на канал — и присылает администраторам лучший набор с кнопкой «Применить». Активный канал не трогается; ставится только по кнопке, через историю конфигов с проверкой handshake и откатом.</p>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">подбор по SSH</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl tune run awgbackup client 5<span class="c">     # текущий набор и ещё 5 (только роутер)</span>
 awgctl tune show<span class="c">                       # результаты последнего подбора</span>
 awgctl tune apply 1<span class="c">                    # поставить набор №1 (с проверкой handshake и откатом)</span></code></pre></figure>
@@ -2810,7 +2838,10 @@ for t in nat:POSTROUTING mangle:FORWARD mangle:POSTROUTING mangle:PREROUTING fil
     iptables -t "$tb" $r 2&gt;/dev/null
   done
 done
-for s in AWG_UI AWG_DOM AWG_DIRECT; do ipset destroy "$s" 2&gt;/dev/null; done
+<span class="c"># учёт трафика по устройствам (#41): цепочка в mangle FORWARD и её наборы</span>
+while iptables -t mangle -D FORWARD -j AWG_ACC 2&gt;/dev/null; do :; done
+iptables -t mangle -F AWG_ACC 2&gt;/dev/null; iptables -t mangle -X AWG_ACC 2&gt;/dev/null
+for s in AWG_UI AWG_DOM AWG_DIRECT AWG_LIST AWG_GEO AWG_ACC_UP AWG_ACC_DN; do ipset destroy "$s" 2&gt;/dev/null; done
 <span class="c"># подсети, которые старые версии добавляли в набор локальных сетей UniFi</span>
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2&gt;/dev/null; done
 
@@ -2838,7 +2869,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 72 строк">Показать целиком · 72 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 75 строк">Показать целиком · 75 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 
@@ -2941,6 +2972,9 @@ EOF</code></pre></figure>
     <tr><td><code>install.sh</code>, <code>install.log</code>, <code>.installer</code>, <code>.panel</code>, <code>.audit</code></td><td>Установщик и его журнал; отметки компонентов, выбранных в установщике</td><td>⚡</td></tr>
       <tr><td><code>routes.sh</code>, <code>route.d/ID.env</code> 🔒, <code>awg-failover-ID.service</code>, <code>failover-ID.log</code></td><td>Дополнительные маршруты (1.6): профиль UniFi → своя цепочка туннелей и свой сторож</td><td>★</td></tr>
     <tr><td><code>obfs-tune.sh</code>, <code>tune.tsv</code>, <code>tune.log</code></td><td>Автоподбор параметров обфускации и его результаты (1.6)</td><td>★</td></tr>
+    <tr><td><code>lists.sh</code>, <code>lists/</code>, <code>lists.log</code></td><td>Списки заблокированного и GeoIP: кэш и журнал обновления (1.7)</td><td>★</td></tr>
+    <tr><td><code>autotune.json</code></td><td>Автоподбор при деградации: когда и какой туннель подбирался, предложенный набор (1.7)</td><td></td></tr>
+    <tr><td><code>web/traffic.json</code> 🔒</td><td>Трафик через туннели по устройствам за 62 дня, если включён учёт (1.7)</td><td></td></tr>
     <tr><td><code>vps.sh</code>, <code>vps.env</code>, <code>vps.d/ID.env</code>, <code>ssh/</code> 🔒, <code>vps-job.log</code></td><td>Свой VPS из панели: мастер, несколько серверов, сборка бинарников роутера (1.6)</td><td>★</td></tr>
     <tr><td><code>xui.json</code> 🔒</td><td>Панели 3x-ui (адреса и токены) и туннели через них (1.6)</td><td>★</td></tr>
 </table></div>
@@ -2967,6 +3001,10 @@ EOF</code></pre></figure>
     <tr><td><code>VPS_IP</code></td><td><code>203.0.113.10</code></td><td>Только для подсказок в панели и исключения из трафика роутера</td></tr>
     <tr><td><code>TUNNELS_EXTRA</code>, <code>QUALITY</code>, <code>QUALITY_LOSS</code>, <code>QUALITY_RTT</code>, <code>MIN_DWELL</code></td><td><code>""</code>, <code>yes</code>, <code>40</code>, <code>0</code>, <code>120</code></td><td>Дополнительные туннели и выбор по качеству (часть ★)</td></tr>
     <tr><td><code>LEAK_GUARD</code>, <code>LEAK_V6</code></td><td><code>yes</code>, <code>block</code></td><td>Защита от утечек awg-guard; <code>LEAK_V6=route</code> — IPv6 через туннель (1.6)</td></tr>
+    <tr><td><code>AUTO_TUNE</code></td><td><code>no</code></td><td>Автоподбор обфускации неактивного канала при деградации, итог — в Telegram с кнопкой (1.7); <code>AUTO_TUNE_AFTER</code> (900 с), <code>AUTO_TUNE_EVERY</code> (86400 с)</td></tr>
+    <tr><td><code>TRAFFIC_ACCT</code></td><td><code>no</code></td><td>Учёт трафика через туннели по устройствам для отчёта (1.7)</td></tr>
+    <tr><td><code>DNS_INTERCEPT</code>, <code>DNS_CLIENTS</code>, <code>DNS_BLOCK_DOT</code></td><td><code>no</code>, пусто, <code>no</code></td><td>Перехват DNS устройств на роутер (1.7); вместе с <code>DNS_ALL_TUNNEL=yes</code> — через туннель</td></tr>
+    <tr><td><code>LISTS_MODE</code>, <code>GEO_COUNTRIES</code>, <code>LIST_URLS</code></td><td><code>off</code>, пусто, antifilter.download</td><td>Списки и GeoIP (1.7): <code>blocked</code> — через туннель только заблокированное, <code>geoip</code> — всё, кроме стран</td></tr>
     <tr><td><code>ROUTE_ONLY</code></td><td><code>""</code></td><td>Туннели только для дополнительных маршрутов: основной их не использует (1.6)</td></tr>
     <tr><td><code>UI_FIX</code>, <code>UI_DOMAINS</code>, <code>UI_DNS</code>, <code>DNS_ALL_TUNNEL</code></td><td><code>yes</code>, <code>"ui.com"</code>, <code>9.9.9.9</code>, <code>no</code></td><td>awg-self: unifi.ui.com через туннель; весь DNS роутера через туннель (эксперимент)</td></tr>
     <tr><td><code>TUN_DOMAINS</code>, <code>TUN_CLIENTS</code>, <code>DIRECT_DOMAINS</code>, <code>DIRECT_SUBNETS</code></td><td>пусто</td><td>Домены через туннель и для каких клиентов; исключения из туннеля</td></tr>

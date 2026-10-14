@@ -483,6 +483,7 @@
     degrade: ['warn', 'activity', T('Качество')], return: ['ok', 'okc', T('Возврат')], force: ['accent', 'switch', T('Вручную')],
     auto: ['accent', 'refresh', T('Авто')], both: ['crit', 'alert', T('Нет каналов')], refused: ['warn', 'x', T('Отклонено')],
     drift: ['crit', 'alert', T('PBR изменён')], reboot: ['warn', 'power', T('Перезагрузка')], firmware: ['accent', 'download', T('Прошивка')], backup: ['ok', 'archive', T('Копия')], vps: ['accent', 'server', 'VPS'],
+    tune: ['accent', 'shield', T('Автоподбор')], lists: ['accent', 'layers', T('Списки')],
   };
   function dotFor(st) { return { active: 'ok pulse', standby: 'ok', nohs: 'warn', down: 'crit' }[st] || ''; }
   function evRow(e) {
@@ -700,6 +701,8 @@
       el('div', { class: 'grid g-2' },
         card(T('Клиенты в туннеле'), clBox, { icon: 'users', flush: true, right: el('a', { class: 'btn sm ghost', href: '#/clients' }, T('Все')) }),
         card(T('Доступность каналов'), upBox, { icon: 'okc' })),
+      el('div', { class: 'spacer' }),
+      reportCard(),
     ]);
     function kpi(lbl, ic, val, sub, extra, tone, go, hint) {
       const k = el('button', { class: 'card kpi' + (tone ? ' t-' + tone : ''), type: 'button', title: hint || '', onclick: go },
@@ -1348,6 +1351,12 @@
     DIRECT_SUBNETS: { t: 'list', ph: '95.173.128.0/19', hint: T('Адреса и подсети, куда устройства под PBR ходят напрямую.') },
     LEAK_GUARD: { t: 'bool', hint: T('Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.') },
     LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['route', T('Через туннель')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR: «Блокировать» (по умолчанию) — устройства идут по IPv4 через туннель; «Через туннель» — IPv6 тоже идёт через туннель, если сервер выдал туннелю IPv6-адрес (иначе отклоняется); «Не трогать» — IPv6 идёт мимо туннеля.') },
+    LISTS_MODE: { t: 'choice', opts: [['off', T('Всё (как настроено в UniFi)')], ['blocked', T('Только заблокированное')], ['geoip', T('Всё, кроме выбранных стран')]], hint: T('Для устройств под PBR (и дополнительных маршрутов). «Только заблокированное» — через туннель идут только адреса из списков заблокированного, остальное напрямую. «Всё, кроме стран» — напрямую идут только адреса выбранных стран (умный дом с серверами в Китае, местные сервисы), остальное через туннель. Сужает то, что UniFi уже отправила в туннель: для «Всё, кроме стран» правило PBR устройства должно вести весь его трафик (назначение — Internet).') },
+    GEO_COUNTRIES: { t: 'text', ph: 'ru cn by kz', hint: T('Коды стран через пробел; их адреса идут напрямую в режиме «Всё, кроме выбранных стран».') },
+    LIST_URLS: { t: 'list', ph: 'https://antifilter.download/list/allyouneed.lst', hint: T('Списки заблокированного (по сети IPv4 на строку). Пусто — antifilter.download. Обновляются раз в сутки; не скачались — остаются прежние.') },
+    DNS_INTERCEPT: { t: 'bool', hint: T('Устройства с «зашитым» DNS (8.8.8.8, 114.114.114.114 — телевизоры, умный дом) спрашивают DNS у роутера: домены через туннель, исключения и правила UniFi по доменам работают и для них. Чтобы сам роутер спрашивал DNS через туннель — включите «Весь DNS роутера через туннель». Фильтр контента UniFi не обходится.') },
+    DNS_CLIENTS: { t: 'list', ph: '192.168.1.50\n192.168.1.64/28', hint: T('Чей DNS перехватывать. Пусто — вся LAN.') },
+    DNS_BLOCK_DOT: { t: 'bool', hint: T('Отказ DNS-over-TLS (порт 853, «Частный DNS» Android) и DNS по IPv6 к чужим серверам — устройства переходят на обычный DNS через роутер. DNS-over-HTTPS в браузерах так не перехватить: его отключают в настройках браузера.') },
     UI_FIX: { t: 'bool', hint: T('Соединения самого роутера с облаком UniFi (unifi.ui.com) — через туннель. Нужно, если ui.com недоступен напрямую.') },
     UI_DOMAINS: { t: 'list', hint: T('Домены облака UniFi.') },
     UI_DNS: { t: 'text', hint: T('DNS-сервер для доменов UniFi (запрос уходит через туннель).') },
@@ -1376,7 +1385,7 @@
         ta.value = v.split(/\s+/).filter(Boolean).join('\n');
         c = ta; ctl[k] = () => ta.value.split(/[\s,]+/).filter(Boolean).join(' ');
       } else {
-        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || '' });
+        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || sp.ph || '' });
         c = sp.unit ? el('div', { class: 'input-group' }, inp, el('span', { class: 'muted row' }, sp.unit)) : inp;
         ctl[k] = () => inp.value.trim();
       }
@@ -1424,7 +1433,9 @@
       pbr,
       settingsForm(T('Домены через туннель'), 'globe', ['TUN_DOMAINS', 'TUN_CLIENTS'], d),
       settingsForm(T('Исключения: напрямую мимо туннеля'), 'link', ['DIRECT_DOMAINS', 'DIRECT_SUBNETS'], d),
-      settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6', 'DNS_ALL_TUNNEL'], d),
+      settingsForm(T('Списки и GeoIP'), 'layers', ['LISTS_MODE', 'GEO_COUNTRIES', 'LIST_URLS'], d, listsStatus()),
+      settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6'], d),
+      settingsForm(T('DNS устройств'), 'search', ['DNS_INTERCEPT', 'DNS_CLIENTS', 'DNS_BLOCK_DOT', 'DNS_ALL_TUNNEL'], d),
       settingsForm(T('VPN-сервер роутера'), 'users', ['EXTRA_SUBNETS'], d),
       settingsForm(T('Облако UniFi'), 'globe', ['UI_FIX', 'UI_DOMAINS', 'UI_DNS'], d));
   };
@@ -2602,12 +2613,24 @@
           el('div', { class: 'field' }, el('label', null, T('Новых наборов')), cnt, el('span', { class: 'hint' }, T('1–12; первым меряется текущий')))),
         el('label', { class: 'row' }, act, T('Разрешить на активном канале (трафик устройств на время подбора пойдёт с перерывами)')),
         el('div', { class: 'row' }, go),
+        autoRow(r),
         r.rows.length ? el('div', null, el('div', { class: 'small muted' }, T('Последний подбор: ') + r.head.tunnel + ' · ' + (r.head.mode === 'server' ? T('роутер и VPS') : T('только роутер')) + ' · ' + fmtTime(r.head.ts, true)),
           el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Набор')), el('th', null, T('Связь')),
             el('th', null, T('Потери · задержка · скорость')), el('th', null, T('Оценка')), el('th', null, T('Параметры')), el('th', null, ''))), el('tbody', null, rows)))) : null,
         log);
       if (r.running && !polling) follow();
     };
+    function autoRow(r) {   // #36: подбор сам при деградации неактивного канала, итог — в Telegram с кнопкой «Применить»
+      const cb = el('input', { type: 'checkbox', checked: r.auto });
+      cb.addEventListener('change', async () => {
+        try { await api('/api/settings', { values: { AUTO_TUNE: cb.checked ? 'yes' : 'no' } }); ok(T('Сохранено')); } catch (e) { cb.checked = !cb.checked; err(e); }
+      });
+      return el('div', { class: 'setting' },
+        el('div', { class: 'txt' }, el('b', null, T('Подбирать самому при деградации')),
+          el('span', null, T('Неактивный канал 15 минут без handshake или с потерями выше порога — роутер сам подбирает «только роутер» (не чаще раза в сутки на канал) и присылает в Telegram лучший набор с кнопкой «Применить». Активный канал не трогается.')),
+          r.auto && !r.bot ? el('span', { class: 'badge warn' }, T('нужен Telegram-бот (служба awg-bot)')) : null),
+        el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, cb, el('span', { class: 'knob' }))));
+    }
     async function follow() {
       if (polling) return;
       polling = true;
@@ -2624,6 +2647,97 @@
     }
     load();
     return card(T('Подбор параметров обфускации'), box, { icon: 'shield' });
+  }
+  // списки и GeoIP (#38): состояние наборов и кнопка «Обновить списки» над формой настроек
+  function listsStatus() {
+    const box = el('div', { class: 'stack' });
+    let polling = false;
+    const load = async () => {
+      let r;
+      try { r = await api('/api/lists'); } catch (e) { replace(box, el('div', { class: 'muted small' }, String(e.message || e))); return; }
+      const st = r.status || {}, sets = st.sets || {};
+      if (st.mode === 'off' || !st.mode) { replace(box, el('p', { class: 'muted small' }, T('Сейчас выключено: устройства под PBR идут через туннель целиком. Выберите режим и нажмите «Применить» — списки скачаются сами.'))); return; }
+      const k = st.mode === 'geoip' ? 'geo' : 'blocked', x = sets[k] || {};
+      const what = st.mode === 'geoip' ? T('Адресов стран ') + (st.countries || '').toUpperCase().trim() + ': ' : T('Сетей в списке заблокированного: ');
+      const badge = !r.guard ? el('span', { class: 'badge crit' }, T('служба awg-guard не запущена'))
+        : x.set > 0 ? el('span', { class: 'badge ok' }, T('работает'))
+          : el('span', { class: 'badge warn' }, T('набор пуст — пока всё идёт через туннель'));
+      const go = el('button', { class: 'btn sm', disabled: r.running }, icon('refresh', 'sm'), r.running ? T('Обновляется…') : T('Обновить списки'));
+      go.addEventListener('click', () => busy(go, async () => {
+        try { ok(TM((await api('/api/lists/update', {})).msg)); follow(); } catch (e) { err(e); }
+      }));
+      const log = el('div', { class: 'out' + (r.log && r.running ? '' : ' hidden') });
+      if (r.log) paint(log, r.log);
+      const showLog = el('button', { class: 'btn sm ghost' + (r.log ? '' : ' hidden') }, T('Журнал'));
+      showLog.addEventListener('click', () => log.classList.toggle('hidden'));
+      replace(box,
+        el('div', { class: 'row' }, badge, el('span', { class: 'small' }, what, el('b', null, String(x.set || 0))),
+          el('span', { class: 'small muted' }, T('обновлено: ') + (x.age >= 0 ? fmtAge(x.age) : T('никогда'))),
+          x.stale && x.age >= 0 ? el('span', { class: 'badge warn' }, T('собрано для прежних настроек')) : null, go, showLog),
+        log);
+      if (r.running && !polling) follow();
+    };
+    async function follow() {
+      if (polling) return;
+      polling = true;
+      for (let i = 0; i < 100; i++) {
+        await new Promise((ok2) => setTimeout(ok2, 3000));
+        let x;
+        try { x = await api('/api/lists'); } catch (e) { continue; }
+        const lg = box.querySelector('.out');
+        if (lg) { lg.classList.remove('hidden'); paint(lg, x.log); }
+        if (!x.running) break;
+      }
+      polling = false;
+      load();
+    }
+    load();
+    return box;
+  }
+  // отчёт за неделю / 30 дней (#41): каналы, скорость, маршруты, трафик по устройствам
+  function reportCard() {
+    const box = el('div', { class: 'stack' }, el('div', { class: 'muted small' }, T('Загрузка…')));
+    let days = 7;
+    const seg = el('div', { class: 'seg' });
+    const pct = (v) => (v == null ? '—' : v + '%');
+    const tbl = (heads, rows) => el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' },
+      el('thead', null, el('tr', null, heads.map((x, i) => el('th', { class: i ? 'r' : '' }, x)))),
+      el('tbody', null, rows.map((r) => el('tr', null, r.map((x, i) => el('td', { class: i ? 'r mono small' : '' }, x)))))));
+    const load = async () => {
+      let r;
+      try { r = await api('/api/report?days=' + days); } catch (e) { replace(box, el('div', { class: 'alert crit' }, icon('alert'), el('div', null, String(e.message || e)))); return; }
+      const m = r.main;
+      const parts = [
+        el('div', { class: 'row small' },
+          el('span', null, T('Основной канал '), el('b', null, r.main_name), ': ', el('b', null, pct(m.on_main_pct)), T(' времени')),
+          el('span', { class: 'muted' }, T('вне его ') + fmtDur(m.off_main_sec) + T(' · переключений ') + (m.switch + m.degrade) + T(' · возвратов ') + m.return),
+          r.coverage < 90 ? el('span', { class: 'badge warn' }, T('данных ') + r.coverage + '%') : null),
+      ];
+      if (r.tunnels.length) parts.push(tbl([T('Канал'), T('Доступность'), 'RTT', T('Потери'), T('Трафик'), T('Активен')],
+        r.tunnels.map((t) => [el('b', null, t.label || t.name), pct(t.avail), t.rtt == null ? '—' : t.rtt + T(' мс'), pct(t.loss), fmtBytes(t.bytes), fmtDur(t.active_min * 60)])));
+      if (r.speed.length) parts.push(el('div', null, el('div', { class: 'small muted' }, T('Скорость — среднее по замерам')),
+        tbl([T('Интерфейс'), T('Загрузка'), T('Отдача'), T('Задержка'), T('Замеров')],
+          r.speed.map((s) => [s.iface, fmtBits(s.down_bps), fmtBits(s.up_bps), s.ping_ms ? s.ping_ms + T(' мс') : '—', String(s.n)]))));
+      if (r.routes.length) parts.push(el('div', null, el('div', { class: 'small muted' }, T('Дополнительные маршруты')),
+        tbl([T('Маршрут'), T('На первом канале'), T('Переключений'), T('Время по каналам')],
+          r.routes.map((x) => [el('b', null, x.label || x.id), pct(x.first_pct), String(x.switch),
+            x.on.map((o) => (o.tunnel || T('без канала')) + ' ' + fmtDur(o.minutes * 60)).join(' · ') || '—']))));
+      const acct = el('input', { type: 'checkbox', checked: r.acct });
+      acct.addEventListener('change', async () => {
+        try { const x = await api('/api/settings', { values: { TRAFFIC_ACCT: acct.checked ? 'yes' : 'no' } }); ok(TM(x.msg.split('\n').pop() || T('Сохранено'))); if (SETTINGS_CACHE) SETTINGS_CACHE.values.TRAFFIC_ACCT = acct.checked ? 'yes' : 'no'; } catch (e) { acct.checked = !acct.checked; err(e); }
+      });
+      parts.push(el('div', null,
+        el('label', { class: 'row' }, el('span', { class: 'switch' }, acct, el('span', { class: 'knob' })), el('b', null, T('Трафик через туннели по устройствам')),
+          el('span', { class: 'muted small' }, T('счётчики в ipset; на трафик не влияют; данные раз в 10 минут'))),
+        r.acct ? (r.devices.length ? tbl([T('Устройство'), T('Из туннеля'), T('В туннель')],
+          r.devices.map((d) => [el('span', null, el('b', null, d.name || d.ip), d.name ? el('span', { class: 'muted small' }, ' ' + d.ip) : null), fmtBytes(d.down), fmtBytes(d.up)]))
+          : el('div', { class: 'muted small' }, T('Пока нет данных — первые появятся через 10 минут.'))) : null));
+      replace(box, parts);
+    };
+    const segBtn = (d, t) => el('button', { class: d === days ? 'on' : '', onclick: (e) => { days = d; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === e.currentTarget)); load(); } }, t);
+    add(seg, [segBtn(7, T('7 дн')), segBtn(30, T('30 дн'))]);
+    load();
+    return card(T('Отчёт'), box, { icon: 'okc', right: seg });
   }
   // ===================================================================== QR-код (байтовый режим, уровень M, версии 1–10)
   function qrMatrix(text) {

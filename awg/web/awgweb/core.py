@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.6.1"
+VERSION = "1.7.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -403,6 +403,28 @@ def v_domains(v):
     return " ".join(out)
 
 
+def v_countries(v):
+    out = []
+    for x in str(v).replace(",", " ").replace(";", " ").split():
+        x = x.strip().lower()
+        if not re.match(r"^[a-z]{2}$", x):
+            raise ValueError("«%s» — не код страны (две латинские буквы: ru, cn, by, kz)" % x)
+        if x not in out:
+            out.append(x)
+    return " ".join(out)
+
+
+def v_https_urls(v):
+    out = []
+    for x in str(v).split():
+        u = urllib.parse.urlparse(x)
+        if u.scheme != "https" or not u.hostname or not DOMAIN_RE.match(u.hostname) or any(c in x for c in "\"'`$;|&<>"):
+            raise ValueError("«%s» — нужен адрес https://" % x[:80])
+        if x not in out:
+            out.append(x)
+    return " ".join(out)
+
+
 SETTINGS = {
     # ключ: (проверка, службы для перезапуска, описание)
     "RECOVER_SEC": (v_int(30, 86400), ["awg-failover"], "Возврат на приоритетный канал после, с"),
@@ -417,6 +439,14 @@ SETTINGS = {
     "DIRECT_SUBNETS": (v_subnets, ["awg-guard"], "Подсети напрямую (исключения)"),
     "LEAK_GUARD": (v_choice("yes", "no"), ["awg-guard"], "Защита от утечек"),
     "LEAK_V6": (v_choice("block", "off", "route"), ["awg-guard", "awg-failover"], "IPv6 устройств под PBR"),
+    "LISTS_MODE": (v_choice("off", "blocked", "geoip"), ["awg-guard"], "Что идёт через туннель"),
+    "GEO_COUNTRIES": (v_countries, ["awg-guard"], "Страны напрямую (GeoIP)"),
+    "LIST_URLS": (v_https_urls, ["awg-guard"], "Источники списков заблокированного"),
+    "DNS_INTERCEPT": (v_choice("yes", "no"), ["awg-guard"], "Перехват DNS устройств"),
+    "DNS_CLIENTS": (v_hosts, ["awg-guard"], "Для каких клиентов (пусто — вся LAN)"),
+    "DNS_BLOCK_DOT": (v_choice("yes", "no"), ["awg-guard"], "Запретить DNS-over-TLS и DNS по IPv6 мимо роутера"),
+    "TRAFFIC_ACCT": (v_choice("yes", "no"), [], "Учёт трафика по устройствам"),
+    "AUTO_TUNE": (v_choice("yes", "no"), [], "Автоподбор обфускации при деградации"),
     "UI_FIX": (v_choice("yes", "no"), ["awg-self"], "unifi.ui.com через туннель"),
     "UI_DOMAINS": (v_domains, ["awg-self"], "Домены UniFi"),
     "UI_DNS": (v_ipv4, ["awg-self"], "DNS для доменов UniFi"),
@@ -425,7 +455,7 @@ SETTINGS = {
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
-            "DNS_ALL_TUNNEL": "no"}
+            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no"}
 
 
 # ======================================================================= службы
@@ -475,7 +505,8 @@ def apply_services(services, e):
         "awg-self": e.get("UI_FIX") == "yes" or bool((e.get("TUN_DOMAINS", "") + e.get("DIRECT_DOMAINS", "")).strip())
                     or e.get("DNS_ALL_TUNNEL") == "yes",
         "awg-guard": e.get("LEAK_GUARD") == "yes" or bool((e.get("TUN_DOMAINS", "") + e.get("DIRECT_DOMAINS", "")
-                                                          + e.get("DIRECT_SUBNETS", "")).strip()),
+                                                          + e.get("DIRECT_SUBNETS", "")).strip())
+                     or e.get("LISTS_MODE", "off") != "off" or e.get("DNS_INTERCEPT") == "yes",
         "awg-metrics": svc_installed("awg-metrics") or bool(e.get("METRICS_PORT")),
     }
     for u in services:

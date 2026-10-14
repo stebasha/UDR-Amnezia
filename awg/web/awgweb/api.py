@@ -231,6 +231,9 @@ def api_settings_set(h, d):
     if errs:
         raise ValueError("; ".join(errs))
     e = env()
+    m = dict(e, **upd)
+    if m.get("LISTS_MODE") == "geoip" and not m.get("GEO_COUNTRIES", "").strip():
+        raise ValueError("для GeoIP укажите страны, которые идут напрямую (например: ru cn by kz)")
     changed = {k: v for k, v in upd.items() if e.get(k, DEFAULTS.get(k, "")) != v}
     if not changed:
         return {"ok": True, "msg": "изменений нет"}
@@ -243,6 +246,9 @@ def api_settings_set(h, d):
                 if u not in svcs:
                     svcs.append(u)
         msgs = apply_services(svcs, e)
+    if "TRAFFIC_ACCT" in changed:          # учёт трафика (#41): правила ставит/убирает сборщик — сразу, не через 10 минут
+        threading.Thread(target=SAMPLER.acct, daemon=True).start()
+        msgs.append("учёт трафика по устройствам: %s" % ("включён" if changed["TRAFFIC_ACCT"] == "yes" else "выключен, правила убраны"))
     h.act("settings", changed)
     return {"ok": True, "msg": "сохранено: %s\n%s" % (", ".join(changed), "\n".join(msgs))}
 

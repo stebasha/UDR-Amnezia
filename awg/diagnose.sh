@@ -143,6 +143,13 @@ if [ -n "$TABLE" ] && [ -n "$MARK" ]; then
     iptables -S FORWARD 2>/dev/null | grep '^-A' | head -n1 | grep -q -- '-j AWG_GUARD' && ok "защита от утечек (awg-guard) стоит первой в FORWARD" \
       || no "защита от утечек включена, но её цепочка не первая в FORWARD" "systemctl restart awg-guard; $DD/guard.sh check"
   fi
+  if [ "${LISTS_MODE:-off}" != off ]; then   # списки и GeoIP (#38): пустой набор — не ошибка (всё идёт через туннель), но режим не действует
+    s38=AWG_LIST; [ "$LISTS_MODE" = geoip ] && s38=AWG_GEO
+    n38=$(ipset list "$s38" 2>/dev/null | sed -n 's/^Number of entries: //p')
+    if ! systemctl is-active --quiet awg-guard 2>/dev/null; then wa "LISTS_MODE=$LISTS_MODE, но awg-guard не работает: списки не действуют" "панель → Маршрутизация → Списки и GeoIP → Применить"
+    elif [ "${n38:-0}" -gt 0 ]; then ok "списки ($LISTS_MODE): в наборе $s38 сетей $n38"
+    else wa "списки ($LISTS_MODE): набор $s38 пуст — всё под PBR идёт через туннель" "awgctl lists update; журнал — $DD/lists.log"; fi
+  fi
 
   # ---------------------------------------------------------------- 5. IPv6
   sec "5. IPv6"

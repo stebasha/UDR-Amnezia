@@ -129,6 +129,9 @@ def main():
     dd = env["DD"]
     ha = os.path.join(R, "awg/ha.py")
     env["DD"] = dd
+    os.makedirs(os.path.join(dd, "route.d"), exist_ok=True)     # дополнительный маршрут (#40)
+    open(os.path.join(dd, "route.d", "us.env"), "w").write('RAIL_IF="wgclt2"\nPRIO="32507"\nMARK="0x6c0000/0x7e0000"\nTABLE="179"\nTUNNELS="awgbackup awgmain"\nLABEL="США"\n')
+    open(os.path.join(env["AWG_RUN"], "awg-state-us"), "w").write("ACTIVE=awgbackup\n")
 
     # ---------- ha.py test: discovery и состояние
     b = Broker()
@@ -145,8 +148,12 @@ def main():
     check("кнопки перезапуска туннелей, перезагрузки нет", ("homeassistant/button/%s/awgmain_restart/config" % node) in cfgs
           and ("homeassistant/button/%s/reboot/config" % node) not in cfgs)
     check("у сущностей общее устройство и доступность", all(c["device"]["identifiers"] == [node] and c["availability_topic"].endswith("/status") for c in cfgs.values()))
+    rs = cfgs.get("homeassistant/select/%s/route_us_mode/config" % node, {})
+    check("маршрут: select канала с цепочкой маршрута, датчики", rs.get("options") == ["auto", "awgbackup", "awgmain"] and rs.get("command_topic", "").endswith("/set/route/us")
+          and "США" in rs.get("name", "") and ("homeassistant/sensor/%s/route_us_active/config" % node) in cfgs, rs)
     st, ret = b.last("udr_amnezia/%s/state" % node)
     st = json.loads(st or "{}")
+    check("состояние: маршрут с каналом и режимом", st.get("routes", {}).get("us", {}).get("active") == "awgbackup" and st["routes"]["us"]["mode"] == "auto", st.get("routes"))
     check("состояние: активный канал, режим, туннели", st.get("active") == "awgmain" and st.get("mode") == "auto" and "awgmain" in st.get("tunnels", {}) and ret, st)
     av, _ = b.last("udr_amnezia/%s/status" % node)
     check("доступность online", av == "online", av)
@@ -170,7 +177,7 @@ def main():
             if b3.subs:
                 break
             time.sleep(0.1)
-        check("служба подписана на команды (без перезагрузки)", sorted(x.rsplit("/", 1)[-1] for x in b3.subs) == ["mode", "restart"], b3.subs)
+        check("служба подписана на команды (без перезагрузки)", sorted(x.rsplit("/", 1)[-1] for x in b3.subs) == ["+", "mode", "restart"], b3.subs)
         forcef = os.path.join(env["AWG_RUN"], "awg-force")
         b3.send("udr_amnezia/%s/set/mode" % node, "awgbackup")
         time.sleep(1.5)
@@ -179,6 +186,18 @@ def main():
         b3.send("udr_amnezia/%s/set/mode" % node, "auto")
         time.sleep(1.5)
         check("select auto → автовыбор", not os.path.exists(forcef))
+        b3.send("udr_amnezia/%s/set/route/us" % node, "awgmain")
+        time.sleep(1.5)
+        fu = os.path.join(env["AWG_RUN"], "awg-force-us")
+        check("маршрут: select → ручной выбор канала маршрута", os.path.exists(fu) and open(fu).read().strip() == "awgmain",
+              open(fu).read() if os.path.exists(fu) else "нет файла")
+        b3.send("udr_amnezia/%s/set/route/us" % node, "auto")
+        time.sleep(1.5)
+        check("маршрут: auto → автовыбор", not os.path.exists(fu))
+        os.remove(os.path.join(dd, "route.d", "us.env"))
+        time.sleep(12)
+        gone = [pl for t, pl, r in b3.pubs if t == "homeassistant/select/%s/route_us_mode/config" % node]
+        check("убранный маршрут исчезает из HA", gone and gone[-1] == "", gone[-2:])
         b3.send("udr_amnezia/%s/set/reboot" % node, "reboot")
         b3.send("udr_amnezia/%s/set/mode" % node, "evil; reboot")
         time.sleep(1.5)

@@ -12,6 +12,12 @@
     DIRECT_SUBNETS: { t: 'list', ph: '95.173.128.0/19', hint: T('Адреса и подсети, куда устройства под PBR ходят напрямую.') },
     LEAK_GUARD: { t: 'bool', hint: T('Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.') },
     LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['route', T('Через туннель')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR: «Блокировать» (по умолчанию) — устройства идут по IPv4 через туннель; «Через туннель» — IPv6 тоже идёт через туннель, если сервер выдал туннелю IPv6-адрес (иначе отклоняется); «Не трогать» — IPv6 идёт мимо туннеля.') },
+    LISTS_MODE: { t: 'choice', opts: [['off', T('Всё (как настроено в UniFi)')], ['blocked', T('Только заблокированное')], ['geoip', T('Всё, кроме выбранных стран')]], hint: T('Для устройств под PBR (и дополнительных маршрутов). «Только заблокированное» — через туннель идут только адреса из списков заблокированного, остальное напрямую. «Всё, кроме стран» — напрямую идут только адреса выбранных стран (умный дом с серверами в Китае, местные сервисы), остальное через туннель. Сужает то, что UniFi уже отправила в туннель: для «Всё, кроме стран» правило PBR устройства должно вести весь его трафик (назначение — Internet).') },
+    GEO_COUNTRIES: { t: 'text', ph: 'ru cn by kz', hint: T('Коды стран через пробел; их адреса идут напрямую в режиме «Всё, кроме выбранных стран».') },
+    LIST_URLS: { t: 'list', ph: 'https://antifilter.download/list/allyouneed.lst', hint: T('Списки заблокированного (по сети IPv4 на строку). Пусто — antifilter.download. Обновляются раз в сутки; не скачались — остаются прежние.') },
+    DNS_INTERCEPT: { t: 'bool', hint: T('Устройства с «зашитым» DNS (8.8.8.8, 114.114.114.114 — телевизоры, умный дом) спрашивают DNS у роутера: домены через туннель, исключения и правила UniFi по доменам работают и для них. Чтобы сам роутер спрашивал DNS через туннель — включите «Весь DNS роутера через туннель». Фильтр контента UniFi не обходится.') },
+    DNS_CLIENTS: { t: 'list', ph: '192.168.1.50\n192.168.1.64/28', hint: T('Чей DNS перехватывать. Пусто — вся LAN.') },
+    DNS_BLOCK_DOT: { t: 'bool', hint: T('Отказ DNS-over-TLS (порт 853, «Частный DNS» Android) и DNS по IPv6 к чужим серверам — устройства переходят на обычный DNS через роутер. DNS-over-HTTPS в браузерах так не перехватить: его отключают в настройках браузера.') },
     UI_FIX: { t: 'bool', hint: T('Соединения самого роутера с облаком UniFi (unifi.ui.com) — через туннель. Нужно, если ui.com недоступен напрямую.') },
     UI_DOMAINS: { t: 'list', hint: T('Домены облака UniFi.') },
     UI_DNS: { t: 'text', hint: T('DNS-сервер для доменов UniFi (запрос уходит через туннель).') },
@@ -40,7 +46,7 @@
         ta.value = v.split(/\s+/).filter(Boolean).join('\n');
         c = ta; ctl[k] = () => ta.value.split(/[\s,]+/).filter(Boolean).join(' ');
       } else {
-        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || '' });
+        const inp = el('input', { class: 'input', value: v, inputmode: sp.t === 'num' ? 'numeric' : 'text', placeholder: sp.unit || sp.ph || '' });
         c = sp.unit ? el('div', { class: 'input-group' }, inp, el('span', { class: 'muted row' }, sp.unit)) : inp;
         ctl[k] = () => inp.value.trim();
       }
@@ -88,7 +94,9 @@
       pbr,
       settingsForm(T('Домены через туннель'), 'globe', ['TUN_DOMAINS', 'TUN_CLIENTS'], d),
       settingsForm(T('Исключения: напрямую мимо туннеля'), 'link', ['DIRECT_DOMAINS', 'DIRECT_SUBNETS'], d),
-      settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6', 'DNS_ALL_TUNNEL'], d),
+      settingsForm(T('Списки и GeoIP'), 'layers', ['LISTS_MODE', 'GEO_COUNTRIES', 'LIST_URLS'], d, listsStatus()),
+      settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6'], d),
+      settingsForm(T('DNS устройств'), 'search', ['DNS_INTERCEPT', 'DNS_CLIENTS', 'DNS_BLOCK_DOT', 'DNS_ALL_TUNNEL'], d),
       settingsForm(T('VPN-сервер роутера'), 'users', ['EXTRA_SUBNETS'], d),
       settingsForm(T('Облако UniFi'), 'globe', ['UI_FIX', 'UI_DOMAINS', 'UI_DNS'], d));
   };

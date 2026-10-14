@@ -3,30 +3,6 @@
 from .tunnels import *  # noqa: F401,F403  (всё из предыдущих модулей)
 
 # ======================================================================= клиенты в туннеле (conntrack)
-LEASE_FILES = [os.environ.get("AWG_LEASES", "/run/dnsmasq.leases"), "/run/dnsmasq.leases", "/run/dnsmasq.dhcp.leases", "/var/run/dnsmasq.leases", "/tmp/dnsmasq.leases",
-               "/data/udapi-config/dnsmasq.lease", "/var/lib/misc/dnsmasq.leases"]
-
-
-def leases():
-    names = {}
-    files = list(LEASE_FILES)
-    try:
-        files += ["/run/" + f for f in os.listdir("/run") if f.startswith("dnsmasq") and f.endswith("leases")]
-    except OSError:
-        pass
-    for f in files:
-        for line in read_file(f).splitlines():
-            p = line.split()
-            if len(p) >= 4 and is_ipv4(p[2]):
-                names[p[2]] = {"mac": p[1], "name": "" if p[3] == "*" else p[3]}
-    out = run(["ip", "-4", "neigh", "show"], timeout=5)[1]
-    for line in out.splitlines():
-        p = line.split()
-        if p and is_ipv4(p[0]) and "lladdr" in p:
-            names.setdefault(p[0], {"mac": p[p.index("lladdr") + 1], "name": ""})
-    return names
-
-
 def conntrack_lines():
     rc, out = run(["conntrack", "-L", "-f", "ipv4"], timeout=15)
     if rc == 0 and "src=" in out:

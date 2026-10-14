@@ -9,6 +9,14 @@ ip6tables(){ command ip6tables -w 10 "$@"; }
 #     IPv6 (LEAK_V6=block, по умолчанию): помеченный IPv6-трафик и IPv6 клиентов VPN-сервера в WAN не выпускаются.
 #     LEAK_V6=route (#23): помеченный IPv6 сторож ведёт через туннель; в WAN он всё так же не выпускается.
 #     Метки дополнительных маршрутов (#22, route.d/*.env) защищаются так же, как основная.
+#  4) Списки и GeoIP (#38, LISTS_MODE): blocked — устройства под PBR идут через туннель только к адресам из списков
+#     заблокированного (набор AWG_LIST), geoip — напрямую к адресам стран GEO_COUNTRIES (набор AWG_GEO). Наборы
+#     наполняет lists.sh; служба раз в час проверяет, не пора ли обновить (раз в сутки).
+#  5) DNS устройств (#39, DNS_INTERCEPT=yes): запросы клиентов LAN (DNS_CLIENTS, пусто = вся LAN) к чужим DNS-серверам
+#     (порт 53) заворачиваются на dnsmasq роутера — домены через туннель, исключения и правила UniFi по доменам видят и
+#     такие устройства; с DNS_ALL_TUNNEL=yes роутер спрашивает DNS через туннель. DNS_BLOCK_DOT=yes — ещё отказ DNS-over-TLS
+#     (853) и DNS по IPv6 мимо роутера, чтобы устройства перешли на обычный DNS. Правило — последним в nat PREROUTING:
+#     фильтр контента UniFi (свой перехват DNS) срабатывает раньше и не обходится.
 #  2) Домены через туннель (TUN_DOMAINS): клиенты LAN (TUN_CLIENTS, пусто = вся LAN) ходят на эти домены через AWG.
 #     Адреса доменов наполняют ipset AWG_DOM (это делает dnsmasq по файлу, который пишет self.sh).
 #  3) Исключения (DIRECT_DOMAINS, DIRECT_SUBNETS): клиенты под PBR ходят туда напрямую, мимо туннеля.
@@ -24,11 +32,16 @@ CD=AWG_DOM_PRE      # mangle PREROUTING, в начало: маркировка �
 CX=AWG_DIRECT_POST  # mangle PREROUTING, в конец: снятие метки для исключений
 DOMSET=AWG_DOM
 DIRSET=AWG_DIRECT
+LISTSET=AWG_LIST    # списки заблокированного (#38), наполняет lists.sh
+GEOSET=AWG_GEO      # адреса стран GEO_COUNTRIES (#38)
+CN=AWG_DNS_PRE      # nat PREROUTING, в конец: перехват DNS клиентов (#39)
+CQ=AWG_DNS_FWD      # filter FORWARD, сразу после $CF: отказ DoT и DNS по IPv6 мимо роутера (#39)
 HASHF=/tmp/awg-guard.hash
 
 load(){
   TABLE=""; MARK=""; WANIF=""
-  LEAK_GUARD=yes; LEAK_V6=block; TUN_DOMAINS=""; TUN_CLIENTS=""; DIRECT_DOMAINS=""; DIRECT_SUBNETS=""; EXTRA_SUBNETS=""
+  LEAK_GUARD=yes; LEAK_V6=block; TUN_DOMAINS=""; TUN_CLIENTS=""; DIRECT_DOMAINS=""; DIRECT_SUBNETS=""; EXTRA_SUBNETS=""; LISTS_MODE=off; GEO_COUNTRIES=""
+  DNS_INTERCEPT=no; DNS_CLIENTS=""; DNS_BLOCK_DOT=no
   [ -r "$DD/awg.env" ] && . "$DD/awg.env"
   MASK=${MARK#*/}; [ "$MASK" = "$MARK" ] && MASK=0xffffffff
   ROUTE_MARKS=$(sed -n 's/^MARK="\{0,1\}\([0-9a-fx\/]*\)"\{0,1\}$/\1/p' "$DD"/route.d/*.env 2>/dev/null | sort -u | tr '\n' ' ')
@@ -65,6 +78,14 @@ jump_place(){ # jump_place first|last команда таблица родите
   if [ "$pos" = first ]; then $cmd -t "$t" -I "$par" 1 -j "$ch" 2>/dev/null; else $cmd -t "$t" -A "$par" -j "$ch" 2>/dev/null; fi
 }
 jump_first(){ jump_place first "$@"; }
+jump_nth(){  # jump_nth N команда таблица родитель цепочка — переход ровно один и N-м правилом
+  local k=$1 cmd=$2 t=$3 par=$4 ch=$5 o n i
+  o=$($cmd -t "$t" -S "$par" 2>/dev/null) || return 0
+  n=$(printf '%s\n' "$o" | grep -c -x -- "-A $par -j $ch")
+  [ "$n" = 1 ] && [ "$(printf '%s\n' "$o" | grep '^-A' | sed -n "${k}p")" = "-A $par -j $ch" ] && return 0
+  for ((i=0; i<n; i++)); do $cmd -t "$t" -D "$par" -j "$ch" 2>/dev/null || return 0; done
+  $cmd -t "$t" -I "$par" "$k" -j "$ch" 2>/dev/null || $cmd -t "$t" -A "$par" -j "$ch" 2>/dev/null
+}
 jump_last(){ jump_place last "$@"; }
 BERR=0
 # команда сборки цепочки; код 4 = блокировка xtables не освободилась: цепочки соберём заново через 5 с
@@ -74,6 +95,10 @@ chains_ok(){  # все наши цепочки на месте (UniFi при п�
   if [ "$LEAK_GUARD" = yes ]; then
     iptables -t filter -S $CF >/dev/null 2>&1 || return 1
     if [ "$V6ON" = 1 ] && command -v ip6tables >/dev/null; then ip6tables -t filter -S $CF >/dev/null 2>&1 || return 1; fi
+  fi
+  if [ "$DNS_INTERCEPT" = yes ]; then
+    iptables -t nat -S $CN >/dev/null 2>&1 || return 1
+    if [ "$DNS_BLOCK_DOT" = yes ]; then iptables -t filter -S $CQ >/dev/null 2>&1 || return 1; fi
   fi
   return 0
 }
@@ -112,12 +137,62 @@ build_dom(){
   jump_first iptables mangle PREROUTING $CD
 }
 
+dns_src(){  # источники для перехвата DNS: адреса из DNS_CLIENTS или вся LAN (br+)
+  local c
+  if [ -n "$DNS_CLIENTS" ]; then for c in $DNS_CLIENTS; do echo "-s $c"; done; else echo "-i br+"; fi
+}
+fwd_pos(){ [ "$LEAK_GUARD" = yes ] && echo 2 || echo 1; }   # $CQ — сразу после $CF
+build_dns(){
+  local a p
+  if [ "$DNS_INTERCEPT" != yes ]; then
+    rm_chain iptables nat PREROUTING $CN; rm_chain iptables filter FORWARD $CQ; rm_chain ip6tables filter FORWARD $CQ; return 0
+  fi
+  iptables -t nat -N $CN 2>/dev/null; B iptables -t nat -F $CN
+  while read -r a; do
+    # shellcheck disable=SC2086
+    for p in udp tcp; do B iptables -t nat -A $CN $a -p $p --dport 53 -m addrtype ! --dst-type LOCAL -j REDIRECT --to-ports 53; done
+  done < <(dns_src)
+  jump_last iptables nat PREROUTING $CN
+  if [ "$DNS_BLOCK_DOT" = yes ]; then
+    iptables -t filter -N $CQ 2>/dev/null; B iptables -t filter -F $CQ
+    while read -r a; do
+      # shellcheck disable=SC2086
+      { B iptables -t filter -A $CQ $a -p tcp --dport 853 -j REJECT --reject-with tcp-reset
+        B iptables -t filter -A $CQ $a -p udp --dport 853 -j REJECT --reject-with icmp-port-unreachable; }
+    done < <(dns_src)
+    jump_nth "$(fwd_pos)" iptables filter FORWARD $CQ
+    # IPv6: у перехвата нет NAT66 — чужие DNS и DoT по IPv6 отклоняются (для всей LAN: IPv6-адреса клиентов из DNS_CLIENTS неизвестны)
+    if command -v ip6tables >/dev/null && [ -z "$DNS_CLIENTS" ]; then
+      ip6tables -t filter -N $CQ 2>/dev/null; B ip6tables -t filter -F $CQ
+      for p in udp tcp; do
+        B ip6tables -t filter -A $CQ -i br+ -p $p --dport 53 -j REJECT --reject-with icmp6-adm-prohibited
+        B ip6tables -t filter -A $CQ -i br+ -p $p --dport 853 -j REJECT --reject-with icmp6-adm-prohibited
+      done
+      jump_nth "$( [ "$LEAK_GUARD" = yes ] && [ "$V6ON" = 1 ] && echo 2 || echo 1)" ip6tables filter FORWARD $CQ
+    else rm_chain ip6tables filter FORWARD $CQ; fi
+  else rm_chain iptables filter FORWARD $CQ; rm_chain ip6tables filter FORWARD $CQ; fi
+}
+
+list_n(){ ipset list "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 build_direct(){
-  local n
+  local n m mk
   iptables -t mangle -N $CX 2>/dev/null; B iptables -t mangle -F $CX
   if [ -n "$MARK" ]; then
     for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$MASK"; done
     [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$MASK"
+    # списки и GeoIP (#38) — для меток основного и дополнительных маршрутов; пустой набор — правила нет (всё через туннель)
+    for m in $MARK $ROUTE_MARKS; do
+      mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
+      if [ "$LISTS_MODE" = geoip ] && [ "${GEON:-0}" -gt 0 ]; then
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -j MARK --set-xmark "0x0/$mk"
+      elif [ "$LISTS_MODE" = blocked ] && [ "${LISTN:-0}" -gt 0 ]; then
+        if [ -n "$TUN_DOMAINS" ]; then
+          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $DOMSET dst -j MARK --set-xmark "0x0/$mk"
+        else
+          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -j MARK --set-xmark "0x0/$mk"
+        fi
+      fi
+    done
   fi
   jump_last iptables mangle PREROUTING $CX
 }
@@ -134,17 +209,30 @@ apply_body(){
   W=$(wans | tr '\n' ' ')
   [ -n "$TUN_DOMAINS" ] && { ipset create $DOMSET hash:ip family inet timeout 43200 -exist 2>/dev/null; ipset create ${DOMSET}6 hash:ip family inet6 timeout 43200 -exist 2>/dev/null; }
   [ -n "$DIRECT_DOMAINS" ] && ipset create $DIRSET hash:ip family inet timeout 43200 -exist 2>/dev/null
-  h=$(printf 'g4|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$(for s in $EXTRA_SUBNETS; do sub_iface "$s"; done | tr '\n' ' ')" | md5sum | cut -c1-12)
+  LISTN=0; GEON=0
+  if [ "$LISTS_MODE" != off ] && [ -x "$DD/lists.sh" ]; then
+    { ipset list -n 2>/dev/null | grep -qx $LISTSET; } || "$DD/lists.sh" load >/dev/null 2>&1   # после загрузки роутера — из кэша
+    LISTN=$(list_n $LISTSET); GEON=$(list_n $GEOSET); LISTN=${LISTN:-0}; GEON=${GEON:-0}
+  fi
+  h=$(printf 'g6|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" "$([ "$LISTN" -gt 0 ] && echo L)$([ "$GEON" -gt 0 ] && echo G)" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$(for s in $EXTRA_SUBNETS; do sub_iface "$s"; done | tr '\n' ' ')" | md5sum | cut -c1-12)
   if [ "$(cat $HASHF 2>/dev/null)" != "$h" ] || ! chains_ok; then
     if [ "$LEAK_GUARD" = yes ]; then build_leak "$W"; else rm_chain iptables filter FORWARD $CF; rm_chain ip6tables filter FORWARD $CF; fi
     build_dom
     build_direct
+    build_dns
     if [ "$BERR" = 0 ]; then echo "$h" > $HASHF; else rm -f $HASHF; fi   # не всё применилось — повторим через 5 с
   fi
   # порядок цепочек относительно UniFi проверяем каждый проход (UniFi может переставить свои переходы)
   [ "$LEAK_GUARD" = yes ] && { jump_first iptables filter FORWARD $CF; [ "$V6ON" = 1 ] && jump_first ip6tables filter FORWARD $CF; }
   jump_first iptables mangle PREROUTING $CD
   jump_last iptables mangle PREROUTING $CX
+  if [ "$DNS_INTERCEPT" = yes ]; then
+    jump_last iptables nat PREROUTING $CN
+    if [ "$DNS_BLOCK_DOT" = yes ]; then
+      jump_nth "$(fwd_pos)" iptables filter FORWARD $CQ
+      command -v ip6tables >/dev/null && [ -z "$DNS_CLIENTS" ] && jump_nth "$( [ "$LEAK_GUARD" = yes ] && [ "$V6ON" = 1 ] && echo 2 || echo 1)" ip6tables filter FORWARD $CQ
+    fi
+  fi
   return 0
 }
 
@@ -153,6 +241,8 @@ remove(){
   rm_chain iptables filter FORWARD $CF; rm_chain ip6tables filter FORWARD $CF
   rm_chain iptables mangle PREROUTING $CD; rm_chain iptables mangle PREROUTING $CX
   ipset destroy $DOMSET 2>/dev/null; ipset destroy ${DOMSET}6 2>/dev/null; ipset destroy $DIRSET 2>/dev/null; rm -f "$WANF"
+  ipset destroy $LISTSET 2>/dev/null; ipset destroy $GEOSET 2>/dev/null
+  rm_chain iptables nat PREROUTING $CN; rm_chain iptables filter FORWARD $CQ; rm_chain ip6tables filter FORWARD $CQ
   rm -f $HASHF
 }
 
@@ -192,6 +282,23 @@ check(){
     ipset list -n 2>/dev/null | grep -qx $DOMSET && echo "OK     набор $DOMSET: адресов $(ipset list $DOMSET 2>/dev/null | sed -n '/^Members:/,$p' | tail -n +2 | grep -c .) (наполняется по мере DNS-запросов клиентов)" || { echo "FAIL   набора $DOMSET нет"; rc=1; }
     echo "INFO   клиенты: ${TUN_CLIENTS:-вся LAN (br+)}"
   fi
+  if [ "$DNS_INTERCEPT" = yes ]; then
+    if iptables -t nat -S PREROUTING 2>/dev/null | grep '^-A' | tail -n1 | grep -q -- "-j $CN"; then
+      echo "OK     DNS устройств (${DNS_CLIENTS:-вся LAN}): запросы к чужим DNS-серверам идут на роутер"
+    else echo "FAIL   перехват DNS включён, но правила $CN нет последним в nat PREROUTING"; rc=1; fi
+    if [ "$DNS_BLOCK_DOT" = yes ]; then
+      iptables -S FORWARD 2>/dev/null | grep -q -- "-j $CQ" && echo "OK     DNS-over-TLS (853) и DNS по IPv6 мимо роутера отклоняются" || { echo "FAIL   нет перехода в $CQ в FORWARD"; rc=1; }
+    fi
+    [ "${DNS_ALL_TUNNEL:-no}" = yes ] && echo "OK     роутер спрашивает DNS через туннель (DNS_ALL_TUNNEL=yes)" \
+      || echo "INFO   DNS_ALL_TUNNEL=no: роутер спрашивает DNS мимо туннеля (зашифрованно, если в UniFi включён DNS over HTTPS)"
+  fi
+  if [ "$LISTS_MODE" != off ]; then
+    local ln gn; ln=$(list_n $LISTSET); gn=$(list_n $GEOSET)
+    case "$LISTS_MODE" in
+      blocked) [ "${ln:-0}" -gt 0 ] && echo "OK     списки: через туннель только заблокированное ($ln сетей)" || { echo "WARN   списки: набор $LISTSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
+      geoip)   [ "${gn:-0}" -gt 0 ] && echo "OK     GeoIP: напрямую $(echo "$GEO_COUNTRIES" | tr 'a-z' 'A-Z') ($gn сетей), остальное через туннель" || { echo "WARN   GeoIP: набор $GEOSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
+    esac
+  fi
   if [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ]; then
     if iptables -t mangle -S PREROUTING 2>/dev/null | grep '^-A' | tail -n1 | grep -q -- "-j $CX"; then echo "OK     исключения ($DIRECT_DOMAINS $DIRECT_SUBNETS): правило стоит последним в mangle PREROUTING (после PBR UniFi)"
     else echo "FAIL   правило исключений не стоит последним в mangle PREROUTING"; rc=1; fi
@@ -200,10 +307,16 @@ check(){
 }
 
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; while :; do apply; sleep 5 & wait $!; done;;
+  run)    trap 'exit 0' TERM INT; k=0
+          while :; do
+            apply
+            # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
+            if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
+            k=$((k + 1)); sleep 5 & wait $!
+          done;;
   apply)  rm -f "$HASHF"; apply;;      # ручной запуск всегда пересобирает цепочки
   remove) remove;;
   check)  check;;
-  status) for t in "filter FORWARD $CF" "mangle PREROUTING $CD" "mangle PREROUTING $CX"; do set -- $t; echo "-- iptables -t $1 $3"; iptables -t "$1" -S "$3" 2>/dev/null; done; echo "-- ip6tables filter $CF"; ip6tables -S $CF 2>/dev/null;;
+  status) for t in "filter FORWARD $CF" "filter FORWARD $CQ" "mangle PREROUTING $CD" "mangle PREROUTING $CX" "nat PREROUTING $CN"; do set -- $t; echo "-- iptables -t $1 $3"; iptables -t "$1" -S "$3" 2>/dev/null; done; echo "-- ip6tables filter $CF"; ip6tables -S $CF 2>/dev/null;;
   *)      echo "использование: $0 [run|apply|remove|check|status]"; exit 1;;
 esac
