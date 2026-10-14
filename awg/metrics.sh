@@ -22,7 +22,12 @@ collect(){
   # одним вызовом: handshake всех туннелей, счётчики событий, активность служб (раз в 15 с — без лишних процессов)
   while read -r t _ ts; do [[ $ts =~ ^[0-9]+$ ]] || continue; [ -z "${HS[$t]:-}" ] || [ "$ts" -gt "${HS[$t]}" ] && HS[$t]=$ts; done \
     < <($AWG show all latest-handshakes 2>/dev/null)
-  while read -r n a; do EVC[$n]=$a; done < <(awk -F'|' '{c[$2]++} END{for (k in c) print k, c[k]}' "$DD/events.log" 2>/dev/null)
+  # счётчики событий пересчитываются, только когда журнал событий изменился (обычно — раз в часы, а не каждые 15 с)
+  local evsz; evsz=$(stat -c '%s.%Y' "$DD/events.log" 2>/dev/null)
+  if [ "$evsz" != "${EV_STAMP:-}" ]; then
+    EV_COUNTS=$(awk -F'|' '{c[$2]++} END{for (k in c) print k, c[k]}' "$DD/events.log" 2>/dev/null); EV_STAMP=$evsz
+  fi
+  while read -r n a; do [ -n "$n" ] && EVC[$n]=$a; done <<< "$EV_COUNTS"
   local svcs=(awg-failover) u i=0
   for u in awg-subnets awg-self awg-guard awg-notify awg-bot; do [ -f "/etc/systemd/system/$u.service" ] && svcs+=("$u"); done
   while read -r line; do SV[${svcs[$i]}]=$line; i=$((i + 1)); done < <(systemctl is-active "${svcs[@]}" 2>/dev/null)
