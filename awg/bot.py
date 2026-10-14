@@ -833,7 +833,7 @@ def monitor():
     while True:
         time.sleep(60)
         try:
-            h = P.system_health(hist=list(hist))
+            h = P.system_health(hist=list(hist), procs=False)
             hist.append({"t": P.now(), "cpu": h["cpu"], "data_free": P.disk_free_mb()})
             cur = {}
             for c in h["checks"]:

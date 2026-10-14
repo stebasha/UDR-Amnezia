@@ -1050,8 +1050,9 @@ def _kernel_events():
             "io": len(io), "lines": ([k["line"] for k in kills] + io)[-6:]}
 
 
-def system_health(cpu=None, hist=None):
-    """Показатели железа и проверки с понятным текстом: что не так и что делать."""
+def system_health(cpu=None, hist=None, procs=True):
+    """Показатели железа и проверки с понятным текстом: что не так и что делать.
+    procs=False — без списка процессов (обход /proc): боту, который проверяет здоровье каждую минуту, он не нужен."""
     mi = {}
     for line in read_file(os.path.join(PROC, "meminfo")).splitlines():
         p = line.split()
@@ -1080,7 +1081,7 @@ def system_health(cpu=None, hist=None):
         if k not in seen:
             seen.add(k)
             dl.append(d)
-    procs, nproc = top_procs()
+    procs, nproc = top_procs() if procs else ([], 0)
     ke = kernel_events()
     checks = []
 
