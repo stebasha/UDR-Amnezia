@@ -173,7 +173,7 @@ Out of memory: Killed process 777 (python3) total-vm:100000kB, anon-rss:90000kB
 oom_reaper: reaped process 777 (python3), now anon-rss:0kB"""
 _run = C.run
 C.run = lambda *a, **k: (0, KLOG)
-ke = C.kernel_events()
+ke = C._kernel_events()
 C.run = _run
 check("OOM: два завершения, а не семь строк; одно — лимит службы unifi", ke["oom"] == 2 and ke["oom_sys"] == 1 and dict(ke["oom_cg"]) == {"unifi": 1}
       and dict(ke["oom_sys_names"]) == {"python3": 1}, ke)

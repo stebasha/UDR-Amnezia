@@ -1019,8 +1019,19 @@ def read_int(p, default=-1):
     return int(v) if v.isdigit() else default
 
 
+_KE = {"t": 0.0, "v": None}
+
+
 def kernel_events():
-    """OOM и ошибки ввода-вывода за сутки из журнала ядра (если доступен)."""
+    """OOM и ошибки ввода-вывода за сутки из журнала ядра (если доступен). Журнал за сутки читается не чаще раза
+    в 5 минут: бот проверяет здоровье каждую минуту, панель — при каждом открытии страницы."""
+    if _KE["v"] is not None and time.time() - _KE["t"] < 300:
+        return _KE["v"]
+    _KE["v"], _KE["t"] = _kernel_events(), time.time()
+    return _KE["v"]
+
+
+def _kernel_events():
     rc, out = run(["journalctl", "-k", "--since", "-24h", "-q", "--no-pager", "-o", "cat"], timeout=10)
     if rc != 0:
         return {"oom": -1, "io": -1, "lines": []}
