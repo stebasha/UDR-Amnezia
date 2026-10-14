@@ -333,16 +333,16 @@ cleanup(){  # cleanup [all] — убрать маршруты туннелей; 
   return 0
 }
 
+STATE_LAST=""; STATE_T=0
 write_state(){
-  local i EPOCH_NOW; epoch EPOCH_NOW
-  {
-    echo "ACTIVE=${TUNS[$idx]}"
-    echo "FORCED=$forced"
-    echo "UPDATED=$EPOCH_NOW"
-    echo "TUNNELS=\"${TUNS[*]}\""
-    echo "ROUTE=$ROUTE"; echo "RAIL=${RAIL_IF:-}"; echo "TABLE=$TABLE"; echo "V6=$V6"
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
-  } > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF"
+  # файл переписывается (mv — отдельный процесс), только если состояние изменилось или прошло 10 с: UPDATED служит
+  # «сердцебиением» для панели, awgctl и метрик (тревога — при возрасте больше 30–60 с)
+  local i EPOCH_NOW body; epoch EPOCH_NOW
+  body="ACTIVE=${TUNS[$idx]}"$'\n'"FORCED=$forced"$'\n'
+  body+="TUNNELS=\"${TUNS[*]}\""$'\n'"ROUTE=$ROUTE"$'\n'"RAIL=${RAIL_IF:-}"$'\n'"TABLE=$TABLE"$'\n'"V6=$V6"$'\n'
+  for i in "${TUNS[@]}"; do body+="LOSS_$i=${QLOSS[$i]:-}"$'\n'"RTT_$i=${QRTT[$i]:-}"$'\n'"QMETH_$i=${QMETH[$i]:-}"$'\n'"DNS_$i=${DNSOK[$i]:-}"$'\n'; done
+  [ "$body" = "$STATE_LAST" ] && [ $((EPOCH_NOW - STATE_T)) -lt 10 ] && [ -f "$STATEF" ] && return 0
+  printf 'UPDATED=%s\n%s' "$EPOCH_NOW" "$body" > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF" && { STATE_LAST=$body; STATE_T=$EPOCH_NOW; }
 }
 
 tun_addr(){ ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1; }

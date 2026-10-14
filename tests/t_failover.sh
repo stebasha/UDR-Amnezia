@@ -131,5 +131,12 @@ FP3=$!; sleep 8
 # за два прохода — только проба DNS (раз в минуту), без проверок HTTPS
 ck "свежая проверка другого сторожа: свой запрос HTTPS не нужен" '[ "$(grep -cx awgmain $S2/curl.log)" -le 1 ] && . $T/state2 && [ "$ACTIVE" = awgmain ]'
 kill $CKP 2>/dev/null; kill -TERM $FP3; wait $FP3 2>/dev/null; rm -f $AWG_RUN/awg-chk-awgmain
+# состояние не меняется — файл не переписывается каждый проход (раз в 10 с — «сердцебиение»)
+rm -f $T/state2
+STUB=$S2 DD=$T/dd2 AWG_SYSNET=$S2/links STATEF=$T/state2 FORCEF=$T/force2 CHECK_RX_MIN=0 INTERVAL=1 bash "$COMP/failover.sh" > $T/out4.log 2>&1 &
+FP4=$!; sleep 2; : > $T/inodes
+for _ in $(seq 12); do stat -c %i $T/state2 >> $T/inodes 2>/dev/null; sleep 0.5; done
+ck "состояние без изменений: файл не переписывается каждый проход" '[ "$(sort -u $T/inodes | wc -l)" -le 2 ] && . $T/state2 && [ "$ACTIVE" = awgmain ] && [ -n "$UPDATED" ]'
+kill -TERM $FP4; wait $FP4 2>/dev/null
 echo "failover: провалов $fails"
 rm -rf "$T"; exit $fails

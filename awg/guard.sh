@@ -234,8 +234,9 @@ apply_body(){
     [[ $'\n'$o$'\n' == *$'\n'$LISTSET$'\n'* ]] || "$DD/lists.sh" load >/dev/null 2>&1   # после загрузки роутера — из кэша
     list_n LISTN $LISTSET; list_n GEON $GEOSET
   fi
+  local hl="" hg=""; [ "$LISTN" -gt 0 ] && hl=L; [ "$GEON" -gt 0 ] && hg=G   # без $( ): каждая подстановка — fork
   printf -v h 'g7|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
-    "$([ "$LISTN" -gt 0 ] && echo L)" "$([ "$GEON" -gt 0 ] && echo G)" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
+    "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
   { read -r old < "$HASHF"; } 2>/dev/null
   # по одному снимку родительских цепочек на проход; не прочитался (блокировка xtables) — в следующий проход
