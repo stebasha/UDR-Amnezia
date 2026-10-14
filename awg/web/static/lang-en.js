@@ -43,7 +43,7 @@ window.AWG_EN = {
  "Подбор идёт…": "Tuning in progress…",
  "Подобрать": "Tune",
  "Подобрать параметры для ": "Tune parameters for ",
- "Туннель по очереди пробует наборы: на каждый — до полуминуты без связи по этому туннелю, замер скорости — 5 МБ трафика. В конце возвращается исходный набор. Лучший ставится только по кнопке «Применить».": "The tunnel tries the sets one by one: up to half a minute without connectivity through this tunnel for each, the speed test uses 5 MB of traffic. At the end the original set returns. The best one is applied only with the “Apply” button.",
+ "Туннель по очереди пробует наборы: на каждый — до полутора минут без связи по этому туннелю, замер скорости — 5 МБ трафика. В конце возвращается исходный набор. Лучший ставится только по кнопке «Применить».": "The tunnel tries the sets one by one: up to a minute and a half without connectivity through this tunnel for each, the speed test uses 5 MB of traffic. At the end the original set returns. The best one is applied only with the “Apply” button.",
  "сейчас": "current",
  "нет связи": "no link",
  " мс · ": " ms · ",

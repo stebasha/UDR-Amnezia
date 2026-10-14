@@ -14,7 +14,7 @@ export LC_ALL=C.UTF-8
 DD=${DD:-/data/awg}
 RES=$DD/tune.tsv
 STATEB=${STATEF:-/run/awg-state}
-TUNE_WAIT=${TUNE_WAIT:-20}
+TUNE_WAIT=${TUNE_WAIT:-45}       # handshake после пересоздания: попытки идут раз в 5–8 с, часть может теряться
 TUNE_SPEED=${TUNE_SPEED:-yes}
 SPEED_URL=${AWG_SPEED_URL:-https://speed.cloudflare.com}
 TARGETS="1.1.1.1 8.8.8.8 9.9.9.9"
@@ -106,6 +106,11 @@ apply_server(){  # apply_server ТУННЕЛЬ VPS "K=V…" — согласов
   VPS_QUIET=1 VPS_NO_KEEP=1 "$DD/vps.sh" --vps "$2" obfs "$1" --file "$f" 2>&1 | sed 's/^/    │ /'; local rc=${PIPESTATUS[0]}
   rm -f "$f"; return "$rc"
 }
+try_client(){  # try_client "K=V…" — поставить набор на роутере и замерить; без handshake — ещё одна попытка (потери случаются)
+  local t0
+  set_params "$CF" "$1"; t0=$(date +%s); up_tun "$T"; measure "$T" "$t0"
+  if [ "$M_OK" != 1 ]; then say "    · связи нет — повторяю попытку"; t0=$(date +%s); up_tun "$T"; measure "$T" "$t0"; fi
+}
 row(){ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$M_OK" "$M_HS" "$M_LOSS" "$M_RTT" "$M_MBPS" "$M_SCORE" "$2" >> "$RES.new"; }
 
 cmd=${1:-help}; shift
@@ -131,7 +136,9 @@ case "$cmd" in
     event "подбор обфускации $T: начат ($MODE, наборов $N)"
     cp -p "$CF" "$CF.pre-tune"
     say "· 0: текущий набор $BASE"
-    measure "$T" "$(( $(date +%s) - 300 ))" base; row 0 "$BASE"
+    if [ "$MODE" = server ]; then measure "$T" "$(( $(date +%s) - 300 ))" base
+    else try_client "$BASE"; fi                      # как и остальные: пересоздать и мерить с нуля — сравнение честное
+    row 0 "$BASE"
     say "    → $( [ "$M_OK" = 1 ] && echo "работает: потери $M_LOSS%, задержка $M_RTT мс, скорость $M_MBPS Мбит/с, оценка $M_SCORE" || echo "не работает")"
     for i in $(seq 1 "$N"); do
       if [ "$MODE" = server ]; then P=$(gen_server); else P=$(gen_client "$i"); fi
@@ -140,7 +147,7 @@ case "$cmd" in
       if [ "$MODE" = server ]; then
         if apply_server "$T" "$VID" "$P"; then measure "$T" "$t0"; else M_OK=0; M_HS=-1; M_LOSS=100; M_RTT=0; M_MBPS=0; M_SCORE=0; fi
       else
-        set_params "$CF" "$P"; up_tun "$T"; measure "$T" "$t0"
+        try_client "$P"
       fi
       row "$i" "$P"
       say "    → $( [ "$M_OK" = 1 ] && echo "работает: handshake за $M_HS с, потери $M_LOSS%, задержка $M_RTT мс, скорость $M_MBPS Мбит/с, оценка $M_SCORE" || echo "не работает")"

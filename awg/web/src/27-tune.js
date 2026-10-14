@@ -21,7 +21,7 @@
       if (r.log) paint(log, r.log);
       const go = el('button', { class: 'btn primary', disabled: r.running }, icon('activity', 'sm'), r.running ? T('Подбор идёт…') : T('Подобрать'));
       go.addEventListener('click', async () => {
-        const pw = await promptPw(T('Подобрать параметры для ') + sel.value + '?', T('Туннель по очереди пробует наборы: на каждый — до полуминуты без связи по этому туннелю, замер скорости — 5 МБ трафика. В конце возвращается исходный набор. Лучший ставится только по кнопке «Применить».'));
+        const pw = await promptPw(T('Подобрать параметры для ') + sel.value + '?', T('Туннель по очереди пробует наборы: на каждый — до полутора минут без связи по этому туннелю, замер скорости — 5 МБ трафика. В конце возвращается исходный набор. Лучший ставится только по кнопке «Применить».'));
         if (pw == null) return;
         try { ok(TM((await api('/api/tune/run', { tunnel: sel.value, mode: mode.value, count: cnt.value.trim(), active: act.checked, current: pw })).msg)); follow(); } catch (e) { err(e); }
       });
