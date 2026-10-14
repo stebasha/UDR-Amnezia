@@ -970,6 +970,13 @@ def main():
         s2, j2 = r_.req("POST", "/api/tunnel/export", {"name": "awgmain", "current": ""}, headers=bh(atok))
         s3, b3, _ = r_.req("GET", "/api/backup/file/x.tgz", headers=bh(atok), raw=True)
         check("токен admin: перезагрузка, ключи и копии недоступны", s == 403 and s2 == 403 and s3 == 403, (s, s2, s3))
+        bad = []
+        for path, body in (("/api/tunnel/conf", {"name": "awgmain", "text": "[Interface]\n"}), ("/api/tunnel/add", {"name": "awgevil", "text": "x"}),
+                           ("/api/import/apply", {"items": []}), ("/api/tunnel/revision/restore", {"name": "awgmain", "rev": "1"})):
+            s, j = r_.req("POST", path, body, headers=bh(atok))
+            if s != 403:
+                bad.append((path, s))
+        check("токен admin: конфиг туннеля, новый туннель, импорт и откат конфига — только по паролю (#1.7.1)", not bad, bad)
         s, j = r_.get("/api/overview", headers=bh("awg_" + "A" * 43))
         check("токен: неверный → 401", s == 401, j)
         s, j = a.get("/api/tokens")

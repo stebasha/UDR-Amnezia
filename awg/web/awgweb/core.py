@@ -774,7 +774,10 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job",
               "/api/xui", "/api/xui/test", "/api/xui/create", "/api/xui/remove", "/api/xui/panel/remove", "/api/xui/inbounds",
               "/api/xui/import", "/api/xui/link", "/api/xui/sync", "/api/vps/del", "/api/route/save", "/api/route/remove",
-              "/api/tune/run", "/api/tune/apply"}
+              "/api/tune/run", "/api/tune/apply",
+              # куда идёт трафик: конфиг туннеля (Endpoint, ключи), новый туннель, откат конфига — только при входе по паролю.
+              # Иначе утёкший токен (из Home Assistant, скрипта) мог бы направить трафик устройств под PBR на чужой сервер.
+              "/api/tunnel/conf", "/api/tunnel/add", "/api/import/apply", "/api/tunnel/revision/restore"}
 
 
 class Throttle:
