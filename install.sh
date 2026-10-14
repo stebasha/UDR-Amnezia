@@ -72,6 +72,8 @@ if [ -t 1 ] && [ -z "$NO_COLOR" ]; then
 else G='' R='' Y='' C='' B='' D='' N=''; fi
 say(){ printf '%s\n' "$*"; }
 ilog(){ [ -d "$DD" ] && printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$ILOG" 2>/dev/null; return 0; }
+# журнал установки растёт с каждым обновлением: больше 256 КБ — оставить последние 2000 строк
+[ -f "$ILOG" ] && [ "$(stat -c %s "$ILOG" 2>/dev/null || echo 0)" -gt 262144 ] && { tail -n 2000 "$ILOG" > "$ILOG.t" && mv -f "$ILOG.t" "$ILOG"; } 2>/dev/null
 ok(){ say "  ${G}✔${N} $*"; ilog "OK   $*"; }
 warn(){ say "  ${Y}▲${N} $*"; ilog "WARN $*"; }
 err(){ say "  ${R}✖${N} $*"; ilog "ERR  $*"; }
