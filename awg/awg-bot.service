@@ -6,6 +6,7 @@ After=awg-failover.service network-online.target awg-notify.service
 ExecStart=/data/awg/bot.sh
 Restart=always
 RestartSec=5
+Nice=5
 
 [Install]
 WantedBy=multi-user.target
