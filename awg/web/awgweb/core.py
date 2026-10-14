@@ -574,6 +574,16 @@ def hash_pw(pw, salt=None, it=200000):
     return {"salt": salt, "iter": it, "hash": h}
 
 
+_DUMMY = {}
+
+
+def dummy_pw():
+    """Запись с паролем, который никто не знает, — та же стоимость проверки, что у настоящей (считается один раз)."""
+    if not _DUMMY:
+        _DUMMY.update(hash_pw(secrets.token_hex(16)))
+    return _DUMMY
+
+
 def check_pw(rec, pw):
     h = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), bytes.fromhex(rec["salt"]), int(rec["iter"])).hex()
     return hmac.compare_digest(h, rec["hash"])

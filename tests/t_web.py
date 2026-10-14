@@ -939,6 +939,14 @@ def main():
         s, j = a.post("/api/hooks", {"hook_clear": True, "ntfy": ""})
         check("хуки: всё убрано — файл удалён", s == 200 and not os.path.exists(hf), j)
 
+        # ---------- 1.7.1: отрицательная длина тела — сразу 400, а не ожидание до таймаута
+        import socket as _sk
+        t0 = time.time()
+        sk = _sk.create_connection(("127.0.0.1", PORT), timeout=10)
+        sk.sendall(("POST /api/tunnel/auto HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nCookie: %s\r\nX-CSRF: %s\r\nContent-Length: -5\r\n\r\n"
+                    % (PORT, a.cookie, a.csrf)).encode())
+        resp = sk.recv(200).decode("latin-1", "replace"); sk.close()
+        check("отрицательная длина тела → 400 сразу", resp.startswith("HTTP/1.1 400") and time.time() - t0 < 5, resp[:60])
         # ---------- 1.5 (#6): токены API
         s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
         check("токен: без пароля не создать", s == 403, j)
