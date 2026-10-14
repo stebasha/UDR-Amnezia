@@ -131,6 +131,14 @@ rm -f "$STUB/broken"
 ck "ключи: нет handshake → код 1 и откат" '[ $rc = 1 ] && grep -q "откатываю обе стороны" "$T/o2" && grep -q "VPS: возвращена копия" "$T/o2"'
 ck "ключи: после отката обе стороны как до попытки" 'cmp -s "$DD/backup.conf" "$T/rt.1" && cmp -s "$SRVCONF" "$T/srv.1" && hs'
 
+# --- смена ключей прервана (остановка задачи, срок) во время ожидания handshake → откат обеих сторон
+touch "$STUB/broken"
+VPS_WAIT=30 "$V" rotate-keys awgbackup > "$T/o2b" 2>&1 & VP=$!
+for _ in $(seq 1 40); do grep -q "жду handshake" "$T/o2b" 2>/dev/null && break; sleep 0.25; done
+kill -TERM $VP; wait $VP; rc=$?
+rm -f "$STUB/broken"
+ck "ключи: прервано посреди проверки → код 1, обе стороны как до попытки" '[ $rc = 1 ] && grep -q "прервано: возвращаю обе стороны" "$T/o2b" && cmp -s "$DD/backup.conf" "$T/rt.1" && cmp -s "$SRVCONF" "$T/srv.1" && [ ! -e "$VROOT/vps-rotate.sh" ]'
+
 # --- обфускация
 "$V" obfs > "$T/o3" 2>&1; rc=$?
 get(){ awk -v k="$2" -F' = ' '$1==k{print $2; exit}' "$1"; }
