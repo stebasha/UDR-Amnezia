@@ -111,6 +111,8 @@
           el('button', { class: 'btn', onclick: async () => { if (await confirmBox(T('Вернуть правила набора?'), T('Службы awg-failover, guard, self, subnets будут перезапущены (на секунды прерывается трафик PBR).'), T('Вернуть'))) runTool({ tool: 'drift-repair' }, T('Восстановление')); } }, icon('wrench', 'sm'), T('Вернуть правила набора')),
           el('button', { class: 'btn', onclick: async () => { if (await confirmBox(T('Принять текущее состояние?'), T('Текущие правила станут эталоном. Делайте это, когда всё работает (например, после изменения PBR в UniFi).'), T('Принять'))) runTool({ tool: 'drift-save' }, T('Новый эталон')); } }, icon('check', 'sm'), T('Принять текущее как эталон')))), { icon: 'layers' }),
       el('div', { class: 'spacer' }),
+      tuneCard(),
+      el('div', { class: 'spacer' }),
       el('div', { class: 'grid g-tools' }, tiles),
       el('div', { class: 'spacer' }), outCard]);
   };

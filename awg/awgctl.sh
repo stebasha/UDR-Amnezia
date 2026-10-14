@@ -18,6 +18,7 @@
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
 #   awgctl vps [--vps ID] [list|test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh); несколько VPS — #32
 #   awgctl routes [rails|list|add|set|remove|switch]   разные туннели для разных профилей PBR UniFi (routes.sh, #22)
+#   awgctl tune [run ТУННЕЛЬ [client|server] [N]|apply НОМЕР|show]   автоподбор параметров обфускации (obfs-tune.sh, #33)
 DD=${DD:-/data/awg}
 AWG=$DD/awg
 FORCEF=${FORCEF:-/run/awg-force}
@@ -173,12 +174,13 @@ case "${1:-status}" in
   drift)   shift; exec "$DD/drift.sh" "$@";;
   vps)     shift; exec "$DD/vps.sh" "$@";;
   routes|route) shift; [ $# -eq 0 ] && set -- list; exec "$DD/routes.sh" "$@";;
+  tune)    shift; [ $# -eq 0 ] && set -- show; exec "$DD/obfs-tune.sh" "$@";;
   web)     shift
            case "${1:-url}" in
              url) p=$(sed -n 's/^WEB_PORT=//p' "$DD/web/web.conf" 2>/dev/null); b=$(ip -4 -br addr show br0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
                   echo "https://${b:-IP_РОУТЕРА}:${p:-4443}/  (служба awg-web: $(systemctl is-active awg-web 2>/dev/null))";;
              *) exec python3 "$DD/web/panel.py" "$@";;
            esac;;
-  help|-h|--help) sed -n '2,20p' "$0";;
+  help|-h|--help) sed -n '2,21p' "$0";;
   *) echo "неизвестная команда: $1 (awgctl help)"; exit 1;;
 esac

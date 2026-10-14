@@ -10,7 +10,7 @@
 #   vps.sh update                собрать последние релизы на VPS и перезапустить сервер; нет handshake — откат на *.prev
 #   vps.sh router-bins           собрать последние amneziawg-go и awg для роутера на VPS и поставить (откат по handshake)
 #   vps.sh rotate-keys [ТУННЕЛЬ] новые ключи сервера и роутера одновременно; нет handshake — откат на обеих сторонах
-#   vps.sh obfs [ТУННЕЛЬ]        новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
+#   vps.sh obfs [ТУННЕЛЬ] [--file Ф]  новые параметры обфускации (Jc, Jmin, Jmax, S1, S2, H1–H4) на обеих сторонах, с откатом
 #   vps.sh list                  все свои VPS (#32): ID адрес порт пользователь метка
 #   vps.sh --vps ID КОМАНДА …    то же для другого своего VPS (по умолчанию main)
 # Адрес VPS main — VPS_IP из awg.env (или VPS_HOST в vps.env), VPS_PORT и VPS_USER — в vps.env; остальные VPS — vps.d/ID.env
@@ -160,8 +160,9 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   if wait_hs "$T"; then
     say "✔ $what: туннель $T работает (handshake есть, интернет через него открывается)"
     vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
-    say "  прежний конфиг роутера: $pre (со старым ключом — удалите: shred -u $pre); на VPS: $bk"
-    event "$what: $T — готово"; notify "🔑 $what · $(hostname): туннель $T работает на новых значениях"
+    if [ -n "${VPS_NO_KEEP:-}" ]; then rm -f "$pre"; [[ $bk =~ ^/[A-Za-z0-9._/-]+$ ]] && vrun "rm -f '$bk'" >/dev/null 2>&1   # автоподбор (#33): копии не копятся
+    else say "  прежний конфиг роутера: $pre (со старым ключом — удалите: shred -u $pre); на VPS: $bk"; fi
+    [ -z "${VPS_QUIET:-}" ] && { event "$what: $T — готово"; notify "🔑 $what · $(hostname): туннель $T работает на новых значениях"; }
     return 0
   fi
   say "✘ $what: туннель $T не заработал — откатываю обе стороны"
@@ -170,7 +171,8 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   "$DD/up.sh" "$T" >/dev/null 2>&1
   vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
   if wait_hs "$T"; then say "· откат выполнен: $T работает на прежних значениях"; else say "· после отката $T не отвечает: смотрите «Диагностика» и awgctl selftest"; fi
-  event "$what: $T — не заработало, откат"; notify "⚠️ $what · $(hostname): туннель $T не заработал, выполнен откат"
+  [ -n "${VPS_NO_KEEP:-}" ] && rm -f "$pre"
+  [ -z "${VPS_QUIET:-}" ] && { event "$what: $T — не заработало, откат"; notify "⚠️ $what · $(hostname): туннель $T не заработал, выполнен откат"; }
   return 1
 }
 apply_keys(){ set_keys "$CF" "$NK" "$1"; }
@@ -368,12 +370,18 @@ case "$cmd" in
     say "· смена ключей туннеля $T ($addr): $T будет недоступен 10–30 с, kill switch держит PBR-трафик"
     OBFL=""; coordinated "смена ключей" "CLIENT_ADDR=$addr NEW_CLIENT_PUB=$NP" apply_keys; rc=$?
     unset NK; exit $rc;;
-  obfs)
-    valid; need_script vps-rotate.sh; pick "${1:-}"
+  obfs)   # obfs [ТУННЕЛЬ] [--file ФАЙЛ] — новые случайные параметры или заданные (автоподбор #33)
+    tn=""; of=""
+    while [ $# -gt 0 ]; do case "$1" in --file) of=${2:-}; shift 2 || shift;; *) tn=$1; shift;; esac; done
+    valid; need_script vps-rotate.sh; pick "$tn"
     for k in Jc Jmin Jmax S1 S2 H1 H2 H3 H4; do
       v=$(conf_get "$CF" "$k" | tr -d ' \r'); [[ $v =~ ^[0-9]+$ ]] || die "в $CF нет числового $k (AWG 2.0 с диапазонами H — меняйте вручную)"
     done
-    tmpd=$(mktemp -d "$DD/.obf.XXXXXX"); OBFL=$tmpd/awg-obf.txt; gen_obf > "$OBFL"
+    tmpd=$(mktemp -d "$DD/.obf.XXXXXX"); OBFL=$tmpd/awg-obf.txt
+    if [ -n "$of" ]; then
+      for k in Jc Jmin Jmax S1 S2 H1 H2 H3 H4; do grep -qE "^$k = [0-9]{1,10}$" "$of" 2>/dev/null || { rm -rf "$tmpd"; die "в $of нет числового $k"; }; done
+      grep -E '^(Jc|Jmin|Jmax|S1|S2|H1|H2|H3|H4) = [0-9]{1,10}$' "$of" > "$OBFL"
+    else gen_obf > "$OBFL"; fi
     say "· новые параметры обфускации для $T: $(tr '\n' ' ' < "$OBFL")"
     coordinated "смена обфускации" "OBF_FILE=/root/awg-obf.txt" apply_obf; rc=$?
     rm -rf "$tmpd"; exit $rc;;

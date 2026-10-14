@@ -49,7 +49,7 @@ measure(){
   M_OK=0; M_HS=-1; M_LOSS=100; M_RTT=0; M_MBPS=0; M_SCORE=0
   for i in $(seq 1 "$TUNE_WAIT"); do a=$(hs_age "$t"); [ "$a" -ge 0 ] && [ "$a" -le $(( $(date +%s) - t0 + 1 )) ] && break; sleep 1; done
   a=$(hs_age "$t"); [ "$a" -ge 0 ] && [ "$a" -le $(( $(date +%s) - t0 + 1 )) ] || return 0
-  M_HS=$(( $(date +%s) - t0 - a )); [ "$M_HS" -lt 0 ] && M_HS=0
+  M_HS=$(( $(date +%s) - t0 - a )); [ "$M_HS" -lt 0 ] && M_HS=0; [ "${3:-}" = base ] && M_HS=0   # текущий набор: handshake уже был
   c=$(curl -sk -o /dev/null --connect-timeout 4 -m 8 --interface "$t" -w '%{http_code}' https://1.1.1.1/ 2>/dev/null)
   { [ -n "$c" ] && [ "$c" != 000 ]; } || return 0
   M_OK=1
@@ -69,8 +69,8 @@ measure(){
     c=$(curl -s -o /dev/null -m 15 --interface "$t" -w '%{speed_download}' "$SPEED_URL/__down?bytes=5000000" 2>/dev/null)
     M_MBPS=$(awk -v b="${c:-0}" 'BEGIN{printf "%.1f", b*8/1000000}')
   fi
-  # оценка: рабочий набор — от 1; минус потери, задержка и время до handshake, плюс скорость (до 200 Мбит/с)
-  M_SCORE=$(awk -v l="$M_LOSS" -v r="$M_RTT" -v h="$M_HS" -v s="$M_MBPS" 'BEGIN{x=100-l-r/10-h*2; if (x<1) x=1; if (s>200) s=200; printf "%d", x+s/4}')
+  # оценка: рабочий набор — от 1; минус потери, задержка и долгий handshake (дольше 3 с), плюс скорость (до 200 Мбит/с)
+  M_SCORE=$(awk -v l="$M_LOSS" -v r="$M_RTT" -v h="$M_HS" -v s="$M_MBPS" 'BEGIN{x=100-l-r/10-(h>3?(h-3)*2:0); if (x<1) x=1; if (s>200) s=200; printf "%d", x+s/2}')
 }
 gen_client(){  # набор i: сначала знакомые разные по размеру, дальше случайные
   case "$1" in
@@ -131,7 +131,7 @@ case "$cmd" in
     event "подбор обфускации $T: начат ($MODE, наборов $N)"
     cp -p "$CF" "$CF.pre-tune"
     say "· 0: текущий набор $BASE"
-    measure "$T" "$(( $(date +%s) - 300 ))"; row 0 "$BASE"
+    measure "$T" "$(( $(date +%s) - 300 ))" base; row 0 "$BASE"
     say "    → $( [ "$M_OK" = 1 ] && echo "работает: потери $M_LOSS%, задержка $M_RTT мс, скорость $M_MBPS Мбит/с, оценка $M_SCORE" || echo "не работает")"
     for i in $(seq 1 "$N"); do
       if [ "$MODE" = server ]; then P=$(gen_server); else P=$(gen_client "$i"); fi
@@ -150,7 +150,7 @@ case "$cmd" in
     else cat "$CF.pre-tune" > "$CF"; up_tun "$T"; fi
     rm -f "$CF.pre-tune"
     mv -f "$RES.new" "$RES"; chmod 600 "$RES"
-    best=$(awk -F'\t' '!/^#/ && $2==1 {print $7"\t"$1"\t"$8}' "$RES" | sort -t"$(printf '\t')" -k1,1nr | head -n1)
+    best=$(awk -F'\t' '!/^#/ && $2==1 {print $7"\t"$1"\t"$8}' "$RES" | sort -s -t"$(printf '\t')" -k1,1nr | head -n1)
     if [ -n "$best" ]; then
       say "✔ лучший набор №$(echo "$best" | cut -f2) (оценка $(echo "$best" | cut -f1)): $(echo "$best" | cut -f3)"
       say "  поставить: obfs-tune.sh apply $(echo "$best" | cut -f2)   (или «Применить» в панели)"

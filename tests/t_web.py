@@ -823,6 +823,65 @@ def main():
         s, j = a.post("/api/vps/del", {"vps": "v2"})
         check("VPS: второй убран из списка", s == 200 and not os.path.exists(vf), j)
 
+        # ---------- 1.6 (#22): маршруты — разные туннели для разных профилей PBR UniFi
+        open(os.path.join(LAB, "stub", "rules"), "w").write("32504:\tfrom all fwmark 0x6a0000/0x7e0000 lookup 178.wgclt1\n"
+                                                           "32505:\tfrom all fwmark 0x6c0000/0x7e0000 lookup 179.wgclt2\n")
+        s, j = a.get("/api/routes")
+        rl = {x["rail"]: x for x in j.get("rails", [])}
+        check("маршруты: профили UniFi, основной занят, wgclt2 свободен", s == 200 and rl.get("wgclt1", {}).get("used") == "main"
+              and rl.get("wgclt2", {}).get("used") == "" and j["routes"][0]["id"] == "main", j)
+        s, j = a.post("/api/route/save", {"new": True, "id": "us", "rail": "wgclt2", "tunnels": ["awgalt1", "awgbackup"], "label": "США", "current": "wrong"})
+        check("маршруты: создание только с паролем", s == 403 and not os.path.exists(os.path.join(dd, "route.d", "us.env")), j)
+        s, j = a.post("/api/route/save", {"new": True, "id": "us", "rail": "wgclt2", "tunnels": ["awgalt1", "awgbackup"], "label": "США", "only": True,
+                                           "current": "Test-pass-123"})
+        rf = open(os.path.join(dd, "route.d", "us.env")).read() if os.path.exists(os.path.join(dd, "route.d", "us.env")) else ""
+        check("маршруты: маршрут us создан (таблица 179, туннели, служба)", s == 200 and 'TABLE="179"' in rf and 'TUNNELS="awgalt1 awgbackup"' in rf
+              and os.path.exists(os.path.join(LAB, "sysd", "awg-failover-us.service")) and "awg-failover-us" in open(os.path.join(dd, ".units")).read(), (j, rf))
+        check("маршруты: «только для маршрута» — основной не использует его туннели (кроме основного)",
+              'ROUTE_ONLY="awgalt1 awgbackup"' in open(os.path.join(dd, "awg.env")).read(), open(os.path.join(dd, "awg.env")).read())
+        s, j = a.get("/api/routes")
+        us = [x for x in j["routes"] if x["id"] == "us"]
+        check("маршруты: в списке с названием и туннелями", us and us[0]["label"] == "США" and us[0]["tunnels"] == ["awgalt1", "awgbackup"] and us[0]["only"], j)
+        s, j = a.post("/api/tunnel/remove", {"name": "awgalt1", "current": "Test-pass-123"})
+        check("маршруты: туннель маршрута не удаляется", s == 400 and "маршрут us" in j.get("error", ""), j)
+        s, j = a.post("/api/route/switch", {"id": "us", "tunnel": "awgbackup"})
+        check("маршруты: ручной выбор канала маршрута", s == 200 and open(os.path.join(LAB, "run", "awg-force-us")).read().strip() == "awgbackup", j)
+        s, j = a.post("/api/route/switch", {"id": "us", "tunnel": "auto"})
+        check("маршруты: автоматика", s == 200 and not os.path.exists(os.path.join(LAB, "run", "awg-force-us")), j)
+        s, j = a.post("/api/route/save", {"new": True, "id": "x2", "rail": "wgclt2", "tunnels": ["awgmain"], "current": "Test-pass-123"})
+        check("маршруты: занятый профиль — отказ", s == 400 and "занят" in j.get("error", ""), j)
+        s, j = a.post("/api/route/remove", {"id": "us", "current": "Test-pass-123"})
+        check("маршруты: убран — файл, служба, исключения", s == 200 and not os.path.exists(os.path.join(dd, "route.d", "us.env"))
+              and not os.path.exists(os.path.join(LAB, "sysd", "awg-failover-us.service")) and 'ROUTE_ONLY=""' in open(os.path.join(dd, "awg.env")).read(), j)
+        # ---------- 1.6 (#23): IPv6 через туннель — по желанию
+        s, j = a.post("/api/settings", {"values": {"LEAK_V6": "tunnel"}})
+        check("IPv6: неизвестное значение отклонено", s == 400, j)
+        s, j = a.post("/api/settings", {"values": {"LEAK_V6": "route"}})
+        check("IPv6: «через туннель» сохраняется, сторож перезапускается", s == 200 and "LEAK_V6=route" in open(os.path.join(dd, "awg.env")).read().replace('"', "")
+              and "awg-failover" in j.get("msg", ""), j)
+        a.post("/api/settings", {"values": {"LEAK_V6": "block"}})
+        # ---------- 1.6 (#33): автоподбор обфускации
+        s, j = a.get("/api/tune")
+        tn = {x["name"]: x for x in j.get("tunnels", [])}
+        check("подбор: список туннелей, активный отмечен", s == 200 and tn.get("awgmain", {}).get("active") and not tn.get("awgbackup", {}).get("active"), j)
+        s, j = a.post("/api/tune/run", {"tunnel": "awgmain", "mode": "client", "count": "3", "current": "Test-pass-123"})
+        check("подбор: на активном канале без разрешения — отказ", s == 400 and "активный канал" in j.get("error", ""), j)
+        s, j = a.post("/api/tune/run", {"tunnel": "awgbackup", "mode": "client", "count": "3", "current": "wrong"})
+        check("подбор: только с паролем", s == 403, j)
+        s, j = a.post("/api/tune/run", {"tunnel": "awgbackup", "mode": "client", "count": "3", "current": "Test-pass-123"})
+        srl = open(os.path.join(LAB, "systemd-run.log")).read()
+        check("подбор: отдельной службой awg-tune", s == 200 and "--unit=awg-tune" in srl and "obfs-tune.sh run awgbackup client 3" in srl, (j, srl[-300:]))
+        open(os.path.join(dd, "tune.tsv"), "w").write("# awgbackup\tclient\t1791900000\t\n0\t1\t0\t0\t20\t8.0\t102\tJc=4 Jmin=40 Jmax=70\n"
+                                                    "1\t1\t1\t0\t20\t10.0\t103\tJc=3 Jmin=10 Jmax=50\n2\t0\t-1\t100\t0\t0\t0\tJc=10 Jmin=100 Jmax=1000\n")
+        s, j = a.get("/api/tune")
+        check("подбор: результаты и лучший набор", s == 200 and j["best"] == 1 and len(j["rows"]) == 3 and j["head"]["tunnel"] == "awgbackup", j)
+        s, j = a.post("/api/tune/apply", {"n": 2, "current": "Test-pass-123"})
+        check("подбор: нерабочий набор не ставится", s == 400, j)
+        s, j = a.post("/api/tune/apply", {"n": 1, "current": "Test-pass-123"})
+        bk = open(os.path.join(dd, "backup.conf")).read()
+        check("подбор: набор 1 поставлен через историю конфигов (Jc/Jmin/Jmax, ключи на месте)", s == 200 and j.get("ok") and "Jc = 3" in bk
+              and "Jmin = 10" in bk and "Jmax = 50" in bk and "PrivateKey = aGVsbG8" in bk and "S1 = 15" in bk, (j, bk))
+
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
         check("хуки: опасный адрес отклонён", s == 400, j)

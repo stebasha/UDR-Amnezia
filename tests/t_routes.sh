@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2034  # переменные используются в строках проверок (eval)
 # Маршруты (#22) на заглушках: профили PBR UniFi (ip rule), службы (systemctl), awg.env и .units.
 # Запуск: bash tests/t_routes.sh <папка awg>
 SRC=$(cd "${1:-$(dirname "$0")/../awg}" && pwd)

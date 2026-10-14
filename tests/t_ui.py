@@ -78,7 +78,7 @@ def main():
                     page.goto(URL + h)
                     page.wait_for_timeout(700)
                     check("страница %s открывается" % h, page.locator("#app main, #app .main, main").count() > 0 and not errors, errors[-3:])
-                tabs = ("failover", "services", "telegram", "ha", "users", "web", "backups", "vps", "xui", "system")
+                tabs = ("failover", "services", "telegram", "ha", "users", "web", "backups", "routes", "vps", "xui", "system")
                 for t in tabs:
                     page.goto(URL + "#/settings/" + t)
                     page.wait_for_timeout(700)

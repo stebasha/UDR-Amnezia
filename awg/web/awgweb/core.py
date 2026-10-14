@@ -714,7 +714,8 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/backup/auto", "/api/backup/auto/run", "/api/backup/auto/test", "/api/hooks", "/api/hooks/test",
               "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job",
               "/api/xui", "/api/xui/test", "/api/xui/create", "/api/xui/remove", "/api/xui/panel/remove", "/api/xui/inbounds",
-              "/api/xui/import", "/api/xui/link", "/api/xui/sync", "/api/vps/del", "/api/route/save", "/api/route/remove"}
+              "/api/xui/import", "/api/xui/link", "/api/xui/sync", "/api/vps/del", "/api/route/save", "/api/route/remove",
+              "/api/tune/run", "/api/tune/apply"}
 
 
 class Throttle:
