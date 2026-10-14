@@ -148,8 +148,11 @@ if [ -x "$DD/self.sh" ] && systemctl is-active --quiet awg-self 2>/dev/null; the
   sec "Трафик роутера (awg-self)"
   while IFS= read -r l; do case "$l" in OK*) P "${l#OK    }";; WARN*) W "${l#WARN   }";; FAIL*) F "${l#FAIL   }";; esac; done < <("$DD/self.sh" check 2>&1)
 fi
-if [ -x "$DD/guard.sh" ] && { [ -n "$TUN_DOMAINS" ] || [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ] || [ "${LISTS_MODE:-off}" != off ]; }; then
-  sec "Домены, исключения, списки"
+if [ -x "$DD/guard.sh" ] && { [ -n "$TUN_DOMAINS" ] || [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ] || [ "${LISTS_MODE:-off}" != off ] || [ "${DNS_INTERCEPT:-no}" = yes ]; }; then
+  sec "Домены, исключения, списки, DNS"
+  if [ "${DNS_INTERCEPT:-no}" = yes ] && ! systemctl is-active --quiet awg-guard 2>/dev/null; then
+    W "DNS_INTERCEPT=yes, но служба awg-guard не запущена — DNS устройств не перехватывается" "панель → Маршрутизация → DNS устройств → Применить"
+  fi
   if [ "${LISTS_MODE:-off}" != off ] && ! systemctl is-active --quiet awg-guard 2>/dev/null; then
     W "LISTS_MODE=$LISTS_MODE, но служба awg-guard не запущена — списки и GeoIP не действуют, всё под PBR идёт через туннель" "панель → Маршрутизация → Списки и GeoIP → Применить (или $DD/install.sh → Компоненты → Маршрутизация и защита)"
   fi

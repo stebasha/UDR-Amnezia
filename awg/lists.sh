@@ -21,7 +21,7 @@ LISTS_MODE=off; GEO_COUNTRIES=""; LIST_URLS=""; GEO_URL=""; LIST_MAX_AGE=86400; 
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 LIST_URLS=${LIST_URLS:-"https://antifilter.download/list/allyouneed.lst"}
-GEO_URL=${GEO_URL:-"https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/%s.cidr"}
+GEO_URL=${GEO_URL:-"https://raw.githubusercontent.com/ipverse/country-ip-blocks/master/country/%s/ipv4-aggregated.txt"}
 LIST_SET=AWG_LIST
 GEO_SET=AWG_GEO
 MIN_LIST=${LIST_MIN:-100}    # меньше — ответ не похож на список (страница ошибки, обрезанный файл): не берём

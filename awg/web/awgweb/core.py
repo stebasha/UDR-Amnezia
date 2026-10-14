@@ -442,6 +442,9 @@ SETTINGS = {
     "LISTS_MODE": (v_choice("off", "blocked", "geoip"), ["awg-guard"], "Что идёт через туннель"),
     "GEO_COUNTRIES": (v_countries, ["awg-guard"], "Страны напрямую (GeoIP)"),
     "LIST_URLS": (v_https_urls, ["awg-guard"], "Источники списков заблокированного"),
+    "DNS_INTERCEPT": (v_choice("yes", "no"), ["awg-guard"], "Перехват DNS устройств"),
+    "DNS_CLIENTS": (v_hosts, ["awg-guard"], "Для каких клиентов (пусто — вся LAN)"),
+    "DNS_BLOCK_DOT": (v_choice("yes", "no"), ["awg-guard"], "Запретить DNS-over-TLS и DNS по IPv6 мимо роутера"),
     "UI_FIX": (v_choice("yes", "no"), ["awg-self"], "unifi.ui.com через туннель"),
     "UI_DOMAINS": (v_domains, ["awg-self"], "Домены UniFi"),
     "UI_DNS": (v_ipv4, ["awg-self"], "DNS для доменов UniFi"),
@@ -450,7 +453,7 @@ SETTINGS = {
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
-            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off"}
+            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no"}
 
 
 # ======================================================================= службы
@@ -501,7 +504,7 @@ def apply_services(services, e):
                     or e.get("DNS_ALL_TUNNEL") == "yes",
         "awg-guard": e.get("LEAK_GUARD") == "yes" or bool((e.get("TUN_DOMAINS", "") + e.get("DIRECT_DOMAINS", "")
                                                           + e.get("DIRECT_SUBNETS", "")).strip())
-                     or e.get("LISTS_MODE", "off") != "off",
+                     or e.get("LISTS_MODE", "off") != "off" or e.get("DNS_INTERCEPT") == "yes",
         "awg-metrics": svc_installed("awg-metrics") or bool(e.get("METRICS_PORT")),
     }
     for u in services:

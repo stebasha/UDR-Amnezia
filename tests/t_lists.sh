@@ -20,10 +20,10 @@ S
 printf '#!/bin/bash\n[ "$1 $2" = "link show" ] && exit 0\nexit 0\n' > "$T/bin/ip"
 chmod 755 "$T"/bin/*; export PATH="$T/bin:$PATH" SRV=$T/srv
 { for i in $(seq 1 150); do echo "203.0.$((i % 250)).0/24"; done; echo "10.0.0.0/8"; echo "<html>"; echo "1.2.3.4/33"; echo "198.51.100.7"; } > "$T/srv/allyouneed.lst"
-printf '5.8.0.0/16\n5.9.0.0/16\n31.13.0.0/16\n37.9.0.0/16\n46.0.0.0/16\n77.88.0.0/16\n' > "$T/srv/ru.cidr"
+printf -- '---\n# Country: Russia (RU)\n#\n5.8.0.0/16\n5.9.0.0/16\n31.13.0.0/16\n37.9.0.0/16\n46.0.0.0/16\n77.88.0.0/16\n' > "$T/srv/ru.cidr"
 printf '1.0.1.0/24\n1.0.2.0/23\n1.0.8.0/21\n14.0.0.0/21\n27.0.0.0/22\n36.0.0.0/22\n' > "$T/srv/cn.cidr"
 printf '<html>not found</html>\n' > "$T/srv/zz.cidr"
-printf 'TABLE=178\nMARK=0x6a0000/0x7e0000\nMAIN=awgmain\nWANIF=eth3\nLEAK_GUARD=yes\n' > "$DD/awg.env"
+printf 'TABLE=178\nMARK=0x6a0000/0x7e0000\nMAIN=awgmain\nWANIF=eth3\nLEAK_GUARD=yes\nGEO_URL=https://geo.test/%%s.cidr\n' > "$DD/awg.env"
 echo "ACTIVE=awgmain" > "$STATEF"; echo awg-guard > "$DD/.units"
 L="$DD/lists.sh"; G="$DD/guard.sh"; fails=0
 ck(){ if eval "$2"; then echo "  OK   $1"; else echo "  FAIL $1"; fails=$((fails+1)); fi; }

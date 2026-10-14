@@ -904,6 +904,14 @@ def main():
         srl = open(os.path.join(LAB, "systemd-run.log")).read()
         check("списки: обновление отдельной службой awg-lists", s == 200 and "--unit=awg-lists" in srl and "lists.sh update" in srl, (j, srl[-300:]))
         a.post("/api/settings", {"values": {"LISTS_MODE": "off"}})
+        # ---------- 1.7 (#39): перехват DNS устройств
+        s, j = a.post("/api/settings", {"values": {"DNS_CLIENTS": "192.168.1.50 bad"}})
+        check("DNS: неверный клиент отклонён", s == 400, j)
+        s, j = a.post("/api/settings", {"values": {"DNS_INTERCEPT": "yes", "DNS_CLIENTS": "192.168.1.50 192.168.1.64/28", "DNS_BLOCK_DOT": "yes"}})
+        ev = open(os.path.join(dd, "awg.env")).read().replace('"', "")
+        check("DNS: перехват включён, awg-guard перезапускается", s == 200 and "DNS_INTERCEPT=yes" in ev and "DNS_CLIENTS=192.168.1.50 192.168.1.64/28" in ev
+              and "awg-guard" in j.get("msg", ""), j)
+        a.post("/api/settings", {"values": {"DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "DNS_CLIENTS": ""}})
 
         # ---------- 1.5 (#14): вебхук и ntfy
         s, j = a.post("/api/hooks", {"hook": "https://hooks.example.com/x\"; rm"})
