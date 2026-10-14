@@ -78,4 +78,25 @@ ck "self: временных цепочек не осталось" '! iptables -
 printf 'TUN_DOMAINS="good.com bad;rm x/y"\n' >> "$DD/awg.env"
 source <(sed -n '/^valid_domain(){/p;/^domains(){/p;/^log(){/p' "$COMP/self.sh")
 ck "self: в файл dnsmasq попадают только корректные домены" '[ "$(domains good.com "bad;rm" x/y | tr "\n" " ")" = "good.com " ]'
+# --- self (1.7.1): быстрый разбор правил UniFi совпадает с прежним конвейером; время старта процесса — без awk
+cat > "$T/mg" <<'MG'
+-P PREROUTING ACCEPT
+-N UBIOS_PREROUTING_PBR
+-A PREROUTING -j UBIOS_PREROUTING_JUMP
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_13 src -m set --match-set UBIOS_trafficroute_dn_13 dst -m comment --comment 00000001095216670481 -j MARK --set-xmark 0x6c0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_ip_6 dst -m comment --comment 00000001095216670482 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_ip_6 dst -j RETURN
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_dn_1 dst -m comment --comment 00000001095216670484 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_networkv6 src -m set --match-set UBIOS_trafficroute_dn_1 dst -m comment --comment 00000001095216670499 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m mac --mac-source aa:bb:cc:dd:ee:ff -m comment --comment 1 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -i br20 -m comment --comment 2 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -s 192.168.1.50/32 -m comment --comment 3 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -d 203.0.113.0/24 -m comment --comment 4 -j MARK --set-xmark 0x6a0000/0x7e0000
+MG
+mkdir -p "$T/mgbin"; printf '#!/bin/bash\ncat "%s/mg"\n' "$T" > "$T/mgbin/iptables"; chmod 755 "$T/mgbin/iptables"
+source <(sed -n '/^want(){/,/^}/p;/^want_from(){/,/^}/p;/^pstart(){/,/^}/p;/^pstart_v(){/,/^}/p' "$COMP/self.sh")
+old_w=$(PATH="$T/mgbin:$PATH"; want); want_from "$(cat "$T/mg")"
+ck "self: want_from совпадает с прежним want (правила как на роутере)" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ]' || printf '%s\n---\n%s\n' "$old_w" "$W"
+HZ=$(getconf CLK_TCK); pstart_v pv $$
+ck "self: время старта процесса — как у прежнего pstart" '[ "$pv" = "$(pstart $$)" ]'
 echo "fw: провалов $fails"; [ $fails = 0 ]
