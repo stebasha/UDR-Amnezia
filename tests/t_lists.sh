@@ -61,5 +61,8 @@ date +%s > "$DD/lists/geo.ts"
 ck "due: страны поменялись — пора, хоть кэш и свежий" '! "$L" due && sed -i "s/^GEO_COUNTRIES=.*/GEO_COUNTRIES=\"ru by\"/" "$DD/awg.env" && "$L" due'
 "$L" json > $T/j
 ck "json: разбирается, видно расхождение со странами" 'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d[\"mode\"]==\"geoip\" and d[\"sets\"][\"geo\"][\"set\"]==12 and d[\"sets\"][\"geo\"][\"stale\"] and d[\"due\"]" $T/j' || cat $T/j
+( flock 8; sleep 2 ) 8>"$DD/lists/.lock" & LP=$!; sleep 0.3
+ck "второе обновление при идущем первом — пропускается" '"$L" update | grep -q "уже идёт"'
+wait $LP
 echo "== lists: ошибок $fails"
 [ $fails = 0 ]

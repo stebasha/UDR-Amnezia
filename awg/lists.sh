@@ -69,6 +69,8 @@ count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 update(){
   local force=$1 tmp u n c ok=1 got=0 msg=""
   mkdir -p "$LD"; chmod 700 "$LD"
+  # одно обновление за раз: фоновое (awg-guard) и кнопка в панели не должны подменять наборы одновременно
+  if command -v flock >/dev/null; then exec 8>"$LD/.lock"; flock -n 8 || { say "обновление списков уже идёт"; return 0; }; fi
   [ "$LISTS_MODE" = off ] && [ "$force" != --force ] && { say "списки выключены (LISTS_MODE=off)"; return 0; }
   tmp=$(mktemp -d "$DD/.lists.XXXXXX")
   if [ "$LISTS_MODE" = blocked ] || [ "$force" = --force ]; then
