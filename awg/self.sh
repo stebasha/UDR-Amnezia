@@ -358,10 +358,11 @@ pstart_v(){  # pstart_v ПЕРЕМЕННАЯ PID — время старта п�
   [[ ${f[19]:-} =~ ^[0-9]+$ ]] && [ -n "$bt" ] || return 1
   printf -v "$1" '%s' "$(( bt + f[19] / HZ ))"
 }
-bad_once(){  # о неверном имени — в журнал один раз, а не каждые 5 с (проход идёт в подоболочке: помним в файле)
+bad_once(){  # bad_once КЛЮЧ [СООБЩЕНИЕ] — в журнал один раз, а не каждые 5 с (проход идёт в подоболочке: помним в файле)
   local bf=${AWG_RUN:-/run}/awg-self.bad l
+  [ "$1" = dnsmasq ] && { [ -e "$bf.dnsmasq" ] && return 0; : > "$bf.dnsmasq" 2>/dev/null; log "$2"; return 0; }
   { while IFS= read -r l; do [ "$l" = "$1" ] && return 0; done < "$bf"; } 2>/dev/null
-  printf '%s\n' "$1" >> "$bf" 2>/dev/null; log "пропускаю «$1»: не похоже на домен"
+  printf '%s\n' "$1" >> "$bf" 2>/dev/null; log "${2:-пропускаю «$1»: не похоже на домен}"
 }
 ui_conf_v(){  # ui_conf_v ПЕРЕМЕННАЯ — текст файла dnsmasq, как ui_conf
   local d o="# awg-self: файл создаёт /data/awg/self.sh, не редактировать."$'\n'
@@ -375,7 +376,8 @@ ui_conf_v(){  # ui_conf_v ПЕРЕМЕННАЯ — текст файла dnsmasq
 }
 ui_dns_fast(){  # как ui_dns: файл в conf-dir dnsmasq; сверка «загрузил ли dnsmasq» — после записи, смены dnsmasq или раз в минуту
   local pid dir f st mt cur uc wrote=0 spid="" sts=0 now
-  dnsmasq_pid_v pid || { log "не найден dnsmasq с --conf-dir — UI-модуль пропущен"; return 0; }
+  dnsmasq_pid_v pid || { bad_once "dnsmasq" "не найден dnsmasq с --conf-dir — UI-модуль пропущен"; return 0; }
+  [ -e "${AWG_RUN:-/run}/awg-self.bad.dnsmasq" ] && rm -f "${AWG_RUN:-/run}/awg-self.bad.dnsmasq"   # dnsmasq снова есть: о пропаже сообщить снова
   conf_dir_v dir "$pid"; [ -d "$dir" ] || return 0
   f="$dir/$UIFILE"
   if ! conf_on; then
