@@ -678,10 +678,19 @@ def on_callback(q):
             edit(chat, mid, "⚠️ " + esc(ex), [[("⚙️ Службы", "m:svc")]])
 
 
+STALE = 600     # команда, отправленная больше 10 минут назад (бот был остановлен, роутер перезагружался), не выполняется
+
+
 def on_message(m):
     chat = str((m.get("chat") or {}).get("id", ""))
     text = (m.get("text") or "").strip()
     if not chat:
+        return
+    d = m.get("date")
+    if isinstance(d, int) and d > 0 and time.time() - d > STALE:
+        log("пропускаю старое сообщение %s (%d мин назад): %s" % (chat, (time.time() - d) // 60, text[:20]))
+        if role(chat) and text.startswith("/"):
+            send(chat, "⏳ Команда «%s» пришла, пока бот был недоступен (%d мин назад), и не выполнена. Повторите её." % (esc(text[:40]), (time.time() - d) // 60))
         return
     r = role(chat)
     if not r:

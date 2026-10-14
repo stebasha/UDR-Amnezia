@@ -82,6 +82,7 @@ upd3 = {"ok": True, "result": [
     {"update_id": 30, "callback_query": {"id": "h", "data": "run:diag", "message": {"message_id": 9, "chat": {"id": 111}}}},
     {"update_id": 31, "callback_query": {"id": "i", "data": "run:diag", "message": {"message_id": 9, "chat": {"id": 111}}}},
     {"update_id": 32, "callback_query": {"id": "j", "data": "test:eth3", "message": {"message_id": 9, "chat": {"id": 333}}}},
+    {"update_id": 33, "message": {"chat": {"id": 222}, "date": int(__import__("time").time()) - 3600, "text": "/route us awgmain"}},
 ]}
 json.dump(upd3, open(f, "w"))
 out = subprocess.run(["python3", os.path.join(R, "awg/bot.py"), "--once-from", f], env=dict(envv, BOT_TEST_WAIT="8"),
@@ -89,6 +90,8 @@ out = subprocess.run(["python3", os.path.join(R, "awg/bot.py"), "--once-from", f
 calls = [json.loads(l) for l in out.stdout.decode().splitlines() if l.startswith("{")]
 m = [c["params"].get("text", "") for c in by("111")]
 check("повторная диагностика, пока идёт первая, не запускается", sum("уже выполняется" in t for t in m) == 1 and sum("diag-ok" in t for t in m) == 1, m)
+c222 = [c["params"].get("text", "") for c in by("222")]
+check("команда, пришедшая час назад (бот был остановлен), не выполняется", any("не выполнена" in t for t in c222) and not any(t.startswith("✅") for t in c222), c222)
 check("тест по кнопке — только для туннелей", any("Туннеля eth3 нет" in c["params"].get("text", "") for c in by("333")), by("333"))
 print("bot: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)
