@@ -177,5 +177,12 @@ ke = C.kernel_events()
 C.run = _run
 check("OOM: два завершения, а не семь строк; одно — лимит службы unifi", ke["oom"] == 2 and ke["oom_sys"] == 1 and dict(ke["oom_cg"]) == {"unifi": 1}
       and dict(ke["oom_sys_names"]) == {"python3": 1}, ke)
+# сеансы: смена пароля или удаление пользователя мимо панели (panel.py passwd/deluser) завершает его сеансы
+C.save_users({"u1": C.hash_pw("pass-one-1"), "u2": C.hash_pw("pass-two-2")})
+SS = C.Sessions(None)
+t1, t2 = SS.new("u1", "1.1.1.1"), SS.new("u2", "1.1.1.1")
+check("сеанс: обычный вход работает", SS.get(t1) and SS.get(t2))
+uu = C.load_users(); uu["u1"].update(C.hash_pw("pass-new-1")); uu.pop("u2"); C.save_users(uu)
+check("сеанс: пароль сменён или пользователь удалён в командной строке — сеансы недействительны", SS.get(t1) is None and SS.get(t2) is None)
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)

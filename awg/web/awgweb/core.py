@@ -731,15 +731,28 @@ class Sessions:
         tok = secrets.token_urlsafe(32)
         with self.lock:
             self.s = {k: v for k, v in self.s.items() if self.alive(v)}
-            self.s[self.key(tok)] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160]}
+            self.s[self.key(tok)] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160],
+                                     "pw": self.pw_mark(user)}
             self.save()
         return tok
+
+    @staticmethod
+    def pw_mark(user):
+        """Отпечаток пароля пользователя (или None, если его нет): смена пароля или удаление — в том числе из командной
+        строки (panel.py passwd / deluser), мимо панели — завершает его сеансы."""
+        rec = load_users().get(user)
+        return hashlib.sha256(str(rec.get("hash", "")).encode()).hexdigest()[:16] if isinstance(rec, dict) else None
 
     def get(self, tok):
         k = self.key(tok)
         with self.lock:
             x = self.s.get(k) if tok else None
             if not x:
+                return None
+            m = self.pw_mark(x["user"])
+            if m is None or ("pw" in x and x["pw"] != m):
+                del self.s[k]
+                self.save()
                 return None
             if not self.alive(x):
                 del self.s[k]
