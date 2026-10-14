@@ -86,5 +86,15 @@ check("up_tunnel: замок занят — up.sh не запускается", 
 fcntl.flock(lk, fcntl.LOCK_UN)
 rc, out = C.up_tunnel("awgx", wait=1)
 check("up_tunnel: замок свободен — up.sh выполнен", rc == 0 and C.read_file(os.path.join(T, "up.log")) == "up awgx\n", (rc, out))
+# импорт vpn://: сжатая «бомба» не разворачивается в память целиком
+import base64, struct, zlib  # noqa: E401,E402
+import awgweb.importer as IM  # noqa: E402
+bomb = zlib.compress(b'{"a":"' + b"x" * (64 * 1024 * 1024) + b'"}', 9)
+try:
+    IM.decode_import("vpn://" + base64.urlsafe_b64encode(struct.pack(">I", 100) + bomb).decode())
+    bomb_ok = False
+except ValueError as ex:
+    bomb_ok = "слишком большая" in str(ex)
+check("vpn://: распаковка ограничена 2 МБ", bomb_ok)
 print("core: %d ошибок" % len(FAILS))
 sys.exit(1 if FAILS else 0)
