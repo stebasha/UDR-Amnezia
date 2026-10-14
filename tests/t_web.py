@@ -486,7 +486,10 @@ def main():
         check("канал: переключение на beta записано", s == 200 and "AWG_CHANNEL=beta" in chf and "AWG_BRANCH=main" in chf, chf)
         s, j = a.post("/api/update/channel", {"channel": "branch", "branch": "../../etc"})
         check("канал: опасное имя ветки отклонено", s == 400, j)
+        a.post("/api/update/channel", {"channel": "branch", "branch": "feature/1.6"})
         s, j = a.post("/api/update/channel", {"channel": "stable"})
+        chf = open(os.path.join(dd, ".channel")).read()
+        check("канал: stable после ветки — ветка сброшена (#35)", s == 200 and "AWG_CHANNEL=stable" in chf and "AWG_BRANCH=main" in chf, chf)
         s, j = a.post("/api/update/check", {})
         check("проверка обновлений: stable без релизов → ветка main", s == 200 and j["channel"] == "stable" and j["ref"] == "main" and j["kind"] == "branch"
               and "AWG_CHANNEL=stable" in j["cmd"], j)

@@ -131,6 +131,7 @@ case "$cmd" in
     systemctl enable "$u" >/dev/null 2>&1; systemctl restart "$u" 2>/dev/null; units_mark "$u" on
     [ $restart_main = 1 ] && systemctl restart awg-failover 2>/dev/null
     systemctl restart awg-guard 2>/dev/null || true          # метка нового маршрута — в защиту от утечек
+    : >> "$DD/failover-$id.log"; systemctl is-active --quiet awg-notify 2>/dev/null && systemctl restart awg-notify 2>/dev/null   # уведомления по маршруту
     event "маршрут $id ($rail, таблица $table): $tuns${label:+ — $label}"
     say "✔ маршрут $id: профиль $rail → $tuns (сторож $u)"
     drift_save;;
@@ -143,6 +144,7 @@ case "$cmd" in
     recompute_only && systemctl restart awg-failover 2>/dev/null
     units_mark "$u" off
     systemctl restart awg-guard 2>/dev/null || true
+    systemctl is-active --quiet awg-notify 2>/dev/null && systemctl restart awg-notify 2>/dev/null
     event "маршрут $id убран"
     say "✔ маршрут $id убран: трафик его профиля UniFi идёт как без набора"
     drift_save;;

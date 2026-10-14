@@ -64,5 +64,20 @@ rm -f "$STUB/code.tg"; : > "$STUB/curl.log"
 ck "отложенное уходит со следующим" '[ ! -s "$DD/notify.spool" ] && grep -q "отложено" <(grep "^ARGS" "$STUB/curl.log" | grep "chat_id=111")'
 rm -f "$DD/hooks.env"; reset
 ck "без hooks.env — только Telegram" '"$N" "x" && [ "$(calls hook)" = 0 ] && [ "$(calls tg)" = 3 ]'
+# --- awg-notify: уведомления по дополнительным маршрутам (#34)
+cp "$SRC/awg-notify.sh" "$DD/"; chmod 755 "$DD/awg-notify.sh"
+mv "$DD/notify.sh" "$DD/notify.sh.real"
+printf '#!/bin/bash\nprintf "%%s\\n---\\n" "$2" >> "%s/sent.log"\n' "$STUB" > "$DD/notify.sh"; chmod 755 "$DD/notify.sh"
+: > "$DD/failover.log"; : > "$DD/failover-r2.log"
+NOTIFY_BOOT_WAIT=0 NOTIFY_SETTLE=0 timeout 8 bash "$DD/awg-notify.sh" daemon >/dev/null 2>&1 &
+sleep 2
+echo "2026-10-14 13:00:11 ПЕРЕКЛЮЧЕНИЕ на запасной канал awgbackup" >> "$DD/failover.log"
+echo "2026-10-14 13:00:12 маршрут r2: ПЕРЕКЛЮЧЕНИЕ на запасной канал awgmain" >> "$DD/failover-r2.log"
+sleep 3
+ck "awg-notify: переключение основного — как раньше" 'grep -q "^<b>⚠️ Переключение на запасной канал awgbackup</b>" "$STUB/sent.log"'
+ck "awg-notify: переключение маршрута r2 — с названием маршрута" 'grep -q "^<b>🔀 Маршрут r2 — ⚠️ Переключение на запасной канал awgmain</b>" "$STUB/sent.log"'
+ck "awg-notify: в суточную статистику идёт только основной маршрут" '[ "$(grep -c "|switch" "$DD/notify.events")" = 1 ]'
+wait; pkill -f "$DD/failover" 2>/dev/null; mv "$DD/notify.sh.real" "$DD/notify.sh"
+
 echo "== notify: ошибок $fails"
 [ $fails = 0 ]

@@ -26,7 +26,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.6.0
+INSTALLER_VERSION=1.6.1
 # Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
 #   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
 #   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
@@ -46,7 +46,7 @@ elif [ -n "$_ch_br" ] && [ "$_ch_br" != main ]; then AWG_CHANNEL=branch      # .
 else AWG_CHANNEL=stable; fi
 case "$AWG_CHANNEL" in stable|beta|branch) ;; *) AWG_CHANNEL=stable;; esac
 AWG_BRANCH=${AWG_BRANCH:-${_ch_br:-main}}
-[ "$AWG_CHANNEL" = beta ] && AWG_BRANCH=main
+[ "$AWG_CHANNEL" = beta ] || [ "$AWG_CHANNEL" = stable ] && AWG_BRANCH=main   # ветка нужна только каналу branch (#35)
 AWG_REF=${AWG_REF:-}; AWG_REF_KIND=${AWG_REF_KIND:-}   # тег релиза или ветка: вычисляет resolve_ref
 # Бинарники AmneziaWG собираются только из официальных исходников AmneziaVPN (теги можно поменять здесь):
 #   https://github.com/amnezia-vpn/amneziawg-go  и  https://github.com/amnezia-vpn/amneziawg-tools
@@ -2014,7 +2014,7 @@ main(){
       --record)  [ $# -ge 2 ] || { echo "--record требует имя файла"; exit 1; }; RECORD_FILE=$2; shift 2;;
       --answers) [ $# -ge 2 ] || { echo "--answers требует имя файла"; exit 1; }; ANS_FILE=$2; shift 2;;
       --channel) [ $# -ge 2 ] || { echo "--channel требует stable, beta или имя ветки"; exit 1; }
-                 case "$2" in stable|beta) AWG_CHANNEL=$2; [ "$2" = beta ] && AWG_BRANCH=main;; *) AWG_CHANNEL=branch; AWG_BRANCH=$2;; esac
+                 case "$2" in stable|beta) AWG_CHANNEL=$2; AWG_BRANCH=main;; *) AWG_CHANNEL=branch; AWG_BRANCH=$2;; esac
                  AWG_REF=""; CHANNEL_SET=1; shift 2;;
       *) ARGS+=("$1"); shift;;
     esac

@@ -133,6 +133,7 @@ t "канал: записанный beta" '[ "$(chan "AWG_CHANNEL=beta\nAWG_BRAN
 t "канал: AWG_BRANCH=main в окружении — beta" '[ "$(chan "AWG_CHANNEL=stable\n" AWG_BRANCH=main)" = "beta main" ]'
 t "канал: AWG_CHANNEL в окружении важнее файла" '[ "$(chan "AWG_CHANNEL=beta\n" AWG_CHANNEL=stable)" = "stable main" ]'
 t "канал: мусор → stable" '[ "$(chan "AWG_CHANNEL=evil\n")" = "stable main" ]'
+t "канал: stable после ветки — ветка сброшена (#35)" '[ "$(chan "AWG_CHANNEL=stable\nAWG_BRANCH=feature/1.6\n")" = "stable main" ]'
 # stable: тег из GitHub API, архив релиза со сверкой SHA256SUMS
 CS=$T/curlstub; mkdir -p "$CS/srv"
 printf 'архив релиза' > "$CS/srv/udr-amnezia-v1.5.0.tar.gz"

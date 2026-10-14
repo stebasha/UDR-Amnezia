@@ -2445,31 +2445,34 @@ report() {
 <span class="c"># ---------- реакция на строку журнала сторожа ----------</span>
 last_both=0
 on_line() {
-  local l="$1" now title extra lastsw
+  local l="$1" now title extra lastsw rt="" evf=$EV
   now=$(date +%s)
+<span class="c">  # дополнительный маршрут (#22, #34): строка «… маршрут ID: …» из failover-ID.log — своя приставка, в суточную статистику</span>
+<span class="c">  # основного канала не идёт</span>
+  if [[ $l =~ ^[0-9-]+\ [0-9:]+\ маршрут\ ([a-z][a-z0-9]{0,11}):\  ]]; then rt=${BASH_REMATCH[1]}; evf=/dev/null; fi
   case "$l" in
     *ДЕГРАДАЦИЯ*)
-      echo "$now|switch" &gt;&gt; "$EV"
+      echo "$now|switch" &gt;&gt; "$evf"
       title="📉 Канал деградировал, переключение на ${l##* }"
       extra="Потери или задержка выше порога. PBR-трафик идёт через ${l##* }." ;;
     *"ПЕРЕКЛЮЧЕНИЕ вручную"*)
-      echo "$now|switch" &gt;&gt; "$EV"
+      echo "$now|switch" &gt;&gt; "$evf"
       title="🛠 Ручное переключение на ${l##* }"
       extra="Вернуть автоматический выбор: awgctl auto (или /auto боту)." ;;
     *ПЕРЕКЛЮЧЕНИЕ*)
-      echo "$now|switch" &gt;&gt; "$EV"
+      echo "$now|switch" &gt;&gt; "$evf"
       title="⚠️ Переключение на запасной канал ${l##* }"
       extra="Активный канал не проходит проверку. PBR-трафик идёт через ${l##* }." ;;
     *ВОЗВРАТ*|*"возврат на"*)
       lastsw=$(awk -F'|' '$2=="switch"{t=$1} END{print t}' "$EV" 2&gt;/dev/null)
-      echo "$now|return" &gt;&gt; "$EV"
+      echo "$now|return" &gt;&gt; "$evf"
       title="✅ Возврат на канал ${l##* }"
       extra="PBR-трафик снова через ${l##* }."
       [ -n "$lastsw" ] &amp;&amp; extra="$extra На запасном проработали: $(fd $((now - lastsw)))." ;;
     *"оба канала не отвечают"*|*"единственный канал"*)
-      [ $((now - last_both)) -lt 300 ] &amp;&amp; return
-      last_both=$now
-      echo "$now|both" &gt;&gt; "$EV"
+      [ -z "$rt" ] &amp;&amp; [ $((now - last_both)) -lt 300 ] &amp;&amp; return
+      [ -z "$rt" ] &amp;&amp; last_both=$now
+      echo "$now|both" &gt;&gt; "$evf"
       title="🛑 Нет рабочего канала"
       extra="PBR-трафик заблокирован (утечки в WAN нет)." ;;
     *"правило PBR профиля"*)
@@ -2480,7 +2483,8 @@ on_line() {
       extra="PBR-трафик снова идёт через туннель." ;;
     *) return ;;
   esac
-  sleep 4   # даём маршрутам устояться
+  sleep "${NOTIFY_SETTLE:-4}"   # даём маршрутам устояться
+  [ -n "$rt" ] &amp;&amp; title="🔀 Маршрут $rt — ${title}"
   send "&lt;b&gt;${title}&lt;/b&gt; · $H"$'\n'"$(printf '%s' "$extra" | esc)"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"$'\n'"&lt;code&gt;$(printf '%s' "$l" | trunc 200 | esc)&lt;/code&gt;"
 }
 
@@ -2523,11 +2527,14 @@ daemon() {
   [ -f "$ST" ] || save_base
   monitor &amp; MON=$!
   trap 'kill $MON 2&gt;/dev/null' EXIT INT TERM
-  sleep 20   # после загрузки даём туннелям подняться
+  sleep "${NOTIFY_BOOT_WAIT:-20}"   # после загрузки даём туннелям подняться
   up=$(awk '{print int($1)}' /proc/uptime)
   if [ "$up" -lt 900 ]; then t="🔄 Роутер загрузился, наблюдатель запущен"; else t="🟢 Наблюдатель awg-notify перезапущен"; fi
   send "&lt;b&gt;$t&lt;/b&gt; · $H"$'\n'"&lt;pre&gt;$(snapshot | esc)&lt;/pre&gt;"
-  tail -n0 -F "$LOGF" 2&gt;/dev/null | while IFS= read -r l; do on_line "$l"; done
+<span class="c">  # журналы сторожа: основной и дополнительных маршрутов (routes.sh перезапускает awg-notify при их добавлении и удалении)</span>
+  local logs=("$LOGF") f
+  for f in "$DD"/failover-*.log; do [ -f "$f" ] &amp;&amp; logs+=("$f"); done
+  tail -q -n0 -F "${logs[@]}" 2&gt;/dev/null | while IFS= read -r l; do on_line "$l"; done
 }
 
 case "${1:-daemon}" in
@@ -2537,7 +2544,7 @@ case "${1:-daemon}" in
   *)      echo "использование: $0 [daemon|report|test]"; exit 1 ;;
 esac
 EOF
-chmod 700 /data/awg/awg-notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 225 строк">Показать целиком · 225 строк</button></figure>
+chmod 700 /data/awg/awg-notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 232 строк">Показать целиком · 232 строк</button></figure>
   </div></div>
 
   <div class="step"><div class="sn">10.4</div><div class="sb">
@@ -2702,7 +2709,7 @@ awgctl routes list<span class="c">                       # маршруты: п�
 awgctl routes add us wgclt2 "awgus awgbackup" "США"<span class="c">   # новый маршрут (--only — туннели только для него)</span>
 awgctl routes switch us awgbackup<span class="c">        # ручной выбор канала маршрута; auto — автоматика</span>
 awgctl routes remove us</code></pre></figure>
-  <div class="note n-info"><b>Уведомления</b><p>Переключения дополнительных маршрутов пишутся в журнал событий панели; сообщения в Telegram пока приходят только по основному маршруту.</p></div>
+  <div class="note n-info"><b>Уведомления</b><p>Переключения дополнительных маршрутов пишутся в журнал событий панели и приходят в Telegram с названием маршрута («🔀 Маршрут ID — …»), с 1.6.1.</p></div>
 
   <h3>IPv6 через туннель — по желанию (1.6)</h3>
   <p>По умолчанию IPv6 устройств под PBR блокируется, и они идут по IPv4 через туннель. Если сервер выдал туннелю IPv6-адрес (строка <code>Address</code> в конфиге с IPv6), можно пустить и IPv6 через туннель: «<b>Маршрутизация → Защита от утечек → IPv6 → Через туннель</b>» (<code>LEAK_V6=route</code>). Сторож добавляет правило IPv6 для метки PBR (своё, <code>proto 99</code>) и маршрут IPv6 в таблице PBR на активный туннель с NAT66 и MSS. У активного туннеля нет IPv6 — маршрут <code>unreachable</code>: устройство сразу переходит на IPv4. В WAN помеченный IPv6 не выпускается в любом случае; правила и маршруты IPv6 самой UniFi не трогаются.</p>

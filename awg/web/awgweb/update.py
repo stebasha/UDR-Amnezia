@@ -132,7 +132,7 @@ def api_update_channel(h, d):
             raise ValueError("недопустимое имя ветки")
     elif ch not in ("stable", "beta"):
         raise ValueError("канал: stable, beta или своя ветка")
-    if ch == "beta":
+    if ch in ("beta", "stable"):              # ветка нужна только каналу branch (#35)
         br = "main"
     write_secure(os.path.join(DD, ".channel"), "AWG_REPO=%s\nAWG_CHANNEL=%s\nAWG_BRANCH=%s\n" % (repo, ch, br), 0o644)
     h.act("update-channel", {"channel": ch, "branch": br})
