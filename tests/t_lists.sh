@@ -91,7 +91,7 @@ iptables -t mangle -A UBIOS_PREROUTING_PBR -p udp -m set --match-set UBIOS_local
 ipset create UBIOS4local_network hash:net
 "$G" apply
 ck "Kill Switch: маршрут «весь интернет» с флагом 0x10000 узнаётся (full = 2: он и route.d)" '[ "$("$L" full)" = 2 ]'
-ck "Kill Switch: DNS к роутеру от устройств под маршрутом не отбрасывается (метка и флаг снимаются, udp и tcp)" 'cx | grep -q -- "-p udp -m udp --dport 53 -m addrtype --dst-type LOCAL -m mark --mark 0x6b0000/0x7f0000 -j MARK --set-xmark 0x0/0x7f0000" && cx | grep -q -- "-p tcp -m tcp --dport 53 -m addrtype --dst-type LOCAL -m mark --mark 0x6b0000/0x7f0000"'
-ck "Kill Switch: DNS-правило — до GeoIP; набор «локальные сети» не попадает в AWG_KEEP" '[ "$(cx | grep -n -- "--dport 53" | head -1 | cut -d: -f1)" -lt "$(cx | grep -n AWG_GEO | head -1 | cut -d: -f1)" ] && ! grep -q local_network "$STUB/ipset-AWG_KEEP"'
+ck "Kill Switch: флаг 0x10000 снимается с пакета и с метки соединения (метки — как без Kill Switch, DNS не отбрасывается)" 'cx | grep -q -- "-m mark --mark 0x6b0000/0x7f0000 -j CONNMARK --set-xmark 0x0/0x10000" && cx | grep -q -- "-m mark --mark 0x6b0000/0x7f0000 -j MARK --set-xmark 0x0/0x10000" && cx | grep -q -- "-m mark --mark 0x6d0000/0x7f0000 -j MARK --set-xmark 0x0/0x10000"'
+ck "Kill Switch: снятие флага — первым, до GeoIP; набор «локальные сети» не попадает в AWG_KEEP" '[ "$(cx | grep -n -- "0x6b0000/0x7f0000" | head -1 | cut -d: -f1)" -lt "$(cx | grep -n AWG_GEO | head -1 | cut -d: -f1)" ] && ! grep -q local_network "$STUB/ipset-AWG_KEEP"'
 echo "== lists: ошибок $fails"
 [ $fails = 0 ]

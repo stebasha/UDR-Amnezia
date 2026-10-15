@@ -251,17 +251,17 @@ build_direct(){
   [ "$LISTS_MODE" != off ] && ipset create $KEEPSET list:set size 256 -exist 2>/dev/null
   if [ -n "$MARK" ]; then
     printf -v mask2 '0x%x' $(( MASK | KS ))
-    # DNS к самому роутеру от устройств под маршрутом UniFi с Kill Switch: UniFi помечает его и отбрасывает на входе
-    # (UBIOS_DNS_PBR_JUMP), рассчитывая, что DNS пойдёт к DNS-серверу VPN-клиента. Наш профиль UniFi — «рельса» без
-    # настоящего сервера, DNS туда не дойдёт: сеть оставалась без DNS (ERR_NAME_NOT_RESOLVED). Такие запросы идут к dnsmasq
-    # роутера как обычно (он спрашивает DoH; с DNS_ALL_TUNNEL=yes — через туннель). Правило — в этой же цепочке, она
-    # последняя в mangle PREROUTING, после PBR UniFi.
+    # Kill Switch UniFi в маршруте на наш профиль-«рельсу» — лишний (при падении туннелей трафик маршрута блокирует
+    # сторож: blackhole в таблице маршрута и запрет выхода помеченного в WAN) и ломает DNS: UniFi отбрасывает DNS к
+    # роутеру с флагом 0x10000, ждёт DNS-сервер VPN-клиента (у «рельсы» его нет), а ответы фильтра контента
+    # (127.0.0.1:1053) на соединения с флагом в метке соединения не доходили — ERR_NAME_NOT_RESOLVED у всей сети.
+    # Снимаем флаг с пакета и с метки соединения: метки становятся такими же, как у маршрута с выключенным Kill Switch
+    # (с ним DNS на роутере работает). Правила — первыми в этой цепочке, она последняя в mangle PREROUTING.
     for m in $MARK $ROUTE_MARKS; do
       mv=${m%/*}; mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
-      printf -v mks '0x%x/0x%x' $(( mv | KS )) $(( mk | KS )); printf -v mks2 '0x%x' $(( mk | KS ))
-      for n in udp tcp; do
-        B iptables -t mangle -A $CX -p $n -m $n --dport 53 -m addrtype --dst-type LOCAL -m mark --mark "$mks" -j MARK --set-xmark "0x0/$mks2"
-      done
+      printf -v mks '0x%x/0x%x' $(( mv | KS )) $(( mk | KS ))
+      B iptables -t mangle -A $CX -m mark --mark "$mks" -j CONNMARK --set-xmark "0x0/$KS"
+      B iptables -t mangle -A $CX -m mark --mark "$mks" -j MARK --set-xmark "0x0/$KS"
     done
     for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$mask2"; done
     [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$mask2"
@@ -297,7 +297,7 @@ apply_body(){
     list_n LISTN $LISTSET; list_n GEON $GEOSET
   fi
   local hl="" hg=""; [ "$LISTN" -gt 0 ] && hl=L; [ "$GEON" -gt 0 ] && hg=G   # без $( ): каждая подстановка — fork
-  printf -v h 'g9|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
+  printf -v h 'g10|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
     "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
   { read -r old < "$HASHF"; } 2>/dev/null
