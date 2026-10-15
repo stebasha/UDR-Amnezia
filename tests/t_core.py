@@ -56,6 +56,9 @@ rc, out = C.run(["bash", "-c", "(sleep 2; touch %s) & sleep 30" % mark], timeout
 check("run: срок соблюдён", rc == 124 and time.time() - t0 < 4, (rc, out))
 time.sleep(2.5)
 check("run: потомки завершены вместе с командой", not os.path.exists(mark))
+tf = os.path.join(T, "trap-ran")
+C.run(["bash", "-c", "trap 'touch %s; exit 1' TERM; sleep 30 & wait" % tf], timeout=1)
+check("run: по сроку сначала TERM — обработчик скрипта успевает вернуть настройки", os.path.exists(tf))
 check("run: ввод, код возврата, нет команды", C.run(["cat"], inp="abc") == (0, "abc") and C.run(["sh", "-c", "exit 3"])[0] == 3
       and C.run([os.path.join(T, "nope")])[0] == 127)
 

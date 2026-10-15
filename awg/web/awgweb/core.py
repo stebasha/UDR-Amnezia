@@ -102,15 +102,29 @@ def run(cmd, timeout=60, env=None, inp=None):
         out = p.communicate(inp.encode() if isinstance(inp, str) else inp, timeout=timeout)[0]
         return p.returncode, ANSI.sub("", out.decode("utf-8", "replace"))
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except OSError:
-            p.kill()
+        stop_group(p)
         try:
             p.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             pass
         return 124, "превышено время ожидания (%d с)" % timeout
+
+
+def stop_group(p, grace=3):
+    """Завершить команду вместе с потомками: сначала TERM (скрипт успеет вернуть конфиг туннеля — у mtu.sh, подбора
+    обфускации обработчики на TERM), через grace секунд — KILL всей группе."""
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+    except OSError:
+        p.terminate()
+    try:
+        p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(p.pid, signal.SIGKILL)       # потомки (curl, ping) могли остаться и после выхода самой команды
+    except OSError:
+        pass
 
 
 def up_tunnel(t, timeout=60, wait=30):

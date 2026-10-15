@@ -135,6 +135,7 @@ V6=0; [ "$LEAK_V6" = route ] && command -v ip6tables >/dev/null && V6=1
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
 SYSNET=${AWG_SYSNET:-/sys/class/net}
 RUNDIR=${AWG_RUN:-/run}
+SNAPF=$RUNDIR/awg-fw.snap               # общий снимок цепочек iptables (см. prepare)
 CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
 CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
 # Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные
@@ -245,12 +246,27 @@ prepare(){
   # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables
   # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,
   # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.
-  local i t r rules
+  local i t r rules now l sec="" ok=0
   declare -A S
-  # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)
-  S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2>/dev/null)$'\n' || return 0
-  S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2>/dev/null)$'\n' || return 0
-  S[filter]=$'\n'$(iptables -t filter -S FORWARD 2>/dev/null)$'\n' || return 0
+  # Снимок цепочек — общий для сторожей основного и дополнительных маршрутов: если другой сторож прочитал их меньше
+  # INTERVAL секунд назад, берём его снимок (файл в /run, читает сам bash) вместо трёх вызовов iptables. Устаревшая
+  # на секунды картина безопасна: недостающее правило всё равно перепроверяется точным «iptables -C».
+  epoch now
+  { mapfile -t SNAP < "$SNAPF"; } 2>/dev/null
+  if [ "${#SNAP[@]}" -gt 2 ] && [[ ${SNAP[0]} =~ ^[0-9]+$ ]] && [ $((now - SNAP[0])) -ge 0 ] && [ $((now - SNAP[0])) -lt "$INTERVAL" ] \
+     && [ "${SNAP[-1]}" = "@@end" ]; then
+    S[nat]=$'\n'; S[mangle]=$'\n'; S[filter]=$'\n'
+    for l in "${SNAP[@]:1}"; do
+      case "$l" in @@nat|@@mangle|@@filter) sec=${l#@@};; @@end) ok=1;; *) [ -n "$sec" ] && S[$sec]+="$l"$'\n';; esac
+    done
+  fi
+  if [ $ok != 1 ]; then
+    # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)
+    S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2>/dev/null)$'\n' || return 0
+    S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2>/dev/null)$'\n' || return 0
+    S[filter]=$'\n'$(iptables -t filter -S FORWARD 2>/dev/null)$'\n' || return 0
+    printf '%s\n@@nat%s@@mangle%s@@filter%s@@end\n' "$now" "${S[nat]}" "${S[mangle]}" "${S[filter]}" > "$SNAPF" 2>/dev/null
+  fi
   for i in "${TUNS[@]}"; do
     [ -n "${FWR[$i]:-}" ] || FWR[$i]=$(fw_rules "$i")
     while IFS='|' read -r t r; do
@@ -430,6 +446,9 @@ switch_to(){  # switch_to индекс тип сообщение
 }
 
 exec {SLEEPFD}<> <(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
+# сторож дополнительного маршрута сдвинут на полпаузы от основного: иначе (оба стартуют вместе) они читают цепочки
+# одновременно и не пользуются общим снимком друг друга
+[ -n "$ROUTE" ] && read -r -t "$((INTERVAL / 2)).5" -u "$SLEEPFD" _ 2>/dev/null
 while true; do
   [ -n "$STOP" ] && stop_now
   ensure_tunnels

@@ -22,6 +22,8 @@ RKEY=${RKEY:-$DD/ssh/id_ed25519}
 SRV=${SRV:-$DD/server}
 VPS_WAIT=${VPS_WAIT:-25}
 umask 077
+# файл с паролем VPS (из панели) не остаётся на диске, даже если команда завершилась раньше, чем прочла его
+[ -n "${VPS_PASS_FILE:-}" ] && trap 'rm -f "$VPS_PASS_FILE"' EXIT
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}

@@ -488,11 +488,8 @@ def tunnel_test(t):
 
 # ======================================================================= фоновые задачи
 def kill_group(p):
-    """Завершить команду вместе с её потомками (curl, ping): иначе они держат вывод открытым."""
-    try:
-        os.killpg(p.pid, signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        p.kill()
+    """Завершить команду вместе с её потомками (curl, ping): иначе они держат вывод открытым. TERM, затем KILL."""
+    stop_group(p)
 
 
 class Jobs:

@@ -185,6 +185,14 @@ mkdir -p $T/ipt7; ln -sf "$HERE/stubs2/iptables" $T/ipt7/iptables; ln -sf "$HERE
 PATH=$SH:$T/ipt7:$PATH STUB=$S7 DD=$T/dd7 AWG_SYSNET=$S7/links STATEF=$T/st7 FORCEF=$T/f7 INTERVAL=1 bash "$COMP/failover.sh" > /dev/null 2>&1 &
 P7=$!; sleep 5; : > $CNT; sleep 10; n7=$(grep -c . $CNT); kill -TERM $P7; wait $P7 2>/dev/null
 ck "обычный проход: не больше 8 внешних команд (за 10 проходов: $n7; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$n7" -le 80 ]'
+# ---- сторожа основного и дополнительного маршрута делят снимок цепочек: iptables -S — как у одного сторожа
+: > $CNT
+mkdir -p $T/dd7/route.d; printf 'RAIL_IF="wgclt9"\nPRIO="32509"\nMARK="0x720000/0x7e0000"\nTABLE="196"\nTUNNELS="awgbackup awgmain"\n' > $T/dd7/route.d/r9.env
+PATH=$SH:$T/ipt7:$PATH STUB=$S7 DD=$T/dd7 AWG_SYSNET=$S7/links STATEF=$T/st8 FORCEF=$T/f8 INTERVAL=4 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P8=$!
+PATH=$SH:$T/ipt7:$PATH STUB=$S7 DD=$T/dd7 AWG_SYSNET=$S7/links STATEF=$T/st8 FORCEF=$T/f8 INTERVAL=4 bash "$COMP/failover.sh" --route r9 > /dev/null 2>&1 &
+P9=$!; sleep 6; : > $CNT; sleep 16; ni=$(grep -c -x iptables $CNT); kill -TERM $P8 $P9; wait $P8 $P9 2>/dev/null
+ck "два сторожа: снимок цепочек общий (iptables за 16 с: $ni; без общего снимка ~24)" '[ "$ni" -le 17 ]'
 # ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
 # время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
 # в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.
