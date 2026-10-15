@@ -1112,6 +1112,7 @@ V6=0; [ "$LEAK_V6" = route ] &amp;&amp; command -v ip6tables &gt;/dev/null &amp;
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
 SYSNET=${AWG_SYSNET:-/sys/class/net}
 RUNDIR=${AWG_RUN:-/run}
+SNAPF=$RUNDIR/awg-fw.snap               # общий снимок цепочек iptables (см. prepare)
 CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
 CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
 <span class="c"># Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные</span>
@@ -1222,12 +1223,27 @@ prepare(){
 <span class="c">  # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables</span>
 <span class="c">  # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,</span>
 <span class="c">  # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.</span>
-  local i t r rules
+  local i t r rules now l sec="" ok=0
   declare -A S
-<span class="c">  # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)</span>
-  S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2&gt;/dev/null)$'\n' || return 0
-  S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2&gt;/dev/null)$'\n' || return 0
-  S[filter]=$'\n'$(iptables -t filter -S FORWARD 2&gt;/dev/null)$'\n' || return 0
+<span class="c">  # Снимок цепочек — общий для сторожей основного и дополнительных маршрутов: если другой сторож прочитал их меньше</span>
+<span class="c">  # INTERVAL секунд назад, берём его снимок (файл в /run, читает сам bash) вместо трёх вызовов iptables. Устаревшая</span>
+<span class="c">  # на секунды картина безопасна: недостающее правило всё равно перепроверяется точным «iptables -C».</span>
+  epoch now
+  { mapfile -t SNAP &lt; "$SNAPF"; } 2&gt;/dev/null
+  if [ "${#SNAP[@]}" -gt 2 ] &amp;&amp; [[ ${SNAP[0]} =~ ^[0-9]+$ ]] &amp;&amp; [ $((now - SNAP[0])) -ge 0 ] &amp;&amp; [ $((now - SNAP[0])) -lt "$INTERVAL" ] \
+     &amp;&amp; [ "${SNAP[-1]}" = "@@end" ]; then
+    S[nat]=$'\n'; S[mangle]=$'\n'; S[filter]=$'\n'
+    for l in "${SNAP[@]:1}"; do
+      case "$l" in @@nat|@@mangle|@@filter) sec=${l#@@};; @@end) ok=1;; *) [ -n "$sec" ] &amp;&amp; S[$sec]+="$l"$'\n';; esac
+    done
+  fi
+  if [ $ok != 1 ]; then
+<span class="c">    # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)</span>
+    S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2&gt;/dev/null)$'\n' || return 0
+    S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2&gt;/dev/null)$'\n' || return 0
+    S[filter]=$'\n'$(iptables -t filter -S FORWARD 2&gt;/dev/null)$'\n' || return 0
+    printf '%s\n@@nat%s@@mangle%s@@filter%s@@end\n' "$now" "${S[nat]}" "${S[mangle]}" "${S[filter]}" &gt; "$SNAPF" 2&gt;/dev/null
+  fi
   for i in "${TUNS[@]}"; do
     [ -n "${FWR[$i]:-}" ] || FWR[$i]=$(fw_rules "$i")
     while IFS='|' read -r t r; do
@@ -1407,6 +1423,9 @@ switch_to(){  # switch_to индекс тип сообщение
 }
 
 exec {SLEEPFD}&lt;&gt; &lt;(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
+<span class="c"># сторож дополнительного маршрута сдвинут на полпаузы от основного: иначе (оба стартуют вместе) они читают цепочки</span>
+<span class="c"># одновременно и не пользуются общим снимком друг друга</span>
+[ -n "$ROUTE" ] &amp;&amp; read -r -t "$((INTERVAL / 2)).5" -u "$SLEEPFD" _ 2&gt;/dev/null
 while true; do
   [ -n "$STOP" ] &amp;&amp; stop_now
   ensure_tunnels
@@ -1524,7 +1543,7 @@ while true; do
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 551 строк">Показать целиком · 551 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 570 строк">Показать целиком · 570 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
