@@ -150,7 +150,10 @@ build_dom(){
     if [ -n "$TUN_CLIENTS" ]; then
       for c in $TUN_CLIENTS; do B iptables -t mangle -A $CD -s "$c" -m set --match-set $DOMSET dst -j MARK --set-xmark "$MARK"; done
     else
+      # вся LAN и клиенты VPN-сервера роутера (WireGuard-сервер UniFi — wgsrv*, а также EXTRA_SUBNETS)
       B iptables -t mangle -A $CD -i br+ -m set --match-set $DOMSET dst -j MARK --set-xmark "$MARK"
+      B iptables -t mangle -A $CD -i wgsrv+ -m set --match-set $DOMSET dst -j MARK --set-xmark "$MARK"
+      for c in $EXTRA_SUBNETS; do B iptables -t mangle -A $CD -s "$c" -m set --match-set $DOMSET dst -j MARK --set-xmark "$MARK"; done
     fi
   fi
   jump_first iptables mangle PREROUTING $CD
@@ -297,7 +300,7 @@ apply_body(){
     list_n LISTN $LISTSET; list_n GEON $GEOSET
   fi
   local hl="" hg=""; [ "$LISTN" -gt 0 ] && hl=L; [ "$GEON" -gt 0 ] && hg=G   # без $( ): каждая подстановка — fork
-  printf -v h 'g10|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
+  printf -v h 'g11|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
     "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
   { read -r old < "$HASHF"; } 2>/dev/null

@@ -85,6 +85,17 @@ def main():
                     check("настройки → %s без ошибок JS" % t, not errors, errors[-3:])
             step("страницы", pages)
 
+            def lists_form():
+                page.goto(URL + "#/routing")
+                card = page.locator(".card", has=page.get_by_text("Списки, GeoIP и исключения", exact=True))
+                expect(card.first).to_be_visible()
+                txt = card.first.inner_text()
+                check("маршрутизация: исключения в обе стороны — в форме списков и GeoIP",
+                      all(k in txt for k in ("LISTS_MODE", "GEO_COUNTRIES", "DIRECT_DOMAINS", "TUN_DOMAINS")), txt[:300])
+                check("маршрутизация: отдельных форм доменов и исключений больше нет",
+                      page.get_by_text("Исключения: напрямую мимо туннеля", exact=True).count() == 0)
+            step("форма списков", lists_form)
+
             def editor():
                 page.goto(URL + "#/tunnels")
                 page.get_by_role("button", name="Настроить").first.click()
