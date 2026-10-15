@@ -1418,6 +1418,9 @@ for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; ct_flush "${TUNS[$k
 [ -x "$DD/awg-restore.sh" ] &amp;&amp; [ -z "${AWG_NO_FWCHECK:-}" ] &amp;&amp; { setsid "$DD/awg-restore.sh" --fw-check &gt;&gt; "$DD/restore.log" 2&gt;&amp;1 &lt; /dev/null &amp; }
 log "старт: туннели ${TUNS[*]}, таблица $TABLE${RAIL_IF:+ (профиль $RAIL_IF)}, возврат через ${RECOVER_SEC}с, качество: $QUALITY$( [ "$V6" = 1 ] &amp;&amp; echo ", IPv6 через туннель")"
 ev start "основной $MAIN, всего туннелей $N"
+<span class="c"># состояние — сразу: первый проход с пробами качества и DNS длится 10–20 с, и всё это время панель, бот и метрики</span>
+<span class="c"># видели «сторож не отвечает» (файла состояния нет)</span>
+write_state
 
 switch_to(){  # switch_to индекс тип сообщение
   local old=${TUNS[$idx]}
@@ -1552,7 +1555,7 @@ while true; do
   read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 570 строк">Показать целиком · 570 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 573 строк">Показать целиком · 573 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR

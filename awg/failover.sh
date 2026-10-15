@@ -432,6 +432,9 @@ for k in "${!TUNS[@]}"; do [ "$k" = 0 ] && continue; ct_flush "${TUNS[$k]}"; don
 [ -x "$DD/awg-restore.sh" ] && [ -z "${AWG_NO_FWCHECK:-}" ] && { setsid "$DD/awg-restore.sh" --fw-check >> "$DD/restore.log" 2>&1 < /dev/null & }
 log "старт: туннели ${TUNS[*]}, таблица $TABLE${RAIL_IF:+ (профиль $RAIL_IF)}, возврат через ${RECOVER_SEC}с, качество: $QUALITY$( [ "$V6" = 1 ] && echo ", IPv6 через туннель")"
 ev start "основной $MAIN, всего туннелей $N"
+# состояние — сразу: первый проход с пробами качества и DNS длится 10–20 с, и всё это время панель, бот и метрики
+# видели «сторож не отвечает» (файла состояния нет)
+write_state
 
 switch_to(){  # switch_to индекс тип сообщение
   local old=${TUNS[$idx]}

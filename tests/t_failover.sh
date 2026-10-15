@@ -212,5 +212,14 @@ for i in 1 2 3; do
   grep -q "|stop|" $T/dd3-$i/events.log 2>/dev/null || nostop=$((nostop + 1))
 done
 ck "остановка посреди паузы: сторож завершается и пишет stop (зависло $hung, без stop $nostop из 3)" '[ $hung = 0 ] && [ $nostop = 0 ]'
+# состояние пишется сразу после старта, а не после первого прохода с проверками (медленный curl растягивает проход)
+mkdir -p $T/slowc; printf '#!/bin/bash\nsleep 6\nexit 7\n' > $T/slowc/curl; chmod +x $T/slowc/curl
+S9=$T/s9; mkdir -p $S9/up $S9/links $S9/loss $S9/rtt $T/dd9; touch $S9/up/awgmain $S9/links/awgmain
+printf 'TABLE=192\nMARK=0x7a0000/0x7e0000\nMAIN=awgmain\nQUALITY=no\n' > $T/dd9/awg.env
+printf '#!/bin/bash\nexit 0\n' > $T/dd9/up.sh; chmod +x $T/dd9/up.sh
+PATH=$T/slowc:$PATH STUB=$S9 DD=$T/dd9 AWG_SYSNET=$S9/links STATEF=$T/st9 FORCEF=$T/f9 INTERVAL=1 bash "$COMP/failover.sh" > /dev/null 2>&1 &
+P9=$!; for _ in 1 2 3 4 5 6; do [ -f $T/st9 ] && break; sleep 0.5; done
+ck "файл состояния появляется сразу после старта, до первых проверок" 'grep -q "^ACTIVE=awgmain" $T/st9 2>/dev/null'
+kill -TERM $P9 2>/dev/null; wait $P9 2>/dev/null
 echo "failover: провалов $fails"
 rm -rf "$T"; exit $fails
