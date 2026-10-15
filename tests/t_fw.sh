@@ -111,11 +111,14 @@ cat > "$T/mg" <<'MG'
 -A UBIOS_PREROUTING_PBR -i br20 -m comment --comment 2 -j MARK --set-xmark 0x6a0000/0x7e0000
 -A UBIOS_PREROUTING_PBR -s 192.168.1.50/32 -m comment --comment 3 -j MARK --set-xmark 0x6a0000/0x7e0000
 -A UBIOS_PREROUTING_PBR -d 203.0.113.0/24 -m comment --comment 4 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m comment --comment 5 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set ! --match-set UBIOS_local_network dst -m comment --comment 6 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src ! -d 192.168.0.0/16 -m comment --comment 7 -j MARK --set-xmark 0x6a0000/0x7e0000
 MG
 mkdir -p "$T/mgbin"; printf '#!/bin/bash\ncat "%s/mg"\n' "$T" > "$T/mgbin/iptables"; chmod 755 "$T/mgbin/iptables"
 source <(sed -n '/^want(){/,/^}/p;/^want_from(){/,/^}/p;/^pstart(){/,/^}/p;/^pstart_v(){/,/^}/p' "$COMP/self.sh")
 old_w=$(PATH="$T/mgbin:$PATH"; want); want_from "$(cat "$T/mg")"
-ck "self: want_from совпадает с прежним want (правила как на роутере)" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ]' || printf '%s\n---\n%s\n' "$old_w" "$W"
+ck "self: want_from совпадает с want; маршрут UniFi «весь интернет» на трафик роутера не переносится" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ] && ! printf "%s\n" "$W" | grep -q -e "^-j MARK" -e "! --match-set" -e "! -d"' || printf '%s\n---\n%s\n' "$old_w" "$W"
 HZ=$(getconf CLK_TCK); pstart_v pv $$
 ck "self: время старта процесса — как у прежнего pstart" '[ "$pv" = "$(pstart $$)" ]'
 # --- awg-self (1.7.1): бюджет внешних команд в обычном проходе службы (в 1.7.0 — ~58)

@@ -33,6 +33,7 @@ CX=AWG_DIRECT_POST  # mangle PREROUTING, в конец: снятие метки 
 DOMSET=AWG_DOM
 DIRSET=AWG_DIRECT
 LISTSET=AWG_LIST    # списки заблокированного (#38), наполняет lists.sh
+KEEPSET=AWG_KEEP    # list:set — что остаётся в туннеле при списках/GeoIP: наборы маршрутов UniFi по доменам и адресам + AWG_DOM
 GEOSET=AWG_GEO      # адреса стран GEO_COUNTRIES (#38)
 CN=AWG_DNS_PRE      # nat PREROUTING, в конец: перехват DNS клиентов (#39)
 CQ=AWG_DNS_FWD      # filter FORWARD, сразу после $CF: отказ DoT и DNS по IPv6 мимо роутера (#39)
@@ -195,23 +196,63 @@ list_n(){  # list_n ПЕРЕМЕННАЯ НАБОР — число адресо�
   local o; o=$(ipset list -t "$2" 2>/dev/null)
   if [[ $o =~ Number\ of\ entries:\ ([0-9]+) ]]; then printf -v "$1" '%s' "${BASH_REMATCH[1]}"; else printf -v "$1" 0; fi
 }
+# Явные маршруты UniFi по доменам и адресам (и «Домены через туннель») — намерение «этот сервис через туннель». Списки и
+# GeoIP их не отменяют: иначе домен из маршрута UniFi, ответивший российским адресом (кэш YouTube у провайдера),
+# уходил напрямую. Наборы назначения правил UBIOS_PREROUTING_PBR с нашими метками (UBIOS_trafficroute_dn_1 — это
+# list:set, вложить его нельзя, берём его IPv4-часть UBIOS4trafficroute_dn_1) собираются в list:set AWG_KEEP.
+# Маршруты UniFi меняются редко: сверка раз в 60 с (или сразу после пересборки цепочки), подмена набора — swap.
+KEEPF=${AWG_RUN:-/run}/awg-guard.keep
+sync_keep(){  # sync_keep [force]
+  local now ts="" o l w prev names="" cur="" n
+  local -A seen=() mine=()
+  epoch now
+  { read -r ts < "$KEEPF.ts"; } 2>/dev/null
+  [ "${1:-}" != force ] && [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt 60 ] && return 0
+  o=$(iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null) || o=""
+  printf '%s\n' "$now" > "$KEEPF.ts"
+  for n in $MARK $ROUTE_MARKS; do mine[$n]=1; done
+  while IFS= read -r l; do
+    [[ $l == *" -j MARK --set-xmark "* ]] || continue
+    [ -n "${mine[${l##* --set-xmark }]:-}" ] || continue
+    prev=""
+    for w in $l; do
+      if [ "$w" = dst ] && [[ $prev == UBIOS_* ]] && [[ " $l" != *" ! --match-set $prev dst"* ]]; then
+        n=UBIOS4${prev#UBIOS_}; [ -n "${seen[$n]:-}" ] || { seen[$n]=1; names+=" $n"; }
+      fi
+      prev=$w
+    done
+  done <<< "$o"
+  [ -n "$TUN_DOMAINS" ] && names+=" $DOMSET"
+  { IFS= read -r cur < "$KEEPF"; } 2>/dev/null
+  [ "$cur" = "$names" ] && ipset list -n $KEEPSET >/dev/null 2>&1 && return 0
+  o=$(ipset list -n 2>/dev/null)
+  {
+    echo "create $KEEPSET.new list:set size 256"
+    for n in $names; do [[ $'\n'$o$'\n' == *$'\n'$n$'\n'* ]] && echo "add $KEEPSET.new $n"; done
+  } > "$KEEPF.r"
+  ipset destroy $KEEPSET.new 2>/dev/null
+  ipset create $KEEPSET list:set size 256 -exist 2>/dev/null
+  if ipset restore < "$KEEPF.r" 2>/dev/null && ipset swap $KEEPSET.new $KEEPSET 2>/dev/null; then
+    printf '%s\n' "$names" > "$KEEPF"
+  else rm -f "$KEEPF"; fi
+  ipset destroy $KEEPSET.new 2>/dev/null; rm -f "$KEEPF.r"
+  return 0
+}
 build_direct(){
   local n m mk
   iptables -t mangle -N $CX 2>/dev/null; B iptables -t mangle -F $CX
+  [ "$LISTS_MODE" != off ] && ipset create $KEEPSET list:set size 256 -exist 2>/dev/null
   if [ -n "$MARK" ]; then
     for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$MASK"; done
     [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$MASK"
     # списки и GeoIP (#38) — для меток основного и дополнительных маршрутов; пустой набор — правила нет (всё через туннель)
     for m in $MARK $ROUTE_MARKS; do
       mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
+      # AWG_KEEP: маршруты UniFi по доменам/адресам и «Домены через туннель» остаются в туннеле при любом режиме
       if [ "$LISTS_MODE" = geoip ] && [ "${GEON:-0}" -gt 0 ]; then
-        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -j MARK --set-xmark "0x0/$mk"
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mk"
       elif [ "$LISTS_MODE" = blocked ] && [ "${LISTN:-0}" -gt 0 ]; then
-        if [ -n "$TUN_DOMAINS" ]; then
-          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $DOMSET dst -j MARK --set-xmark "0x0/$mk"
-        else
-          B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -j MARK --set-xmark "0x0/$mk"
-        fi
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mk"
       fi
     done
   fi
@@ -235,7 +276,7 @@ apply_body(){
     list_n LISTN $LISTSET; list_n GEON $GEOSET
   fi
   local hl="" hg=""; [ "$LISTN" -gt 0 ] && hl=L; [ "$GEON" -gt 0 ] && hg=G   # без $( ): каждая подстановка — fork
-  printf -v h 'g7|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
+  printf -v h 'g8|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
     "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
   { read -r old < "$HASHF"; } 2>/dev/null
@@ -261,6 +302,7 @@ apply_body(){
     build_dom
     build_direct
     build_dns
+    [ "$LISTS_MODE" != off ] && sync_keep force
     if [ "$BERR" = 0 ]; then printf '%s\n' "$h" > $HASHF; else rm -f $HASHF; fi   # не всё применилось — повторим через 5 с
     # цепочки только что собраны: места переходов сверяем по свежим снимкам
     mpre=$(iptables -t mangle -S PREROUTING 2>/dev/null) || return 0
@@ -268,6 +310,7 @@ apply_body(){
     [ $v6c = 1 ] && { fwd6=$(ip6tables -S FORWARD 2>/dev/null) || return 0; }
     [ -n "$npre" ] && { npre=$(iptables -t nat -S PREROUTING 2>/dev/null) || return 0; }
   fi
+  { [ "$GEON" -gt 0 ] || [ "$LISTN" -gt 0 ]; } && sync_keep
   # порядок переходов относительно UniFi проверяем каждый проход (UniFi может переставить свои); всё на месте — без iptables
   [ "$LEAK_GUARD" = yes ] && { jump_first iptables filter FORWARD $CF "$fwd"; [ "$V6ON" = 1 ] && [ $v6c = 1 ] && jump_first ip6tables filter FORWARD $CF "$fwd6"; }
   jump_first iptables mangle PREROUTING $CD "$mpre"
@@ -287,7 +330,7 @@ remove(){
   rm_chain iptables filter FORWARD $CF; rm_chain ip6tables filter FORWARD $CF
   rm_chain iptables mangle PREROUTING $CD; rm_chain iptables mangle PREROUTING $CX
   ipset destroy $DOMSET 2>/dev/null; ipset destroy ${DOMSET}6 2>/dev/null; ipset destroy $DIRSET 2>/dev/null; rm -f "$WANF"
-  ipset destroy $LISTSET 2>/dev/null; ipset destroy $GEOSET 2>/dev/null
+  ipset destroy $LISTSET 2>/dev/null; ipset destroy $GEOSET 2>/dev/null; ipset destroy $KEEPSET 2>/dev/null; rm -f "$KEEPF" "$KEEPF.ts"
   rm_chain iptables nat PREROUTING $CN; rm_chain iptables filter FORWARD $CQ; rm_chain ip6tables filter FORWARD $CQ
   rm -f $HASHF
 }
