@@ -29,7 +29,7 @@ ck "ip6tables: REJECT клиентов VPN-сервера" 'ip6tables -S AWG_GUA
 ck "домены: AWG_DOM_PRE первой в PREROUTING" 'iptables -t mangle -S PREROUTING | sed -n 2p | grep -q -- "-j AWG_DOM_PRE"'
 ck "домены: маркировка из br+ по набору" 'iptables -t mangle -S AWG_DOM_PRE | grep -q -- "-i br+ -m set --match-set AWG_DOM dst -j MARK --set-xmark 0x6a0000/0x7e0000"'
 ck "исключения: AWG_DIRECT_POST последней" 'iptables -t mangle -S PREROUTING | tail -n1 | grep -q -- "-j AWG_DIRECT_POST"'
-ck "исключения: подсеть и набор снимают метку" 'iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "-d 10.99.0.0/16 -j MARK --set-xmark 0x0/0x7e0000" && iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "--match-set AWG_DIRECT dst -j MARK --set-xmark 0x0/0x7e0000"'
+ck "исключения: подсеть и набор снимают метку (и флаг kill switch 0x10000 — иначе blackhole UniFi)" 'iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "-d 10.99.0.0/16 -j MARK --set-xmark 0x0/0x7f0000" && iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "--match-set AWG_DIRECT dst -j MARK --set-xmark 0x0/0x7f0000"'
 ck "наборы ipset созданы" 'grep -qx AWG_DOM $STUB/ipsets && grep -qx AWG_DIRECT $STUB/ipsets'
 n1=$(iptables -S AWG_GUARD | wc -l); $G apply; $G apply
 ck "идемпотентность (число правил не растёт)" '[ "$(iptables -S AWG_GUARD | wc -l)" = "$n1" ] && [ "$(iptables -t mangle -S PREROUTING | grep -c AWG_)" = 2 ]'

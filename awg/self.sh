@@ -132,14 +132,15 @@ unstick_ep(){  # handshake туннеля к серверу $1 ушёл в др�
 
 # правила маркировки UniFi PBR без условия «источник = локальная сеть». Переносятся только маршруты с условием на
 # назначение (домены, адреса): маршрут «весь интернет» после снятия условия на источник стал бы «весь трафик роутера —
-# в туннель» — DNS роутера (DoH-резолвер dnsmasq), NTP, связь с облаком UniFi. Так в 1.7.1 пропадал DNS у всей сети.
+# в туннель» — DNS роутера (DoH-резолвер dnsmasq), NTP, связь с облаком UniFi. Правила с назначением «локальные сети»
+# (DNS к роутеру у маршрута с Kill Switch) тоже не переносятся.
 want(){
   iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null | grep -- ' -j MARK ' \
     | sed -E -e 's/^-A UBIOS_PREROUTING_PBR //' \
              -e 's/-m set --match-set UBIOS_local_network(v6)? src //' \
              -e 's/-m comment --comment [^ ]+ //' \
     | grep -v -E -- '--mac-source|(^| )-i |--match-set [^ ]+ src|(^| )-s ' \
-    | grep -E -- '(^|[^!] )(--match-set [^ ]+ dst|-d [^ ]+)' | awk '!seen[$0]++'
+    | grep -E -- '(^|[^!] )(--match-set [^ ]+ dst|-d [^ ]+)' | grep -v -E -- '--match-set UBIOS_local_network(v6)? dst' | awk '!seen[$0]++'
 }
 
 hook(){  # переход в нашу цепочку должен быть ПЕРВЫМ в mangle OUTPUT (до UBIOS_OUTPUT_JUMP) и ровно одним
@@ -287,6 +288,8 @@ want_from(){  # want_from СНИМОК_mangle → W: то же, что want(), �
     [[ $r =~ --match-set\ [^\ ]+\ src ]] && continue
     # только с условием на назначение (см. want): «весь интернет» на трафик роутера не переносится
     [[ " $r" =~ (^|[^!])\ (--match-set\ [^\ ]+\ dst|-d\ [^\ ]+) ]] || continue
+    # DNS к роутеру (назначение — локальные сети) у маршрута с Kill Switch — не про трафик роутера
+    [[ $r == *"--match-set UBIOS_local_network dst"* || $r == *"--match-set UBIOS_local_networkv6 dst"* ]] && continue
     [ -n "${seen[$r]:-}" ] && continue
     seen[$r]=1; W+="$r"$'\n'
   done <<< "$1"

@@ -118,25 +118,24 @@ load(){  # из кэша в ipset (наборы нужны, даже пусты�
 # Считаем правила UBIOS_PREROUTING_PBR, которые ставят метку нашего туннеля (основной и route.d) без условия на
 # назначение (отрицание — «кроме локальных сетей» — не в счёт). -1: цепочки нет (другая прошивка) — не предупреждаем.
 full_routes(){
-  local marks=" ${MARK%%/*}" f m
+  local f m l w part o c=0
+  local -A want=()
+  [ -n "$MARK" ] && want[$(( ${MARK%%/*} & ~0x10000 ))]=1
   for f in "$DD"/route.d/*.env; do
     [ -r "$f" ] || continue
-    m=$(sed -n 's/^MARK="\{0,1\}\(0x[0-9a-fA-F]*\).*/\1/p' "$f"); [ -n "$m" ] && marks+=" $m"
+    m=$(sed -n 's/^MARK="\{0,1\}\(0x[0-9a-fA-F]*\).*/\1/p' "$f"); [ -n "$m" ] && want[$(( m & ~0x10000 ))]=1
   done
-  iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null | awk -v marks="$marks" '
-    BEGIN { n = split(marks, a, " "); for (i = 1; i <= n; i++) want[tolower(a[i])] = 1 }
-    { seen = 1 }
-    /-j MARK --set-xmark/ {
-      mk = ""; for (i = 1; i <= NF; i++) if ($i == "--set-xmark") { split($(i + 1), p, "/"); mk = tolower(p[1]) }
-      if (!(mk in want)) next
-      part = 0
-      for (i = 3; i <= NF; i++) {
-        if ($i == "dst" && $(i - 2) == "--match-set" && $(i - 3) != "!") part = 1
-        if ($i == "-d" && $(i - 1) != "!") part = 1
-      }
-      if (!part) c++
-    }
-    END { print (seen ? c + 0 : -1) }'
+  o=$(iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null) || { echo -1; return; }
+  [ -n "$o" ] || { echo -1; return; }
+  # метка с Kill Switch — 0x6b0000/0x7f0000: сравниваем без флага 0x10000
+  while IFS= read -r l; do
+    [[ $l == *" -j MARK --set-xmark "* ]] || continue
+    w=${l##* --set-xmark }; [[ $w =~ ^0x[0-9a-fA-F]+/0x[0-9a-fA-F]+$ ]] || continue
+    [ -n "${want[$(( ${w%/*} & ~0x10000 ))]:-}" ] || continue
+    [[ " $l" =~ (^|[^!])\ (--match-set\ [^\ ]+\ dst|-d\ [^\ ]+) ]] && continue
+    c=$((c + 1))
+  done <<< "$o"
+  echo $c
 }
 age(){ local t; t=$(cat "$LD/$1.ts" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] && echo $(( $(date +%s) - t )) || echo -1; }
 src(){ case "$1" in blocked) echo "$LIST_URLS";; geo) countries | tr '\n' ' ';; esac; }

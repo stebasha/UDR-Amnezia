@@ -210,13 +210,16 @@ sync_keep(){  # sync_keep [force]
   [ "${1:-}" != force ] && [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt 60 ] && return 0
   o=$(iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null) || o=""
   printf '%s\n' "$now" > "$KEEPF.ts"
-  for n in $MARK $ROUTE_MARKS; do mine[$n]=1; done
+  # метка правила с Kill Switch — 0x6b0000/0x7f0000: сравниваем под нашей маской (без флага 0x10000)
+  for n in $MARK $ROUTE_MARKS; do mine[$((${n%/*} & ~KS))]=1; done
   while IFS= read -r l; do
     [[ $l == *" -j MARK --set-xmark "* ]] || continue
-    [ -n "${mine[${l##* --set-xmark }]:-}" ] || continue
+    w=${l##* --set-xmark }
+    [[ $w =~ ^0x[0-9a-fA-F]+/0x[0-9a-fA-F]+$ ]] || continue
+    [ -n "${mine[$(( ${w%/*} & ~KS ))]:-}" ] || continue
     prev=""
     for w in $l; do
-      if [ "$w" = dst ] && [[ $prev == UBIOS_* ]] && [[ " $l" != *" ! --match-set $prev dst"* ]]; then
+      if [ "$w" = dst ] && [[ $prev == UBIOS_* ]] && [[ $prev != UBIOS_local_network* ]] && [[ " $l" != *" ! --match-set $prev dst"* ]]; then
         n=UBIOS4${prev#UBIOS_}; [ -n "${seen[$n]:-}" ] || { seen[$n]=1; names+=" $n"; }
       fi
       prev=$w
@@ -238,21 +241,39 @@ sync_keep(){  # sync_keep [force]
   ipset destroy $KEEPSET.new 2>/dev/null; rm -f "$KEEPF.r"
   return 0
 }
+# Флаг kill switch UniFi (0x10000): маршрут с включённым Kill Switch ставит метку туннеля вместе с ним (0x6b0000/0x7f0000),
+# а правило ip «fwmark 0x10000/0x10000 → blackhole» ловит всё, что осталось с флагом. Снимая метку туннеля (исключения,
+# списки, GeoIP), снимаем и флаг — иначе «напрямую» превращалось в blackhole.
+KS=0x10000
 build_direct(){
-  local n m mk
+  local n m mk mks mv mks2 mask2
   iptables -t mangle -N $CX 2>/dev/null; B iptables -t mangle -F $CX
   [ "$LISTS_MODE" != off ] && ipset create $KEEPSET list:set size 256 -exist 2>/dev/null
   if [ -n "$MARK" ]; then
-    for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$MASK"; done
-    [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$MASK"
+    printf -v mask2 '0x%x' $(( MASK | KS ))
+    # DNS к самому роутеру от устройств под маршрутом UniFi с Kill Switch: UniFi помечает его и отбрасывает на входе
+    # (UBIOS_DNS_PBR_JUMP), рассчитывая, что DNS пойдёт к DNS-серверу VPN-клиента. Наш профиль UniFi — «рельса» без
+    # настоящего сервера, DNS туда не дойдёт: сеть оставалась без DNS (ERR_NAME_NOT_RESOLVED). Такие запросы идут к dnsmasq
+    # роутера как обычно (он спрашивает DoH; с DNS_ALL_TUNNEL=yes — через туннель). Правило — в этой же цепочке, она
+    # последняя в mangle PREROUTING, после PBR UniFi.
+    for m in $MARK $ROUTE_MARKS; do
+      mv=${m%/*}; mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
+      printf -v mks '0x%x/0x%x' $(( mv | KS )) $(( mk | KS )); printf -v mks2 '0x%x' $(( mk | KS ))
+      for n in udp tcp; do
+        B iptables -t mangle -A $CX -p $n -m $n --dport 53 -m addrtype --dst-type LOCAL -m mark --mark "$mks" -j MARK --set-xmark "0x0/$mks2"
+      done
+    done
+    for n in $DIRECT_SUBNETS; do B iptables -t mangle -A $CX -d "$n" -j MARK --set-xmark "0x0/$mask2"; done
+    [ -n "$DIRECT_DOMAINS" ] && B iptables -t mangle -A $CX -m set --match-set $DIRSET dst -j MARK --set-xmark "0x0/$mask2"
     # списки и GeoIP (#38) — для меток основного и дополнительных маршрутов; пустой набор — правила нет (всё через туннель)
     for m in $MARK $ROUTE_MARKS; do
       mk=${m#*/}; [ "$mk" = "$m" ] && mk=0xffffffff
+      printf -v mks2 '0x%x' $(( mk | KS ))
       # AWG_KEEP: маршруты UniFi по доменам/адресам и «Домены через туннель» остаются в туннеле при любом режиме
       if [ "$LISTS_MODE" = geoip ] && [ "${GEON:-0}" -gt 0 ]; then
-        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mk"
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set --match-set $GEOSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mks2"
       elif [ "$LISTS_MODE" = blocked ] && [ "${LISTN:-0}" -gt 0 ]; then
-        B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mk"
+        B iptables -t mangle -A $CX -m mark --mark "$m" -m set ! --match-set $LISTSET dst -m set ! --match-set $KEEPSET dst -j MARK --set-xmark "0x0/$mks2"
       fi
     done
   fi
@@ -276,7 +297,7 @@ apply_body(){
     list_n LISTN $LISTSET; list_n GEON $GEOSET
   fi
   local hl="" hg=""; [ "$LISTN" -gt 0 ] && hl=L; [ "$GEON" -gt 0 ] && hg=G   # без $( ): каждая подстановка — fork
-  printf -v h 'g8|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
+  printf -v h 'g9|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
     "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
   { read -r old < "$HASHF"; } 2>/dev/null
