@@ -64,5 +64,15 @@ ck "json: разбирается, видно расхождение со стр�
 ( flock 8; sleep 2 ) 8>"$DD/lists/.lock" & LP=$!; sleep 0.3
 ck "второе обновление при идущем первом — пропускается" '"$L" update | grep -q "уже идёт"'
 wait $LP
+# маршрута UniFi «весь интернет» нет — режим ни на что не влияет: панель и check предупреждают
+ck "full: цепочки UniFi нет — не знаем (-1), не предупреждаем" '[ "$("$L" full)" = -1 ]'
+iptables -t mangle -N UBIOS_PREROUTING_PBR
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_dn_1 dst -j MARK --set-xmark 0x6a0000/0x7e0000
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_9 src -j MARK --set-xmark 0x1a0000/0x7e0000
+"$G" check > $T/c2; "$L" json > $T/j2; "$L" status > $T/s2
+ck "full: только маршруты по доменам — 0 и предупреждение (check, status, json)" '[ "$("$L" full)" = 0 ] && grep -q "WARN   списки: в UniFi нет маршрута PBR" $T/c2 && grep -q "нет маршрута PBR" $T/s2 && python3 -c "import json,sys; assert json.load(open(sys.argv[1]))[\"full\"]==0" $T/j2'
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_13 src -m set ! --match-set UBIOS_local_network dst -j MARK --set-xmark 0x6c0000/0x7e0000
+"$G" check > $T/c3
+ck "full: маршрут на весь интернет (кроме локальных сетей) для профиля route.d — считается, предупреждения нет" '[ "$("$L" full)" = 1 ] && ! grep -q "нет маршрута PBR" $T/c3'
 echo "== lists: ошибок $fails"
 [ $fails = 0 ]

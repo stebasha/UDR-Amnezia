@@ -344,6 +344,8 @@ check(){
       blocked) [ "${ln:-0}" -gt 0 ] && echo "OK     списки: через туннель только заблокированное ($ln сетей)" || { echo "WARN   списки: набор $LISTSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
       geoip)   [ "${gn:-0}" -gt 0 ] && echo "OK     GeoIP: напрямую $(echo "$GEO_COUNTRIES" | tr 'a-z' 'A-Z') ($gn сетей), остальное через туннель" || { echo "WARN   GeoIP: набор $GEOSET пуст — всё под PBR идёт через туннель (lists.sh update)"; };;
     esac
+    [ -x "$DD/lists.sh" ] && [ "$("$DD/lists.sh" full 2>/dev/null)" = 0 ] && \
+      echo "WARN   списки: в UniFi нет маршрута PBR «весь интернет» в туннель — режим $LISTS_MODE ни на что не влияет (через туннель идут только домены и адреса из маршрутов UniFi)"
   fi
   if [ -n "$DIRECT_DOMAINS$DIRECT_SUBNETS" ]; then
     if iptables -t mangle -S PREROUTING 2>/dev/null | grep '^-A' | tail -n1 | grep -q -- "-j $CX"; then echo "OK     исключения ($DIRECT_DOMAINS $DIRECT_SUBNETS): правило стоит последним в mangle PREROUTING (после PBR UniFi)"

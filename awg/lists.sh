@@ -11,9 +11,11 @@
 #   lists.sh status             режим, страны, число адресов, возраст
 #   lists.sh json               то же для панели
 #   lists.sh due                код 0, если пора обновлять (служба awg-guard проверяет раз в час)
+#   lists.sh full               сколько маршрутов PBR UniFi ведут в туннель весь трафик устройств (-1 — не видно)
 # Источники (можно заменить в awg.env): LIST_URLS — списки заблокированного (CIDR IPv4 по строке),
 # GEO_URL — адреса страны, %s — код страны в нижнем регистре.
 export LC_ALL=C.UTF-8
+iptables(){ command iptables -w 10 "$@"; }   # занятая блокировка xtables — ждать, а не «правил нет»
 DD=${DD:-/data/awg}
 LD=$DD/lists
 umask 077
@@ -111,6 +113,31 @@ load(){  # из кэша в ipset (наборы нужны, даже пусты�
   if [ -s "$LD/geo.cidr" ]; then n=$(load_set $GEO_SET "$LD/geo.cidr") && say "· $GEO_SET: $n"; fi
   return 0
 }
+# Списки только сужают то, что UniFi уже отправила в туннель. Если в UniFi маршруты PBR лишь по доменам и адресам
+# (правило с условием на адрес назначения), режимы ни на что не влияют: ifconfig.me и так идёт мимо туннеля.
+# Считаем правила UBIOS_PREROUTING_PBR, которые ставят метку нашего туннеля (основной и route.d) без условия на
+# назначение (отрицание — «кроме локальных сетей» — не в счёт). -1: цепочки нет (другая прошивка) — не предупреждаем.
+full_routes(){
+  local marks=" ${MARK%%/*}" f m
+  for f in "$DD"/route.d/*.env; do
+    [ -r "$f" ] || continue
+    m=$(sed -n 's/^MARK="\{0,1\}\(0x[0-9a-fA-F]*\).*/\1/p' "$f"); [ -n "$m" ] && marks+=" $m"
+  done
+  iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null | awk -v marks="$marks" '
+    BEGIN { n = split(marks, a, " "); for (i = 1; i <= n; i++) want[tolower(a[i])] = 1 }
+    { seen = 1 }
+    /-j MARK --set-xmark/ {
+      mk = ""; for (i = 1; i <= NF; i++) if ($i == "--set-xmark") { split($(i + 1), p, "/"); mk = tolower(p[1]) }
+      if (!(mk in want)) next
+      part = 0
+      for (i = 3; i <= NF; i++) {
+        if ($i == "dst" && $(i - 2) == "--match-set" && $(i - 3) != "!") part = 1
+        if ($i == "-d" && $(i - 1) != "!") part = 1
+      }
+      if (!part) c++
+    }
+    END { print (seen ? c + 0 : -1) }'
+}
 age(){ local t; t=$(cat "$LD/$1.ts" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] && echo $(( $(date +%s) - t )) || echo -1; }
 src(){ case "$1" in blocked) echo "$LIST_URLS";; geo) countries | tr '\n' ' ';; esac; }
 due(){  # пора: кэша нет, он старше LIST_MAX_AGE или собран для других стран/источников
@@ -123,6 +150,7 @@ case "${1:-status}" in
   update) update "${2:-}";;
   load)   load;;
   due)    due;;
+  full)   full_routes;;
   json)  # для панели: режим, страны, по каждому списку — в наборе, в кэше, возраст, совпадает ли с настройками
     printf '{"mode":"%s","countries":"%s","sets":{' "$LISTS_MODE" "$(src geo)"
     sep=""
@@ -133,12 +161,15 @@ case "${1:-status}" in
         "$([ "$(cat "$LD/$k.src" 2>/dev/null)" = "$(src $k)" ] && echo false || echo true)"
       sep=,
     done
-    printf '},"due":%s}\n' "$(due && echo true || echo false)";;
+    printf '},"due":%s,"full":%d}\n' "$(due && echo true || echo false)" "$(full_routes)";;
   status)
     say "режим: $LISTS_MODE$( [ "$LISTS_MODE" = geoip ] && echo " (напрямую: $(countries | tr 'a-z\n' 'A-Z '))")"
     for k in blocked geo; do
       a=$(age $k); s=$LIST_SET; [ $k = geo ] && s=$GEO_SET
       say "$k: в наборе $s $(count $s || echo 0), в кэше $( { wc -l < "$LD/$k.cidr"; } 2>/dev/null || echo 0), обновлён $( [ "$a" -ge 0 ] && echo "$((a/3600)) ч назад" || echo никогда)"
-    done;;
-  *) sed -n '2,17p' "$0";;
+    done
+    if [ "$LISTS_MODE" != off ] && [ "$(full_routes)" = 0 ]; then
+      say "▲ в UniFi нет маршрута PBR «весь интернет» в туннель: режим ни на что не влияет (через туннель идут только домены и адреса из маршрутов UniFi)"
+    fi;;
+  *) sed -n '2,16p' "$0";;
 esac

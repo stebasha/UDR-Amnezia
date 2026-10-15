@@ -52,6 +52,7 @@ window.AWG_EN = {
  "Коды стран через пробел; их адреса идут напрямую в режиме «Всё, кроме выбранных стран».": "Country codes separated by spaces; their addresses go direct in “Everything except chosen countries” mode.",
  "Списки заблокированного (по сети IPv4 на строку). Пусто — antifilter.download. Обновляются раз в сутки; не скачались — остаются прежние.": "Blocklists (one IPv4 network per line). Empty — antifilter.download. Updated daily; if a download fails, the previous list stays.",
  "Списки и GeoIP": "Lists and GeoIP",
+ "В UniFi нет маршрута PBR на весь трафик в туннель: сейчас через туннель идут только домены и адреса из маршрутов UniFi, и этот режим ни на что не влияет (сайты вроде ifconfig.me покажут ваш IP). Создайте в UniFi маршрут по политике: устройства (или сеть) → VPN-клиент, назначение — весь интернет, kill switch включён.": "UniFi has no policy-based route sending all traffic into the tunnel: only the domains and addresses from UniFi routes go through it, so this mode has no effect (sites like ifconfig.me will show your IP). Create a policy-based route in UniFi: devices (or network) → VPN client, destination — all Internet, kill switch on.",
  "Сейчас выключено: устройства под PBR идут через туннель целиком. Выберите режим и нажмите «Применить» — списки скачаются сами.": "Off: PBR devices send everything through the tunnel. Pick a mode and press “Apply” — lists download automatically.",
  "Адресов стран ": "Country networks ",
  "Сетей в списке заблокированного: ": "Networks in blocklist: ",
