@@ -129,4 +129,21 @@ ck "метрики: handshake, активный канал, события, сл
 mk=$(printf 'PrivateKey = cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5cHI=\nEndpoint = vpn.example.org:51820\nTG_TOKEN="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nVPS_HOST="vpn.example.org"\nendpoint: 95.31.7.8:51820\n' \
   | bash -c 'source <(sed -n "/^mask(){/,/^}/p" "$1"); mask' _ "$COMP/report.sh")
 ck "report: ключ, токен, имя сервера, адрес VPS и публичный IP скрыты" '! echo "$mk" | grep -qE "cHJpdmF0|vpn\.example|AAAAAAAA|95\.31\.7\.8" && echo "$mk" | grep -q "Endpoint = <узел>:51820"'
+# up.sh (1.7.1): amneziawg-go — в своей группе процессов (scope systemd), а не в группе службы, что подняла туннель:
+# перезапуск сторожа или панели больше не убивает туннели
+U=$T/up; mkdir -p "$U/dd" "$U/bin" "$U/run" "$U/links"
+cp "$COMP/up.sh" "$U/dd/"; printf 'MAIN=awgmain\n' > "$U/dd/awg.env"
+printf '[Interface]\nPrivateKey = cHJpdmF0ZQ==\nAddress = 10.9.0.2/32\n[Peer]\nPublicKey = cHVibGlj\nEndpoint = 203.0.113.9:51820\nAllowedIPs = 0.0.0.0/0\n' > "$U/dd/main.conf"
+printf '#!/bin/bash\ntouch "%s/links/$1"; echo "go $1" >> "%s/go.log"\n' "$U" "$U" > "$U/dd/amneziawg-go"
+printf '#!/bin/bash\nexit 0\n' > "$U/dd/awg"
+printf '#!/bin/bash\ncase "$1 $2" in "link show") [ -e "%s/links/$3" ];; "link del") rm -f "%s/links/$3";; *) exit 0;; esac\n' "$U" "$U" > "$U/bin/ip"
+printf '#!/bin/bash\necho "systemd-run $*" >> "%s/sr.log"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"\n' "$U" > "$U/bin/systemd-run"
+printf '#!/bin/bash\nexit 0\n' > "$U/bin/sysctl"
+chmod +x "$U/dd/amneziawg-go" "$U/dd/awg" "$U/bin/"*
+DD=$U/dd AWG_RUN=$U/run AWG_FORCE_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1
+ck "up.sh: amneziawg-go запущен через systemd-run --scope (своя группа процессов)" 'grep -q -- "--scope" "$U/sr.log" && grep -q "amneziawg-go awgmain" "$U/sr.log" && [ -e "$U/links/awgmain" ] && grep -q "awgmain поднят" "$U/out"'
+ck "up.sh: временные файлы с ключом не остаются" '! ls "$U/run"/awgmain.* >/dev/null 2>&1'
+rm -f "$U/sr.log" "$U/links/awgmain"
+DD=$U/dd AWG_RUN=$U/run AWG_NO_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1
+ck "up.sh: без systemd — как раньше, напрямую" '[ ! -e "$U/sr.log" ] && [ -e "$U/links/awgmain" ]'
 echo "misc: провалов $fails"; [ $fails = 0 ]
