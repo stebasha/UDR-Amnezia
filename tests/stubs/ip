@@ -5,8 +5,14 @@ echo "ip $*" >> $S/ip.log
 case "$1 $2" in
   "link show") [ -e "$S/links/$3" ] && exit 0 || exit 1;;
   "rule show") echo "32504:	from all fwmark 0x6a0000/0x7e0000 lookup 178.wgclt1"; exit 0;;
-  "route replace") echo "$*" >> $S/routes.log; exit 0;;
-  "route del") echo "$*" >> $S/routes-del.log; exit 0;;
+  "route replace") echo "$*" >> $S/routes.log
+                   # таблица PBR в файле $S/rt-ТАБЛИЦА: «ip -4 route show table» видит то, что поставлено
+                   tb=${!#}; f=$S/rt-$tb
+                   if [ "$3" = blackhole ]; then grep -qx "blackhole default metric 200" $f 2>/dev/null || echo "blackhole default metric 200" >> $f
+                   else sed -i "/^default dev [^ ]* scope link metric $7\$/d" $f 2>/dev/null; echo "default dev $5 scope link metric $7" >> $f; fi
+                   exit 0;;
+  "route del") echo "$*" >> $S/routes-del.log; [ "$3 $4" = "default dev" ] && sed -i "/^default dev $5 /d" "$S/rt-${!#}" 2>/dev/null; exit 0;;
+  "-4 route") [ "$3" = show ] && cat "$S/rt-$5" 2>/dev/null; exit 0;;
   "-4 -o") [ "$3 $4" = "addr show" ] && echo "9: $6    inet 10.9.0.$(( ${#6} % 200 ))/32 scope global $6"; exit 0;;
   "-6 -o") [ "$3 $4" = "addr show" ] && [ -e "$S/v6/$6" ] && echo "9: $6    inet6 fd00::${#6}/128 scope global"; exit 0;;
   "-6 route") echo "$*" >> "$S/routes6.log"; exit 0;;

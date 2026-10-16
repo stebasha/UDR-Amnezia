@@ -103,17 +103,27 @@ def api_routes_get(h, q):
         p = line.split("\t")
         if len(p) == 5:
             rails.append({"prio": p[0], "mark": p[1], "table": p[2], "rail": p[3], "used": "" if p[4] == "-" else p[4]})
-    st = state()
-    routes = [{"id": "main", "label": "", "rail": e.get("RAIL_IF", ""), "table": e.get("TABLE", ""),
-               "tunnels": st.get("TUNNELS", "").split() or tunnels(e), "active": st.get("ACTIVE", ""), "forced": st.get("FORCED", ""),
-               "service": "active" if svc_active("awg-failover") else "inactive", "only": False}]
+    return {"rails": rails, "routes": routes_brief(e), "tunnels": tunnels(e), "labels": labels(), "route_only": e.get("ROUTE_ONLY", "").split()}
+
+
+def routes_brief(e=None, extra_only=False):
+    """Маршруты и их состояние без профилей UniFi (без ip rule) — для бота, HA и обзора. extra_only — без основного."""
+    e = e or env()
+    routes = []
+    if not extra_only:
+        st = state()
+        routes.append({"id": "main", "label": "", "rail": e.get("RAIL_IF", ""), "table": e.get("TABLE", ""),
+                       "tunnels": st.get("TUNNELS", "").split() or tunnels(e), "active": st.get("ACTIVE", ""), "forced": st.get("FORCED", ""),
+                       "service": "active" if svc_active("awg-failover") else "inactive", "only": False})
+    if not any(f.endswith(".env") for f in (os.listdir(os.path.join(DD, "route.d")) if os.path.isdir(os.path.join(DD, "route.d")) else [])):
+        return routes                       # маршрутов нет — routes.sh не запускаем
     for line in routes_sh(["list"], 15)[1].splitlines():
         p = line.split("\t")
         if len(p) == 8 and ROUTE_ID_RE.match(p[0]):
             rf = parse_env_text(read_file(os.path.join(DD, "route.d", p[0] + ".env")))
             routes.append({"id": p[0], "rail": p[1], "table": p[2], "tunnels": p[3].split(), "active": "" if p[4] == "-" else p[4],
                            "service": p[5], "forced": "" if p[6] == "-" else p[6], "label": p[7], "only": rf.get("ONLY") == "yes"})
-    return {"rails": rails, "routes": routes, "tunnels": tunnels(e), "labels": labels(), "route_only": e.get("ROUTE_ONLY", "").split()}
+    return routes
 
 
 def api_route_save(h, d):

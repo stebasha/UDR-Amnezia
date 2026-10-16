@@ -28,6 +28,12 @@ UIFILE=zz-awg-ui.conf
 HASHF=/tmp/awg-self.hash
 RESTF=/tmp/awg-self.dnsmasq-restart
 PRIV="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 100.64.0.0/10 169.254.0.0/16 224.0.0.0/4"
+SLOWF=${AWG_RUN:-/run}/awg-self.slow     # кэш редко меняющегося: адреса серверов туннелей, DNS-апстримы, подсети WAN
+SLOW_TTL=${SLOW_TTL:-60}
+HZ=$(getconf CLK_TCK 2>/dev/null || echo 100)
+# Проход службы повторяется каждые 5 с. В нём — один снимок таблицы mangle (правила UniFi PBR, переход в нашу цепочку,
+# MSS) и разбор средствами bash; редко меняющееся — из кэша раз в SLOW_TTL с (сразу, если поменялся конфиг туннеля).
+epoch(){ printf -v "$1" '%(%s)T' -1; }
 
 load(){
   TABLE=""; MARK=""; MAIN=awgmain; BACKUP=""; WANIF=""; VPS_IP=""; TUNNELS_EXTRA=""
@@ -124,13 +130,17 @@ unstick_ep(){  # handshake туннеля к серверу $1 ушёл в др�
   return 0
 }
 
-# правила маркировки UniFi PBR без условия «источник = локальная сеть»
+# правила маркировки UniFi PBR без условия «источник = локальная сеть». Переносятся только маршруты с условием на
+# назначение (домены, адреса): маршрут «весь интернет» после снятия условия на источник стал бы «весь трафик роутера —
+# в туннель» — DNS роутера (DoH-резолвер dnsmasq), NTP, связь с облаком UniFi. Правила с назначением «локальные сети»
+# (DNS к роутеру у маршрута с Kill Switch) тоже не переносятся.
 want(){
   iptables -t mangle -S UBIOS_PREROUTING_PBR 2>/dev/null | grep -- ' -j MARK ' \
     | sed -E -e 's/^-A UBIOS_PREROUTING_PBR //' \
              -e 's/-m set --match-set UBIOS_local_network(v6)? src //' \
              -e 's/-m comment --comment [^ ]+ //' \
-    | grep -v -E -- '--mac-source|(^| )-i |--match-set [^ ]+ src|(^| )-s ' | awk '!seen[$0]++'
+    | grep -v -E -- '--mac-source|(^| )-i |--match-set [^ ]+ src|(^| )-s ' \
+    | grep -E -- '(^|[^!] )(--match-set [^ ]+ dst|-d [^ ]+)' | grep -v -E -- '--match-set UBIOS_local_network(v6)? dst' | awk '!seen[$0]++'
 }
 
 hook(){  # переход в нашу цепочку должен быть ПЕРВЫМ в mangle OUTPUT (до UBIOS_OUTPUT_JUMP) и ровно одним
@@ -264,6 +274,144 @@ build(){  # собрать цепочку целиком в ${CH}_NEW и под�
   iptables -t mangle -F $O 2>/dev/null; iptables -t mangle -X $O 2>/dev/null
 }
 
+# ---------- быстрый проход службы ----------
+want_from(){  # want_from СНИМОК_mangle → W: то же, что want(), без внешних процессов
+  local l r; local -A seen=()
+  W=""
+  while IFS= read -r l; do
+    [[ $l == "-A UBIOS_PREROUTING_PBR "* && $l == *" -j MARK "* ]] || continue
+    r=${l#-A UBIOS_PREROUTING_PBR }
+    r=${r//-m set --match-set UBIOS_local_network src /}
+    r=${r//-m set --match-set UBIOS_local_networkv6 src /}
+    [[ $r =~ ^(.*)-m\ comment\ --comment\ [^\ ]+\ (.*)$ ]] && r="${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+    [[ $r == *--mac-source* || $r == "-i "* || $r == *" -i "* || $r == "-s "* || $r == *" -s "* ]] && continue
+    [[ $r =~ --match-set\ [^\ ]+\ src ]] && continue
+    # только с условием на назначение (см. want): «весь интернет» на трафик роутера не переносится
+    [[ " $r" =~ (^|[^!])\ (--match-set\ [^\ ]+\ dst|-d\ [^\ ]+) ]] || continue
+    # DNS к роутеру (назначение — локальные сети) у маршрута с Kill Switch — не про трафик роутера
+    [[ $r == *"--match-set UBIOS_local_network dst"* || $r == *"--match-set UBIOS_local_networkv6 dst"* ]] && continue
+    [ -n "${seen[$r]:-}" ] && continue
+    seen[$r]=1; W+="$r"$'\n'
+  done <<< "$1"
+  W=${W%$'\n'}
+}
+lines_of(){  # lines_of ФАЙЛ ПЕРЕМЕННАЯ — содержимое файла без завершающих переводов строк (как $(cat), но без cat)
+  local l v=""
+  if [ -r "$1" ]; then while IFS= read -r l || [ -n "$l" ]; do v+="$l"$'\n'; done < "$1"; fi
+  while [[ $v == *$'\n' ]]; do v=${v%$'\n'}; done
+  printf -v "$2" '%s' "$v"
+}
+slow_inputs(){  # → EP UP WS
+  local now ts="" f stale=0
+  epoch now
+  { read -r ts < "$SLOWF.ts"; } 2>/dev/null
+  { [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt "$SLOW_TTL" ]; } || stale=1
+  [ -f "$EPF" ] && [ -f "$UPF" ] || stale=1
+  if [ $stale = 0 ]; then
+    for f in "$DD"/*.conf "$DD"/.endpoint-* "$DD/awg.env"; do [ "$f" -nt "$SLOWF.ts" ] && { stale=1; break; }; done
+  fi
+  if [ $stale = 1 ]; then
+    EP=$(endpoints); UP=$(upstreams)
+    WS=$(ip -4 route show dev "$WANIF" scope link 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+    printf '%s\n' "$WS" > "$SLOWF.ws"; printf '%s\n' "$now" > "$SLOWF.ts"
+  else
+    lines_of "$EPF" EP; lines_of "$UPF" UP; lines_of "$SLOWF.ws" WS
+  fi
+}
+hook_from(){  # hook_from СНИМОК — переход в $CH первым в mangle OUTPUT и ровно один; без iptables, если так и есть
+  local l first="" n=0 k
+  while IFS= read -r l; do
+    [[ $l == "-A OUTPUT "* ]] || continue
+    [ -z "$first" ] && first=$l
+    [ "$l" = "-A OUTPUT -j $CH" ] && n=$((n + 1))
+  done <<< "$1"
+  [ "$n" = 1 ] && [ "$first" = "-A OUTPUT -j $CH" ] && return 0
+  for ((k=0; k<n; k++)); do iptables -t mangle -D OUTPUT -j $CH 2>/dev/null || return 0; done
+  iptables -t mangle -I OUTPUT 1 -j $CH
+}
+mss_from(){  # mss_from СНИМОК — как mss(), но по снимку: iptables только если правило надо добавить или убрать
+  local i m l want have
+  for i in $MAIN $BACKUP $TUNNELS_EXTRA; do
+    m=""; { read -r m < "/sys/class/net/$i/mtu"; } 2>/dev/null; [[ $m =~ ^[0-9]+$ ]] || continue
+    [[ $'\n'$1$'\n' == *$'\n'"-A POSTROUTING -o $i -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu"$'\n'* ]] \
+      || ensure mangle POSTROUTING -o "$i" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    want="-A PREROUTING -i $i -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $((m-40))"; have=0
+    while IFS= read -r l; do
+      [[ $l == "-A PREROUTING -i $i -p tcp "*"--set-mss "* ]] || continue
+      [ "$l" = "$want" ] && { have=1; continue; }
+      # shellcheck disable=SC2086
+      iptables -t mangle ${l/#-A /-D } 2>/dev/null          # MSS от прежнего MTU
+    done <<< "$1"
+    [ $have = 1 ] || ensure mangle PREROUTING -i "$i" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $((m-40))
+  done
+}
+dnsmasq_pid_v(){  # dnsmasq_pid_v ПЕРЕМЕННАЯ — как dnsmasq_pid, без cat/tr/grep в обычном случае
+  local p="" a
+  { read -r p < /run/dnsmasq-main.pid; } 2>/dev/null
+  if [[ $p =~ ^[0-9]+$ ]] && [ -d "/proc/$p" ]; then printf -v "$1" '%s' "$p"; return 0; fi
+  p=$(dnsmasq_pid) || return 1
+  printf -v "$1" '%s' "$p"
+}
+conf_dir_v(){  # conf_dir_v ПЕРЕМЕННАЯ PID — каталог --conf-dir из командной строки dnsmasq
+  local -a args=(); local a
+  mapfile -d '' -t args < "/proc/$2/cmdline" 2>/dev/null
+  for a in "${args[@]}"; do [[ $a == --conf-dir=* ]] && { a=${a#--conf-dir=}; printf -v "$1" '%s' "${a%%,*}"; return 0; }; done
+  printf -v "$1" '%s' ""
+}
+pstart_v(){  # pstart_v ПЕРЕМЕННАЯ PID — время старта процесса (epoch) из /proc без awk
+  local line rest k v bt=""; local -a f=()
+  { IFS= read -r line < "/proc/$2/stat"; } 2>/dev/null || return 1
+  rest=${line##*) }; read -ra f <<< "$rest"            # поля после «(имя)»: f[0] — поле 3, starttime (22) — f[19]
+  while read -r k v; do [ "$k" = btime ] && { bt=$v; break; }; done < /proc/stat
+  [[ ${f[19]:-} =~ ^[0-9]+$ ]] && [ -n "$bt" ] || return 1
+  printf -v "$1" '%s' "$(( bt + f[19] / HZ ))"
+}
+bad_once(){  # bad_once КЛЮЧ [СООБЩЕНИЕ] — в журнал один раз, а не каждые 5 с (проход идёт в подоболочке: помним в файле)
+  local bf=${AWG_RUN:-/run}/awg-self.bad l
+  [ "$1" = dnsmasq ] && { [ -e "$bf.dnsmasq" ] && return 0; : > "$bf.dnsmasq" 2>/dev/null; log "$2"; return 0; }
+  { while IFS= read -r l; do [ "$l" = "$1" ] && return 0; done < "$bf"; } 2>/dev/null
+  printf '%s\n' "$1" >> "$bf" 2>/dev/null; log "${2:-пропускаю «$1»: не похоже на домен}"
+}
+ui_conf_v(){  # ui_conf_v ПЕРЕМЕННАЯ — текст файла dnsmasq, как ui_conf
+  local d o="# awg-self: файл создаёт /data/awg/self.sh, не редактировать."$'\n'
+  if ui_on; then
+    o+="# домены UniFi резолвятся через $UI_DNS (через AWG)"$'\n'
+    for d in $UI_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="server=/$d/$UI_DNS"$'\n'"ipset=/$d/$UISET"$'\n'; done
+  fi
+  for d in $TUN_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="ipset=/$d/$DOMSET,${DOMSET}6"$'\n'; done
+  for d in $DIRECT_DOMAINS; do valid_domain "$d" || { bad_once "$d"; continue; }; o+="ipset=/$d/$DIRSET"$'\n'; done
+  printf -v "$1" '%s' "$o"
+}
+ui_dns_fast(){  # как ui_dns: файл в conf-dir dnsmasq; сверка «загрузил ли dnsmasq» — после записи, смены dnsmasq или раз в минуту
+  local pid dir f st mt cur uc wrote=0 spid="" sts=0 now
+  dnsmasq_pid_v pid || { bad_once "dnsmasq" "не найден dnsmasq с --conf-dir — UI-модуль пропущен"; return 0; }
+  [ -e "${AWG_RUN:-/run}/awg-self.bad.dnsmasq" ] && rm -f "${AWG_RUN:-/run}/awg-self.bad.dnsmasq"   # dnsmasq снова есть: о пропаже сообщить снова
+  conf_dir_v dir "$pid"; [ -d "$dir" ] || return 0
+  f="$dir/$UIFILE"
+  if ! conf_on; then
+    [ -f "$f" ] && { rm -f "$f"; restart_dnsmasq "$pid"; }
+    return 0
+  fi
+  ui_conf_v uc; lines_of "$f" cur
+  if [ "$cur" != "${uc%$'\n'}" ]; then
+    local t="$dir/.$UIFILE.tmp"          # имя с точкой: dnsmasq не читает такие файлы из conf-dir
+    printf '%s' "$uc" > "$t"
+    if command -v dnsmasq >/dev/null && ! dnsmasq --test --conf-file="$t" >/dev/null 2>&1; then
+      log "dnsmasq отверг сгенерированный файл, оставляю прежний: $(dnsmasq --test --conf-file="$t" 2>&1 | head -n1)"; rm -f "$t"; return 0
+    fi
+    mv -f "$t" "$f"; wrote=1
+  fi
+  epoch now
+  { read -r spid sts < "$RESTF.seen"; } 2>/dev/null
+  if [ $wrote = 1 ] || [ "$spid" != "$pid" ] || [ $((now - ${sts:-0})) -ge 60 ]; then
+    printf '%s %s\n' "$pid" "$now" > "$RESTF.seen"
+    pstart_v st "$pid" || st=""; mt=$(stat -c %Y "$f")
+    [ -n "$st" ] && [ "$st" -lt "$mt" ] && restart_dnsmasq "$pid"   # dnsmasq старше файла → не видел его
+  fi
+  return 0
+}
+legacy_once(){ [ -e /tmp/awg-self.legacy-checked ] && return 0; legacy; : > /tmp/awg-self.legacy-checked; }
+
 apply(){  # один проход за раз (служба, ручной apply, установщик); блокировка снимается по выходу из подоболочки
   if command -v flock >/dev/null; then ( flock -w 30 9 || exit 0; apply_body ) 9>"${AWG_RUN:-/run}/awg-self.lock"; else apply_body; fi
   return 0
@@ -272,24 +420,27 @@ apply(){  # один проход за раз (служба, ручной apply,
 apply_body(){
   load
   [ -n "$TABLE" ] && [ -n "$MARK" ] || { echo "нет TABLE/MARK в awg.env"; return 0; }
-  local w ep up h ip ws
-  w=$(want); ep=$(endpoints); up=$(upstreams)
-  ui_on && ipset create $UISET hash:ip family inet -exist
-  [ -n "$TUN_DOMAINS" ] && { ipset create $DOMSET hash:ip family inet timeout 43200 -exist; ipset create ${DOMSET}6 hash:ip family inet6 timeout 43200 -exist; }
-  [ -n "$DIRECT_DOMAINS" ] && ipset create $DIRSET hash:ip family inet timeout 43200 -exist
-  ws=$(ip -4 route show dev "$WANIF" scope link 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
-  h=$(printf 'v10\n%s\n%s\n%s\n%s %s %s %s %s %s %s\n' "$w" "$ep" "$up" "$UI_FIX" "$UI_DNS" "$UI_DOMAINS" "$DNS_ALL_TUNNEL" "$WANIF" "$MARK" "$ws" | md5sum | cut -c1-12)
-  if [ "$(cat $HASHF 2>/dev/null)" != "$h" ] || ! iptables -t mangle -S $CH >/dev/null 2>&1; then
-    if build "$w" "$ep" "$up"; then
-      echo "$h" > $HASHF
-      for ip in $up; do unstick "$ip"; done
-      for ip in $ep; do unstick_ep "$ip"; done
+  local mg W EP UP WS h old="" ip
+  mg=$(iptables -t mangle -S 2>/dev/null) || return 0          # блокировка xtables не освободилась — в следующий проход
+  want_from "$mg"
+  slow_inputs
+  printf -v h 'v11\n%s\n%s\n%s\n%s %s %s %s %s %s %s %s' "$W" "$EP" "$UP" "$UI_FIX" "$UI_DNS" "$UI_DOMAINS" "$DNS_ALL_TUNNEL" "$WANIF" "$MARK" "$WS" "$TUN_DOMAINS $DIRECT_DOMAINS"
+  { IFS= read -r -d '' old < "$HASHF"; } 2>/dev/null
+  if [ "$old" != "$h" ] || [[ $'\n'$mg$'\n' != *$'\n'"-N $CH"$'\n'* ]]; then
+    ui_on && ipset create $UISET hash:ip family inet -exist
+    [ -n "$TUN_DOMAINS" ] && { ipset create $DOMSET hash:ip family inet timeout 43200 -exist; ipset create ${DOMSET}6 hash:ip family inet6 timeout 43200 -exist; }
+    [ -n "$DIRECT_DOMAINS" ] && ipset create $DIRSET hash:ip family inet timeout 43200 -exist
+    if build "$W" "$EP" "$UP"; then
+      printf '%s' "$h" > $HASHF
+      for ip in $UP; do unstick "$ip"; done
+      for ip in $EP; do unstick_ep "$ip"; done
     else rm -f $HASHF; fi
+    mg=$(iptables -t mangle -S 2>/dev/null) || return 0          # цепочка пересобрана — сверка по свежему снимку
   fi
-  legacy
-  hook
-  mss
-  ui_dns
+  legacy_once
+  hook_from "$mg"
+  mss_from "$mg"
+  ui_dns_fast
   return 0
 }
 
@@ -439,8 +590,9 @@ check(){
 }
 
 case "${1:-run}" in
-  run)       trap 'exit 0' TERM INT; while :; do apply; sleep 5 & wait $!; done;;
-  apply)     rm -f "$HASHF"; apply;;                     # ручной запуск всегда пересобирает цепочку
+  run)       STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}<> <(:)    # сигнал — флажок (см. failover.sh)
+             while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null; done; exit 0;;
+  apply)     rm -f "$HASHF" "$SLOWF.ts" /tmp/awg-self.legacy-checked; apply;;   # ручной запуск всегда пересобирает цепочку
   reconnect) reconnect;;
   remove)    remove;;
   check)     check;;

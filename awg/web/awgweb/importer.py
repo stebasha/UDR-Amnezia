@@ -59,7 +59,11 @@ def decode_import(data):
         js = None
         for cand in (raw[4:], raw):
             try:
-                js = zlib.decompress(cand)
+                # не больше 2 МБ после распаковки: сжатая «бомба» в 150 КБ иначе развернулась бы в сотни мегабайт памяти роутера
+                z = zlib.decompressobj()
+                js = z.decompress(cand, 2 * 1024 * 1024)
+                if z.unconsumed_tail:
+                    raise ValueError("ссылка vpn:// слишком большая после распаковки")
                 break
             except zlib.error:
                 continue

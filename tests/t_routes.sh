@@ -23,7 +23,7 @@ ck "rails: профили с правилами PBR, основной помеч
 ck "add: профиль основного маршрута — отказ" '! "$R" add r2 wgclt1 "awgus" > $T/o && grep -q "основной маршрут" $T/o'
 ck "add: неизвестный туннель — отказ" '! "$R" add r2 wgclt2 "awgus awgxx" > $T/o && grep -q "awgxx нет в наборе" $T/o'
 ck "add: профиль без правила PBR — отказ" '! "$R" add r2 wgclt9 "awgus" > $T/o && grep -q "нет правила PBR" $T/o'
-ck "add: опасный ID и название — отказ" '! "$R" add "a;b" wgclt2 "awgus" >/dev/null && ! "$R" add main wgclt2 "awgus" >/dev/null && ! "$R" add r2 wgclt2 "awgus" "x\$(id)" >/dev/null'
+ck "add: опасный ID и название — отказ" '! "$R" add "a;b" wgclt2 "awgus" >/dev/null && ! "$R" add main wgclt2 "awgus" >/dev/null && ! "$R" add r2 wgclt2 "awgus" "x\$(id)" >/dev/null && ! "$R" add r2 wgclt2 "awgus" "$(printf '"'"'a\nB=1'"'"')" >/dev/null'
 "$R" add r2 wgclt2 "awgus awgbackup" "США" > $T/o; rc=$?
 ck "add: маршрут r2 — файл 600, таблица и метка профиля" '[ $rc = 0 ] && grep -qx "TABLE=\"179\"" $DD/route.d/r2.env && grep -qx "MARK=\"0x6c0000/0x7e0000\"" $DD/route.d/r2.env && grep -qx "TUNNELS=\"awgus awgbackup\"" $DD/route.d/r2.env && [ "$(stat -c %a $DD/route.d/r2.env)" = 600 ]'
 ck "add: служба awg-failover-r2 — юнит, автозапуск, список служб" 'grep -q "ExecStart=$DD/failover.sh --route r2" $SYSD/awg-failover-r2.service && grep -q "enable awg-failover-r2" $T/systemctl.log && grep -qx awg-failover-r2 $DD/.units'

@@ -117,6 +117,9 @@ MIN_DWELL=${MIN_DWELL:-120}               # после любого перекл
 TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
+RECHECK_AFTER=${RECHECK_AFTER:-120}       # более приоритетный канал не отвечает столько секунд — проверять его реже:
+RECHECK_SLOW=${RECHECK_SLOW:-30}          #   раз в столько секунд,
+RECHECK_MAX=${RECHECK_MAX:-60}            #   а после 10 минут — раз в столько
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
 SIM=${SIM:-/tmp/awg-sim-down}             # флаг имитации падения основного канала
 FORCEF=${FORCEF:-/run/awg-force}
@@ -130,27 +133,54 @@ for t in $BACKUP ${TUNNELS_EXTRA:-}; do case " ${ROUTE_ONLY:-} " in *" $t "*) co
 N=${#TUNS[@]}
 V6=0; [ "$LEAK_V6" = route ] && command -v ip6tables >/dev/null && V6=1
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
+SYSNET=${AWG_SYSNET:-/sys/class/net}
+RUNDIR=${AWG_RUN:-/run}
+SNAPF=$RUNDIR/awg-fw.snap               # общий снимок цепочек iptables (см. prepare)
+CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
+CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
+# Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные
+# средства bash там, где можно: время — printf %(%s)T, интерфейс — /sys/class/net, сравнения — шаблоны, пауза — read -t.
+epoch(){ printf -v "$1" '%(%s)T' -1; }
+link_up(){ [ -e "$SYSNET/$1" ]; }
 
 log(){
   local m; m="$(date '+%F %T') $RT$*"
   echo "$m"; logger -t awg-failover "$*" 2>/dev/null; echo "$m" >> "$LOGF"
   if [ "$(wc -l < "$LOGF")" -gt 1000 ]; then tail -n 500 "$LOGF" > "$LOGF.tmp" && mv "$LOGF.tmp" "$LOGF"; fi
 }
-ev(){ echo "$(date +%s)|$1|$RT$2" >> "$EVF"; if [ "$(wc -l < "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" > "$EVF.tmp" && mv "$EVF.tmp" "$EVF"; fi; }
+ev(){ local t; epoch t; echo "$t|$1|$RT$2" >> "$EVF"; if [ "$(wc -l < "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" > "$EVF.tmp" && mv "$EVF.tmp" "$EVF"; fi; }
 
 # Канал жив, если через него открывается HTTPS хотя бы к одному из независимых узлов TARGETS
 # (отказ одного сайта канал не роняет). Если HTTPS не прошёл ни к одному — пробуем ping (ICMP у части
 # операторов не ходит, поэтому он вторым). Канал мёртв, только если не ответил никто.
+declare -A RXL CHKT
 check(){
   [ "$1" = "$MAIN" ] && [ -e "$SIM" ] && return 1
-  local t c
+  local t c rx now
+  # из туннеля за проход пришло ≥ CHECK_RX_MIN байт (это не keepalive: тот ~100 байт) — сервер отвечает, канал жив;
+  # без такого трафика или раз в CHECK_MAX_AGE — настоящая проверка HTTPS. Падение канала обрывает трафик —
+  # и следующий же проход идёт к HTTPS, так что переключение не запаздывает.
+  if [ "${CHECK_RX_MIN:-0}" -gt 0 ]; then
+    rx=""; { read -r rx < "$SYSNET/$1/statistics/rx_bytes"; } 2>/dev/null; epoch now
+    if [[ $rx =~ ^[0-9]+$ ]] && [ -n "${RXL[$1]:-}" ] && [ $((rx - RXL[$1])) -ge "$CHECK_RX_MIN" ] && [ $((now - ${CHKT[$1]:-0})) -lt "$CHECK_MAX_AGE" ]; then
+      RXL[$1]=$rx; return 0
+    fi
+    [[ $rx =~ ^[0-9]+$ ]] && RXL[$1]=$rx
+  fi
+  # сторожа дополнительных маршрутов проверяют те же туннели: успешная проверка другого сторожа в этом же проходе
+  # (не старше INTERVAL) засчитывается и здесь — без второго запроса HTTPS через тот же туннель. Сбой не делится:
+  # его каждый сторож перепроверяет сам.
+  local okf="$RUNDIR/awg-chk-$1" ts=""
+  { read -r ts < "$okf"; } 2>/dev/null; epoch now
+  if [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -ge 0 ] && [ $((now - ts)) -lt "$INTERVAL" ]; then CHKT[$1]=$now; return 0; fi
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2>/dev/null)
-    [ -n "$c" ] && [ "$c" != 000 ] && return 0
+    [ -n "$c" ] && [ "$c" != 000 ] && { chk_ok "$1"; return 0; }
   done
-  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && return 0; done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" >/dev/null 2>&1 && { chk_ok "$1"; return 0; }; done
   return 1
 }
+chk_ok(){ epoch "CHKT[$1]"; printf '%s\n' "${CHKT[$1]}" > "$RUNDIR/awg-chk-$1" 2>/dev/null; }
 # DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.
 declare -A DNSOK
 dns_probe(){
@@ -173,9 +203,14 @@ probe_tcp(){
   [ $n -gt 0 ] || n=1
   QLOSS[$i]=$(( (n-ok)*100/n )); QRTT[$i]=0; [ $ok -gt 0 ] && QRTT[$i]=$(( sum/ok )); QMETH[$i]=tcp
 }
+declare -A ICMP_OFF ICMP_MISS
 probe(){
-  local i=$1 out l r
-  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] || [ "${QMETH[$i]:-icmp}" = icmp ]; then
+  local i=$1 out l r now
+  epoch now
+  # ICMP через этот туннель не ходит, а TCP ходит — 5 пингов (~2,5 с) каждую пробу не тратим полчаса
+  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] && [ "$now" -lt "${ICMP_OFF[$i]:-0}" ]; then
+    probe_tcp "$i"
+  else
     out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2>/dev/null)
     l=$(echo "$out" | awk '/packet loss/{for(k=1;k<=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
     r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
@@ -184,30 +219,65 @@ probe(){
   fi
   if [ "${ICMP_SEEN[$i]:-0}" = 1 ]; then
     QLOSS[$i]=$l; QRTT[$i]=${r:-0}; QMETH[$i]=icmp
-  else
+    # ICMP раньше ходил, а теперь не ходит совсем — сначала TCP: оператор мог закрыть ICMP, а канал жив
+    if [ "$l" = 100 ]; then
+      probe_tcp "$i"
+      if [ "${QLOSS[$i]}" -lt 100 ]; then
+        # дважды подряд: ICMP нет, TCP есть — оператор закрыл ICMP; один раз — мог просто ожить канал между пробами
+        ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+        [ "${ICMP_MISS[$i]}" -ge 2 ] && { ICMP_SEEN[$i]=0; ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+      else QLOSS[$i]=100; QRTT[$i]=0; QMETH[$i]=icmp; fi      # не отвечает ничего — канал лежит, метод остаётся ICMP
+    else ICMP_MISS[$i]=0
+    fi
+  elif [ "$now" -ge "${ICMP_OFF[$i]:-0}" ]; then
     probe_tcp "$i"; l=${QLOSS[$i]}
+    if [ "${QLOSS[$i]}" -lt 100 ]; then
+      ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+      [ "${ICMP_MISS[$i]}" -ge 2 ] && { ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+    fi
   fi
   [ "${QLOSS[$i]}" -ge "$QUALITY_LOSS" ] && return 0
   [ "$QUALITY_RTT" -gt 0 ] && [ "${QRTT[$i]}" -ge "$QUALITY_RTT" ] && return 0
   return 1
 }
 
+declare -A FWR
 prepare(){
   # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables
   # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,
   # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.
-  local i t r
+  local i t r rules now l sec="" ok=0
   declare -A S
-  for t in nat mangle filter; do S[$t]=$(iptables -t "$t" -S 2>/dev/null) || return 0; done
+  # Снимок цепочек — общий для сторожей основного и дополнительных маршрутов: если другой сторож прочитал их меньше
+  # INTERVAL секунд назад, берём его снимок (файл в /run, читает сам bash) вместо трёх вызовов iptables. Устаревшая
+  # на секунды картина безопасна: недостающее правило всё равно перепроверяется точным «iptables -C».
+  epoch now
+  { mapfile -t SNAP < "$SNAPF"; } 2>/dev/null
+  if [ "${#SNAP[@]}" -gt 2 ] && [[ ${SNAP[0]} =~ ^[0-9]+$ ]] && [ $((now - SNAP[0])) -ge 0 ] && [ $((now - SNAP[0])) -lt "$INTERVAL" ] \
+     && [ "${SNAP[-1]}" = "@@end" ]; then
+    S[nat]=$'\n'; S[mangle]=$'\n'; S[filter]=$'\n'
+    for l in "${SNAP[@]:1}"; do
+      case "$l" in @@nat|@@mangle|@@filter) sec=${l#@@};; @@end) ok=1;; *) [ -n "$sec" ] && S[$sec]+="$l"$'\n';; esac
+    done
+  fi
+  if [ $ok != 1 ]; then
+    # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)
+    S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2>/dev/null)$'\n' || return 0
+    S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2>/dev/null)$'\n' || return 0
+    S[filter]=$'\n'$(iptables -t filter -S FORWARD 2>/dev/null)$'\n' || return 0
+    printf '%s\n@@nat%s@@mangle%s@@filter%s@@end\n' "$now" "${S[nat]}" "${S[mangle]}" "${S[filter]}" > "$SNAPF" 2>/dev/null
+  fi
   for i in "${TUNS[@]}"; do
+    [ -n "${FWR[$i]:-}" ] || FWR[$i]=$(fw_rules "$i")
     while IFS='|' read -r t r; do
-      grep -q -x -F -- "-A $r" <<< "${S[$t]}" && continue
+      [[ ${S[$t]} == *$'\n'"-A $r"$'\n'* ]] && continue
       # shellcheck disable=SC2086
       ensure "$t" -I $r
-    done < <(fw_rules "$i")
+    done <<< "${FWR[$i]}"
   done
   # правило PBR (если UniFi его потерял) добавляем со своей меткой proto 99: так удаление отличит его от правила UniFi
-  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2>/dev/null \
+  rules=$(ip rule show 2>/dev/null)
+  [[ $rules == *"fwmark $MARK"* ]] || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2>/dev/null \
     || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
   [ "$V6" = 1 ] && prepare6
   return 0
@@ -216,7 +286,8 @@ prepare6(){  # IPv6 через туннель (#23): правило PBR IPv6 и 
   local i t r S6
   ip -6 rule show 2>/dev/null | grep -q "fwmark $MARK" || ip -6 rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2>/dev/null
   for t in nat mangle filter; do
-    S6=$(ip6tables -t "$t" -S 2>/dev/null) || continue
+    if [ "$t" = nat ]; then S6=$(ip6tables -t nat -S POSTROUTING 2>/dev/null) || continue
+    else S6=$(ip6tables -t "$t" -S FORWARD 2>/dev/null) || continue; fi
     for i in "${TUNS[@]}"; do
       while IFS='|' read -r tt r; do
         [ "$tt" = "$t" ] || continue
@@ -233,7 +304,7 @@ v6_sync(){  # при включённом IPv6 через туннель: тун
   for i in "${TUNS[@]}"; do
     cf=$("$DD/up.sh" --conf-of "$i" 2>/dev/null); [ -n "$cf" ] && [ -f "$DD/$cf" ] || continue
     grep -i -E '^[[:space:]]*Address[[:space:]]*=' "$DD/$cf" | grep -q ':' || continue
-    ip link show "$i" >/dev/null 2>&1 && ! has_v6 "$i" && { log "$i: IPv6 через туннель — поднимаю заново с IPv6-адресом"; up_once "$i" force; }
+    link_up "$i" && ! has_v6 "$i" && { log "$i: IPv6 через туннель — поднимаю заново с IPv6-адресом"; up_once "$i" force; }
   done
   return 0
 }
@@ -247,9 +318,9 @@ v6_off(){  # IPv6 через туннель выключен: убрать св�
 
 declare -A NEXT_TRY
 ensure_tunnels(){
-  local i now; now=$(date +%s)
+  local i now; epoch now
   for i in "${TUNS[@]}"; do
-    ip link show "$i" >/dev/null 2>&1 && continue
+    link_up "$i" && continue
     [ "${NEXT_TRY[$i]:-0}" -gt "$now" ] && continue
     NEXT_TRY[$i]=$((now + 30))
     log "$i отсутствует, поднимаю"
@@ -259,18 +330,33 @@ ensure_tunnels(){
 # поднять туннель один раз, даже если его одновременно поднимает сторож другого маршрута (#22); force — пересоздать
 up_once(){
   if command -v flock >/dev/null; then
-    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] && ip link show "$1" >/dev/null 2>&1 && exit 0; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
+    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] && link_up "$1" && exit 0; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
   else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
 }
 
+route_ok(){  # таблица PBR уже такая, как нужно: маршрут в $1 (метрика METRIC), blackhole, и никаких других туннелей
+  local cur j l ok_a=0 ok_b=0
+  cur=$(ip -4 route show table "$TABLE" 2>/dev/null) || return 1
+  while IFS= read -r l; do
+    case "$l" in
+      "default dev $1 "*"metric $METRIC"|"default dev $1 "*"metric $METRIC "*) ok_a=1;;   # не «metric 50» при METRIC=5
+      "blackhole default"*"metric 200"*) ok_b=1;;
+      "default dev "*) for j in "${TUNS[@]}"; do [[ $l == "default dev $j "* ]] && return 1; done;;
+    esac
+  done <<< "$cur"
+  [ $ok_a = 1 ] && [ $ok_b = 1 ]
+}
 set_active(){
   local a=${TUNS[$1]} j
   # интерфейса ещё нет (старт до up.sh): маршрут не ставим, остаётся blackhole; цикл поставит его, когда туннель поднимется
-  ip link show "$a" >/dev/null 2>&1 && ip route replace default dev "$a" metric $METRIC table "$TABLE"
-  for j in "${TUNS[@]}"; do [ "$j" != "$a" ] && ip route del default dev "$j" table "$TABLE" 2>/dev/null; done
-  ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
+  # в обычном проходе таблица уже верная — одно чтение вместо трёх изменений
+  if ! { link_up "$a" && route_ok "$a"; }; then
+    link_up "$a" && ip route replace default dev "$a" metric $METRIC table "$TABLE"
+    for j in "${TUNS[@]}"; do [ "$j" != "$a" ] && ip route del default dev "$j" table "$TABLE" 2>/dev/null; done
+    ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
+  fi
   if [ "$V6" = 1 ]; then
-    if ip link show "$a" >/dev/null 2>&1 && has_v6 "$a"; then ip -6 route replace default dev "$a" metric $METRIC table "$TABLE" 2>/dev/null
+    if link_up "$a" && has_v6 "$a"; then ip -6 route replace default dev "$a" metric $METRIC table "$TABLE" 2>/dev/null
     else ip -6 route del default metric $METRIC table "$TABLE" 2>/dev/null; fi
     for j in "${TUNS[@]}"; do [ "$j" != "$a" ] && ip -6 route del default dev "$j" table "$TABLE" 2>/dev/null; done
     # у активного туннеля нет IPv6: отказ сразу (устройства переходят на IPv4), а не тишина и не WAN
@@ -285,16 +371,16 @@ cleanup(){  # cleanup [all] — убрать маршруты туннелей; 
   return 0
 }
 
+STATE_LAST=""; STATE_T=0
 write_state(){
-  local i
-  {
-    echo "ACTIVE=${TUNS[$idx]}"
-    echo "FORCED=$forced"
-    echo "UPDATED=$(date +%s)"
-    echo "TUNNELS=\"${TUNS[*]}\""
-    echo "ROUTE=$ROUTE"; echo "RAIL=${RAIL_IF:-}"; echo "TABLE=$TABLE"; echo "V6=$V6"
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
-  } > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF"
+  # файл переписывается (mv — отдельный процесс), только если состояние изменилось или прошло 10 с: UPDATED служит
+  # «сердцебиением» для панели, awgctl и метрик (тревога — при возрасте больше 30–60 с)
+  local i EPOCH_NOW body; epoch EPOCH_NOW
+  body="ACTIVE=${TUNS[$idx]}"$'\n'"FORCED=$forced"$'\n'
+  body+="TUNNELS=\"${TUNS[*]}\""$'\n'"ROUTE=$ROUTE"$'\n'"RAIL=${RAIL_IF:-}"$'\n'"TABLE=$TABLE"$'\n'"V6=$V6"$'\n'
+  for i in "${TUNS[@]}"; do body+="LOSS_$i=${QLOSS[$i]:-}"$'\n'"RTT_$i=${QRTT[$i]:-}"$'\n'"QMETH_$i=${QMETH[$i]:-}"$'\n'"DNS_$i=${DNSOK[$i]:-}"$'\n'; done
+  [ "$body" = "$STATE_LAST" ] && [ $((EPOCH_NOW - STATE_T)) -lt 10 ] && [ -f "$STATEF" ] && return 0
+  printf 'UPDATED=%s\n%s' "$EPOCH_NOW" "$body" > "$STATEF.tmp" && mv "$STATEF.tmp" "$STATEF" && { STATE_LAST=$body; STATE_T=$EPOCH_NOW; }
 }
 
 tun_addr(){ ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1; }
@@ -319,7 +405,12 @@ ct_flush(){  # ct_flush ТУННЕЛЬ — сбросить записи conntra
 index_of(){ local k; for k in "${!TUNS[@]}"; do [ "${TUNS[$k]}" = "$1" ] && { echo "$k"; return 0; }; done; return 1; }
 
 [ "$1" = cleanup ] && { cleanup "$2"; exit 0; }
-trap 'cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0' INT TERM
+# сигнал только ставит флажок, остановка — в основном цикле. Обработчик, запущенный посреди «read -t» (паузы), bash
+# прерывает, когда истекает время паузы: при длинной уборке сторож не завершался (уборка обрывалась после записи в журнал,
+# дальше шёл обычный цикл) — systemd ждал 90 с и убивал его
+STOP=""
+trap 'STOP=1' INT TERM
+stop_now(){ cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0; }
 
 # kill switch сразу, ещё до паузы и проверок: пока маршрута в туннель нет, трафик PBR не уйдёт в WAN
 ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
@@ -329,7 +420,7 @@ ip route replace blackhole default metric 200 table "$TABLE" 2>/dev/null
 n=$(dedup); [ "${n:-0}" -gt 0 ] && log "убрано дубликатов правил iptables: $n"
 
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
-declare -A OKS QOK
+declare -A OKS QOK RDEAD RNEXT
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
 # сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)
 ensure_tunnels
@@ -341,23 +432,31 @@ for k in "${!TUNS[@]}"; do [ "$k" = 0 ] && continue; ct_flush "${TUNS[$k]}"; don
 [ -x "$DD/awg-restore.sh" ] && [ -z "${AWG_NO_FWCHECK:-}" ] && { setsid "$DD/awg-restore.sh" --fw-check >> "$DD/restore.log" 2>&1 < /dev/null & }
 log "старт: туннели ${TUNS[*]}, таблица $TABLE${RAIL_IF:+ (профиль $RAIL_IF)}, возврат через ${RECOVER_SEC}с, качество: $QUALITY$( [ "$V6" = 1 ] && echo ", IPv6 через туннель")"
 ev start "основной $MAIN, всего туннелей $N"
+# состояние — сразу: первый проход с пробами качества и DNS длится 10–20 с, и всё это время панель, бот и метрики
+# видели «сторож не отвечает» (файла состояния нет)
+write_state
 
 switch_to(){  # switch_to индекс тип сообщение
   local old=${TUNS[$idx]}
   # соединения, заNATенные на адрес прежнего туннеля, иначе так и пойдут в новый туннель со старым адресом и умрут
   # (UDP с постоянным портом — VoIP, игры, WireGuard клиентов — не восстановились бы сами)
   local prev=$idx
-  idx=$1; fails=0; qbad=0; both_flag=0; last_sw=$(date +%s)
+  idx=$1; fails=0; qbad=0; both_flag=0; epoch last_sw
   set_active "$idx"                      # сначала маршрут на новый туннель, потом сброс записей: иначе они тут же создадутся заново
   [ "$idx" != "$prev" ] && ct_flush "$old"
-  for k in "${!TUNS[@]}"; do OKS[$k]=0; done
+  for k in "${!TUNS[@]}"; do OKS[$k]=0; RDEAD[$k]=0; RNEXT[$k]=0; done
   ev "$2" "$3"
 }
 
+exec {SLEEPFD}<> <(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
+# сторож дополнительного маршрута сдвинут на полпаузы от основного: иначе (оба стартуют вместе) они читают цепочки
+# одновременно и не пользуются общим снимком друг друга
+[ -n "$ROUTE" ] && read -r -t "$((INTERVAL / 2)).5" -u "$SLEEPFD" _ 2>/dev/null
 while true; do
+  [ -n "$STOP" ] && stop_now
   ensure_tunnels
   prepare
-  now=$(date +%s)
+  epoch now
 
   # ---- ручное управление ----
   if [ -s "$FORCEF" ]; then
@@ -405,7 +504,10 @@ while true; do
     # ---- возврат на более приоритетный ----
     for ((k=0; k<idx; k++)); do
       t=${TUNS[$k]}
-      if check "$t" && [ "${QOK[$k]}" = 1 ]; then
+      [ "${OKS[$k]}" = 0 ] && [ "$now" -lt "${RNEXT[$k]:-0}" ] && continue    # давно лежит — проверяем реже (ниже)
+      alive=0; check "$t" && alive=1
+      if [ $alive = 1 ] && [ "${QOK[$k]}" = 1 ]; then
+        RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] && { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
           if [ "$k" -eq 0 ]; then log "ВОЗВРАТ на основной канал $t"; else log "возврат на более приоритетный канал $t"; fi
@@ -414,6 +516,17 @@ while true; do
       else
         [ "${OKS[$k]}" != 0 ] && log "$t снова сбоит, отсчёт возврата сброшен"
         OKS[$k]=0
+        # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз
+        # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож
+        # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.
+        # Отвечает, но с плохим качеством — не «лежит»: проверяется как обычно (иначе проба качества, которая его
+        # оправдает, тоже откладывалась бы).
+        if [ $alive = 1 ]; then RDEAD[$k]=0; RNEXT[$k]=0
+        else
+          [ "${RDEAD[$k]:-0}" = 0 ] && RDEAD[$k]=$now
+          if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+          elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+        fi
       fi
     done
   fi
@@ -426,7 +539,7 @@ while true; do
     last_q=$now
     active=${TUNS[$idx]}
     if probe "$active"; then qbad=$((qbad+1)); else qbad=0; fi
-    for ((k=0; k<idx; k++)); do probe "${TUNS[$k]}" && QOK[$k]=0 || QOK[$k]=1; done
+    for ((k=0; k<idx; k++)); do [ "$now" -lt "${RNEXT[$k]:-0}" ] && continue; probe "${TUNS[$k]}" && QOK[$k]=0 || QOK[$k]=1; done
     if [ $qbad -ge "$QUALITY_FAILS" ] && [ $(( now - last_sw )) -ge "$MIN_DWELL" ]; then
       for k in "${!TUNS[@]}"; do
         [ "$k" = "$idx" ] && continue
@@ -452,5 +565,6 @@ while true; do
     fi
   fi
   write_state
-  sleep "$INTERVAL"
+  [ -n "$STOP" ] && stop_now
+  read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2>/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done

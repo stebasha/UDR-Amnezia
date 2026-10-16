@@ -2,6 +2,14 @@
 'use strict';
 window.AWG_EN = {
   s: {
+ "байт": "bytes",
+ "Если из туннеля за проход (5 с) пришло столько данных, канал жив без отдельного запроса HTTPS. 0 — проверять всегда.": "If this much data came from the tunnel during a pass (5 s), the channel is alive without a separate HTTPS request. 0 — always check.",
+ "Даже при живом трафике настоящая проверка HTTPS — не реже этого.": "Even with live traffic, a real HTTPS check runs at least this often.",
+ "Приоритетный канал, который не отвечает дольше этого, проверяется реже: проверка мёртвого туннеля не тормозит слежение за рабочим.": "A higher-priority channel that has not responded for longer than this is checked less often, so checking a dead tunnel does not slow down watching the working one.",
+ "Как часто тогда проверять недоступный канал. Возврат на него запаздывает не больше чем на это время.": "How often to check the unreachable channel then. Returning to it is delayed by at most this time.",
+ "Как часто проверять канал, недоступный дольше 10 минут.": "How often to check a channel that has been unreachable for more than 10 minutes.",
+ "Экономия ресурсов роутера": "Router resource saving",
+ "Значения по умолчанию подходят почти всем: меньше запросов через туннели и процессов на роутере без потери скорости переключения.": "The defaults suit almost everyone: fewer requests through the tunnels and fewer processes on the router without slower switching.",
  "Автоподбор": "Auto-tune",
  "Списки": "Lists",
  "Подбирать самому при деградации": "Tune automatically on degradation",
@@ -44,6 +52,14 @@ window.AWG_EN = {
  "Коды стран через пробел; их адреса идут напрямую в режиме «Всё, кроме выбранных стран».": "Country codes separated by spaces; their addresses go direct in “Everything except chosen countries” mode.",
  "Списки заблокированного (по сети IPv4 на строку). Пусто — antifilter.download. Обновляются раз в сутки; не скачались — остаются прежние.": "Blocklists (one IPv4 network per line). Empty — antifilter.download. Updated daily; if a download fails, the previous list stays.",
  "Списки и GeoIP": "Lists and GeoIP",
+ "Списки, GeoIP и исключения": "Lists, GeoIP and exceptions",
+ "Сайты через туннель — даже из выбранных стран в режиме «Всё, кроме стран». Без маршрута PBR действуют для всей LAN и клиентов VPN-сервера роутера (или только для клиентов ниже). Поддомены включаются. Устройства должны спрашивать DNS у роутера.": "Sites via the tunnel — even from the selected countries in “All except countries” mode. Without a PBR route they apply to the whole LAN and the router's VPN server clients (or only the clients below). Subdomains included. Devices must use the router's DNS.",
+ "Для кого «Сайты через туннель» действуют без маршрута PBR. Пусто — вся LAN и клиенты VPN-сервера роутера.": "Who “Sites via the tunnel” apply to without a PBR route. Empty — whole LAN and the router's VPN server clients.",
+ "Сайты напрямую, мимо туннеля, — даже иностранные. Действует для всего, что идёт в туннель по маршрутам UniFi (домашняя сеть и клиенты VPN-сервера). Поддомены включаются. Устройства должны спрашивать DNS у роутера. Если сайт указан и здесь, и в «через туннель» — идёт напрямую.": "Sites direct, bypassing the tunnel — even foreign ones. Applies to everything UniFi routes send into the tunnel (home network and VPN server clients). Subdomains included. Devices must use the router's DNS. A site listed both here and in “via the tunnel” goes direct.",
+ "Сайты через туннель (даже из выбранных стран)": "Sites via the tunnel (even from selected countries)",
+ "Для кого сайты через туннель без PBR (пусто — LAN и клиенты VPN-сервера)": "Who sites via the tunnel apply to without PBR (empty — LAN and VPN server clients)",
+ "Сайты напрямую (даже иностранные)": "Sites direct (even foreign)",
+ "В UniFi нет маршрута PBR на весь трафик в туннель: сейчас через туннель идут только домены и адреса из маршрутов UniFi, и этот режим ни на что не влияет (сайты вроде ifconfig.me покажут ваш IP). Создайте в UniFi маршрут по политике: устройства (или сеть) → VPN-клиент, назначение — весь интернет, Kill Switch UniFi не включать (его заменяет сторож, а DNS он ломает).": "UniFi has no policy-based route sending all traffic into the tunnel: only the domains and addresses from UniFi routes go through it, so this mode has no effect (sites like ifconfig.me will show your IP). Create a policy-based route in UniFi: devices (or network) → VPN client, destination — all Internet, leave UniFi Kill Switch off (the watchdog replaces it, and it breaks DNS).",
  "Сейчас выключено: устройства под PBR идут через туннель целиком. Выберите режим и нажмите «Применить» — списки скачаются сами.": "Off: PBR devices send everything through the tunnel. Pick a mode and press “Apply” — lists download automatically.",
  "Адресов стран ": "Country networks ",
  "Сетей в списке заблокированного: ": "Networks in blocklist: ",
@@ -555,9 +571,6 @@ window.AWG_EN = {
  "Порог задержки; 0 — не учитывать.": "Latency threshold; 0 — ignore.",
  "Пауза после переключения, чтобы каналы не «прыгали».": "Pause after a switch so channels don't flap.",
  "Подсети VPN-сервера на роутере (WireGuard / L2TP / OpenVPN): их клиенты тоже идут через туннель.": "VPN server subnets on the router (WireGuard / L2TP / OpenVPN): their clients go through the tunnel too.",
- "Сайты, которые открываются через туннель для всей LAN (или выбранных клиентов) без PBR. Поддомены включаются. Клиенты должны спрашивать DNS у роутера.": "Sites opened via the tunnel for the whole LAN (or selected clients) without PBR. Subdomains included. Clients must use the router's DNS.",
- "Для кого действуют домены через туннель. Пусто — вся LAN.": "Who the tunnel domains apply to. Empty — whole LAN.",
- "Устройства под PBR откроют эти сайты напрямую, мимо туннеля.": "Devices under PBR open these sites directly, bypassing the tunnel.",
  "Адреса и подсети, куда устройства под PBR ходят напрямую.": "Addresses and subnets that PBR devices reach directly.",
  "Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.": "Block PBR traffic from leaving via WAN past the tunnel — second line of defence after blackhole.",
  "Блокировать": "Block",
@@ -580,8 +593,6 @@ window.AWG_EN = {
  "Проверить": "Check",
  "Какие устройства идут через туннель, задаётся в UniFi Network: Settings → Routing → Policy-Based Routes (профиль ": "Which devices use the tunnel is set in UniFi Network: Settings → Routing → Policy-Based Routes (profile ",
  "). Здесь — то, что работает поверх: домены, исключения, защита от утечек.": "). Here is what works on top: domains, exceptions, leak protection.",
- "Домены через туннель": "Domains via tunnel",
- "Исключения: напрямую мимо туннеля": "Exceptions: direct, bypassing the tunnel",
  "Защита от утечек": "Leak protection",
  "VPN-сервер роутера": "Router's VPN server",
  "Облако UniFi": "UniFi cloud",
@@ -916,7 +927,6 @@ window.AWG_EN = {
  "Не переключаться по качеству после смены, с": "No quality switching after a change, s",
  "Подсети VPN-сервера роутера": "Router VPN server subnets",
  "Для каких клиентов (пусто — вся LAN)": "For which clients (empty — whole LAN)",
- "Домены напрямую (исключения)": "Direct domains (exceptions)",
  "Подсети напрямую (исключения)": "Direct subnets (exceptions)",
  "Блокировать IPv6 под PBR": "Block IPv6 under PBR",
  "unifi.ui.com через туннель": "unifi.ui.com via tunnel",
@@ -1040,7 +1050,8 @@ window.AWG_EN = {
  "30 дн": "30 d",
  "Скачать CSV": "Download CSV",
  "Сводки копятся раз в час — загляните позже": "Hourly summaries accumulate — check back later",
- "период: 24h, 7d или 30d": "range: 24h, 7d or 30d"
+ "период: 24h, 7d или 30d": "range: 24h, 7d or 30d",
+ "(ещё в пределах лимита служб: ": "(plus within service limits: "
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
@@ -1086,6 +1097,10 @@ window.AWG_EN = {
     [/^✔ маршрут (\S+): профиль (\S+) → (.*) \(сторож (\S+)\)$/, "✔ route $1: profile $2 → $3 (watchdog $4)"],
     [/^✔ маршрут (\S+) убран: .*$/, "✔ route $1 removed: traffic of its UniFi profile goes as without the kit"],
     [/^маршрут (\S+): автоматический выбор$/, "route $1: automatic selection"],
-    [/^маршрут (\S+): выбран (\S+) .*$/, "route $1: $2 selected (the watchdog switches if the channel responds)"]
+    [/^маршрут (\S+): выбран (\S+) .*$/, "route $1: $2 selected (the watchdog switches if the channel responds)"],
+    [/^За сутки памяти роутера не хватило (\d+) раз, ядро завершало процессы(.*)$/, "Router ran out of memory $1 times in 24 h, the kernel killed processes$2"],
+    [/^Процесс (\S+) (\d+) раз упирался в свой лимит памяти и перезапускался$/, "Process $1 hit its own memory limit $2 times and was restarted"],
+    [/^это лимит самой службы .*$/, "this is the service's own limit (for unifi — the UniFi Network app), not a router memory shortage; if frequent, restart UniFi Network or update the firmware"],
+    [/^адрес сменился: введите (заголовок вебхука|токен ntfy|API-токен 3x-ui|пароль брокера MQTT) заново.*$/, "the address has changed: enter the secret again (the saved one is not sent to a different host)"]
   ]
 };

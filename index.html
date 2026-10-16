@@ -578,7 +578,7 @@ ensure_go(){
   command -v go &gt;/dev/null 2&gt;&amp;1 &amp;&amp; return 0
   if command -v snap &gt;/dev/null 2&gt;&amp;1 &amp;&amp; snap install go --classic; then return 0; fi
   local ga; case "$(uname -m)" in x86_64) ga=amd64;; aarch64) ga=arm64;; *) echo "неизвестная архитектура $(uname -m)"; exit 1;; esac
-  curl -fL "https://go.dev/dl/go${GO_FALLBACK}.linux-$ga.tar.gz" -o /tmp/go.tgz
+  curl -fL --proto =https --proto-redir =https "https://go.dev/dl/go${GO_FALLBACK}.linux-$ga.tar.gz" -o /tmp/go.tgz
   rm -rf /usr/local/go &amp;&amp; tar -C /usr/local -xzf /tmp/go.tgz &amp;&amp; rm -f /tmp/go.tgz
 }
 ensure_go
@@ -894,7 +894,7 @@ bring_up(){
   conf=$(conf_of "$n")
   [ -z "$conf" ] &amp;&amp; { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
-  raw=/run/$n.raw; tmp=/run/$n.awg.conf
+  raw=${AWG_RUN:-/run}/$n.raw; tmp=${AWG_RUN:-/run}/$n.awg.conf
   sed 's/\r$//' "$conf" &gt; "$raw"
 <span class="c">  # Address и MTU утилита awg не понимает: берём их сами, из Address только IPv4</span>
   addr=$(awk -F'=' 'tolower($1) ~ /^[ \t]*address[ \t]*$/ {print $2; exit}' "$raw" | tr ',' '\n' | tr -d ' \t' | grep -m1 '\.')
@@ -913,7 +913,16 @@ bring_up(){
   resolve_endpoint "$tmp" "$n"
 
   ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link del "$n"
-  ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
+<span class="c">  # amneziawg-go — в собственной группе процессов (scope systemd), а не в группе службы, которая поднимает туннель</span>
+<span class="c">  # (сторож, панель, маршрут): иначе перезапуск этой службы (смена настроек, обновление) убивал процесс, интерфейс</span>
+<span class="c">  # пропадал и туннель лежал, пока сторож не поднимет его заново.</span>
+  if { [ -n "${AWG_FORCE_SCOPE:-}" ] || { [ "${EUID:-1}" = 0 ] &amp;&amp; [ -d /run/systemd/system ]; }; } &amp;&amp; [ -z "${AWG_NO_SCOPE:-}" ] \
+     &amp;&amp; command -v systemd-run &gt;/dev/null 2&gt;&amp;1; then
+    systemd-run --scope --quiet --collect --description="AmneziaWG $n" "$DD/amneziawg-go" "$n" &gt;/dev/null 2&gt;&amp;1 \
+      || { ip link show "$n" &gt;/dev/null 2&gt;&amp;1 || ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1; }
+  else
+    ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
+  fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then
     echo "ОШИБКА: awg setconf $n (строка, которую awg не понял, указана выше)"
@@ -936,7 +945,7 @@ for t in $TUNNELS_EXTRA; do bring_up "$t" || rc=1; done
 exit $rc
 EOF
 chmod 755 /data/awg/up.sh
-/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 93 строк">Показать целиком · 93 строк</button></figure>
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 102 строк">Показать целиком · 102 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
   </div></div>
 
@@ -965,9 +974,9 @@ chmod 755 /data/awg/up.sh
 
   <div class="tw"><table>
     <tr><th>Параметр</th><th>Значение</th><th>Что значит</th></tr>
-    <tr><td>Проверка канала</td><td>каждые 5 с</td><td>HTTPS к <code>1.1.1.1</code> и <code>8.8.8.8</code> через интерфейс туннеля; если не ответил, то ping. Живой, если ответил хоть один.</td></tr>
+    <tr><td>Проверка канала</td><td>каждые 5 с</td><td>HTTPS к <code>1.1.1.1</code> и <code>8.8.8.8</code> через интерфейс туннеля; если не ответил, то ping. Живой, если ответил хоть один. Пока из туннеля идёт трафик (от 64 КБ за проход), отдельный запрос не нужен — настоящая проверка не реже раза в минуту (1.8).</td></tr>
     <tr><td>Падение</td><td>3 сбоя подряд, ~15 с</td><td>При запасном канале: переключение на него, если он жив. Без запасного: запись в журнал, трафик блокируется.</td></tr>
-    <tr><td>Возврат</td><td><code>RECOVER_SEC</code>, по умолчанию 600 с</td><td>Основной должен отвечать 10 минут без единого сбоя. Любой сбой обнуляет отсчёт.</td></tr>
+    <tr><td>Возврат</td><td><code>RECOVER_SEC</code>, по умолчанию 600 с</td><td>Основной должен отвечать 10 минут без единого сбоя. Любой сбой обнуляет отсчёт. Основной, который не отвечает дольше 2 минут, проверяется раз в 30 с (дольше 10 минут — раз в минуту): проверка мёртвого туннеля не тормозит слежение за рабочим (1.8).</td></tr>
     <tr><td>Запасной сломался</td><td>3 сбоя</td><td>Если основной в этот момент жив, возврат на него сразу, без ожидания.</td></tr>
     <tr><td>Оба канала лежат</td><td>—</td><td>Маршрут остаётся на основном, за ним <code>blackhole</code>: PBR-трафик стоит, в WAN не утекает.</td></tr>
   </table></div>
@@ -1094,6 +1103,9 @@ MIN_DWELL=${MIN_DWELL:-120}               # после любого перекл
 TARGETS=${TARGETS:-"1.1.1.1 8.8.8.8 9.9.9.9"}   # независимые узлы: канал жив, если ответил хотя бы один
 METRIC=5                                  # метрика активного туннеля в таблице PBR
 INTERVAL=${INTERVAL:-5}                   # секунд между проверками
+RECHECK_AFTER=${RECHECK_AFTER:-120}       # более приоритетный канал не отвечает столько секунд — проверять его реже:
+RECHECK_SLOW=${RECHECK_SLOW:-30}          #   раз в столько секунд,
+RECHECK_MAX=${RECHECK_MAX:-60}            #   а после 10 минут — раз в столько
 FAIL_MAX=${FAIL_MAX:-3}                   # сбоев подряд до переключения
 SIM=${SIM:-/tmp/awg-sim-down}             # флаг имитации падения основного канала
 FORCEF=${FORCEF:-/run/awg-force}
@@ -1107,27 +1119,54 @@ for t in $BACKUP ${TUNNELS_EXTRA:-}; do case " ${ROUTE_ONLY:-} " in *" $t "*) co
 N=${#TUNS[@]}
 V6=0; [ "$LEAK_V6" = route ] &amp;&amp; command -v ip6tables &gt;/dev/null &amp;&amp; V6=1
 RT=${ROUTE:+маршрут $ROUTE: }   # приставка к событиям и журналу дополнительного маршрута
+SYSNET=${AWG_SYSNET:-/sys/class/net}
+RUNDIR=${AWG_RUN:-/run}
+SNAPF=$RUNDIR/awg-fw.snap               # общий снимок цепочек iptables (см. prepare)
+CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
+CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
+<span class="c"># Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные</span>
+<span class="c"># средства bash там, где можно: время — printf %(%s)T, интерфейс — /sys/class/net, сравнения — шаблоны, пауза — read -t.</span>
+epoch(){ printf -v "$1" '%(%s)T' -1; }
+link_up(){ [ -e "$SYSNET/$1" ]; }
 
 log(){
   local m; m="$(date '+%F %T') $RT$*"
   echo "$m"; logger -t awg-failover "$*" 2&gt;/dev/null; echo "$m" &gt;&gt; "$LOGF"
   if [ "$(wc -l &lt; "$LOGF")" -gt 1000 ]; then tail -n 500 "$LOGF" &gt; "$LOGF.tmp" &amp;&amp; mv "$LOGF.tmp" "$LOGF"; fi
 }
-ev(){ echo "$(date +%s)|$1|$RT$2" &gt;&gt; "$EVF"; if [ "$(wc -l &lt; "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" &gt; "$EVF.tmp" &amp;&amp; mv "$EVF.tmp" "$EVF"; fi; }
+ev(){ local t; epoch t; echo "$t|$1|$RT$2" &gt;&gt; "$EVF"; if [ "$(wc -l &lt; "$EVF")" -gt 3000 ]; then tail -n 2000 "$EVF" &gt; "$EVF.tmp" &amp;&amp; mv "$EVF.tmp" "$EVF"; fi; }
 
 <span class="c"># Канал жив, если через него открывается HTTPS хотя бы к одному из независимых узлов TARGETS</span>
 <span class="c"># (отказ одного сайта канал не роняет). Если HTTPS не прошёл ни к одному — пробуем ping (ICMP у части</span>
 <span class="c"># операторов не ходит, поэтому он вторым). Канал мёртв, только если не ответил никто.</span>
+declare -A RXL CHKT
 check(){
   [ "$1" = "$MAIN" ] &amp;&amp; [ -e "$SIM" ] &amp;&amp; return 1
-  local t c
+  local t c rx now
+<span class="c">  # из туннеля за проход пришло ≥ CHECK_RX_MIN байт (это не keepalive: тот ~100 байт) — сервер отвечает, канал жив;</span>
+<span class="c">  # без такого трафика или раз в CHECK_MAX_AGE — настоящая проверка HTTPS. Падение канала обрывает трафик —</span>
+<span class="c">  # и следующий же проход идёт к HTTPS, так что переключение не запаздывает.</span>
+  if [ "${CHECK_RX_MIN:-0}" -gt 0 ]; then
+    rx=""; { read -r rx &lt; "$SYSNET/$1/statistics/rx_bytes"; } 2&gt;/dev/null; epoch now
+    if [[ $rx =~ ^[0-9]+$ ]] &amp;&amp; [ -n "${RXL[$1]:-}" ] &amp;&amp; [ $((rx - RXL[$1])) -ge "$CHECK_RX_MIN" ] &amp;&amp; [ $((now - ${CHKT[$1]:-0})) -lt "$CHECK_MAX_AGE" ]; then
+      RXL[$1]=$rx; return 0
+    fi
+    [[ $rx =~ ^[0-9]+$ ]] &amp;&amp; RXL[$1]=$rx
+  fi
+<span class="c">  # сторожа дополнительных маршрутов проверяют те же туннели: успешная проверка другого сторожа в этом же проходе</span>
+<span class="c">  # (не старше INTERVAL) засчитывается и здесь — без второго запроса HTTPS через тот же туннель. Сбой не делится:</span>
+<span class="c">  # его каждый сторож перепроверяет сам.</span>
+  local okf="$RUNDIR/awg-chk-$1" ts=""
+  { read -r ts &lt; "$okf"; } 2&gt;/dev/null; epoch now
+  if [[ $ts =~ ^[0-9]+$ ]] &amp;&amp; [ $((now - ts)) -ge 0 ] &amp;&amp; [ $((now - ts)) -lt "$INTERVAL" ]; then CHKT[$1]=$now; return 0; fi
   for t in $TARGETS; do
     c=$(curl -sk -o /dev/null --connect-timeout 3 -m 5 --interface "$1" -w '%{http_code}' "https://$t/" 2&gt;/dev/null)
-    [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; return 0
+    [ -n "$c" ] &amp;&amp; [ "$c" != 000 ] &amp;&amp; { chk_ok "$1"; return 0; }
   done
-  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; return 0; done
+  for t in $TARGETS; do ping -I "$1" -c 1 -W 2 "$t" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; { chk_ok "$1"; return 0; }; done
   return 1
 }
+chk_ok(){ epoch "CHKT[$1]"; printf '%s\n' "${CHKT[$1]}" &gt; "$RUNDIR/awg-chk-$1" 2&gt;/dev/null; }
 <span class="c"># DNS через туннель (DoH-запрос к 1.1.1.1): handshake и HTTPS есть, а DNS нет — частая «тихая» поломка. Для diagnose и метрик.</span>
 declare -A DNSOK
 dns_probe(){
@@ -1150,9 +1189,14 @@ probe_tcp(){
   [ $n -gt 0 ] || n=1
   QLOSS[$i]=$(( (n-ok)*100/n )); QRTT[$i]=0; [ $ok -gt 0 ] &amp;&amp; QRTT[$i]=$(( sum/ok )); QMETH[$i]=tcp
 }
+declare -A ICMP_OFF ICMP_MISS
 probe(){
-  local i=$1 out l r
-  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] || [ "${QMETH[$i]:-icmp}" = icmp ]; then
+  local i=$1 out l r now
+  epoch now
+<span class="c">  # ICMP через этот туннель не ходит, а TCP ходит — 5 пингов (~2,5 с) каждую пробу не тратим полчаса</span>
+  if [ "${ICMP_SEEN[$i]:-0}" != 1 ] &amp;&amp; [ "$now" -lt "${ICMP_OFF[$i]:-0}" ]; then
+    probe_tcp "$i"
+  else
     out=$(ping -I "$i" -c 5 -i 0.3 -W 1 -q 1.1.1.1 2&gt;/dev/null)
     l=$(echo "$out" | awk '/packet loss/{for(k=1;k&lt;=NF;k++) if($k ~ /%/){gsub("%","",$k); print int($k); exit}}')
     r=$(echo "$out" | awk -F'=' '/min\/avg\/max/{split($2,a,"/"); printf "%d", a[2]+0.5; exit}')
@@ -1161,30 +1205,65 @@ probe(){
   fi
   if [ "${ICMP_SEEN[$i]:-0}" = 1 ]; then
     QLOSS[$i]=$l; QRTT[$i]=${r:-0}; QMETH[$i]=icmp
-  else
+<span class="c">    # ICMP раньше ходил, а теперь не ходит совсем — сначала TCP: оператор мог закрыть ICMP, а канал жив</span>
+    if [ "$l" = 100 ]; then
+      probe_tcp "$i"
+      if [ "${QLOSS[$i]}" -lt 100 ]; then
+<span class="c">        # дважды подряд: ICMP нет, TCP есть — оператор закрыл ICMP; один раз — мог просто ожить канал между пробами</span>
+        ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+        [ "${ICMP_MISS[$i]}" -ge 2 ] &amp;&amp; { ICMP_SEEN[$i]=0; ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+      else QLOSS[$i]=100; QRTT[$i]=0; QMETH[$i]=icmp; fi      # не отвечает ничего — канал лежит, метод остаётся ICMP
+    else ICMP_MISS[$i]=0
+    fi
+  elif [ "$now" -ge "${ICMP_OFF[$i]:-0}" ]; then
     probe_tcp "$i"; l=${QLOSS[$i]}
+    if [ "${QLOSS[$i]}" -lt 100 ]; then
+      ICMP_MISS[$i]=$(( ${ICMP_MISS[$i]:-0} + 1 ))
+      [ "${ICMP_MISS[$i]}" -ge 2 ] &amp;&amp; { ICMP_OFF[$i]=$((now + 1800)); ICMP_MISS[$i]=0; }
+    fi
   fi
   [ "${QLOSS[$i]}" -ge "$QUALITY_LOSS" ] &amp;&amp; return 0
   [ "$QUALITY_RTT" -gt 0 ] &amp;&amp; [ "${QRTT[$i]}" -ge "$QUALITY_RTT" ] &amp;&amp; return 0
   return 1
 }
 
+declare -A FWR
 prepare(){
 <span class="c">  # Каждая таблица читается один раз за проход (3 вызова iptables вместо ~25): меньше спора за блокировку xtables</span>
 <span class="c">  # с UniFi. Если снимок не получен — в этот проход ничего не меняем. Правило, которого нет в снимке,</span>
 <span class="c">  # перепроверяется точным «iptables -C» и добавляется, только если его действительно нет.</span>
-  local i t r
+  local i t r rules now l sec="" ok=0
   declare -A S
-  for t in nat mangle filter; do S[$t]=$(iptables -t "$t" -S 2&gt;/dev/null) || return 0; done
+<span class="c">  # Снимок цепочек — общий для сторожей основного и дополнительных маршрутов: если другой сторож прочитал их меньше</span>
+<span class="c">  # INTERVAL секунд назад, берём его снимок (файл в /run, читает сам bash) вместо трёх вызовов iptables. Устаревшая</span>
+<span class="c">  # на секунды картина безопасна: недостающее правило всё равно перепроверяется точным «iptables -C».</span>
+  epoch now
+  { mapfile -t SNAP &lt; "$SNAPF"; } 2&gt;/dev/null
+  if [ "${#SNAP[@]}" -gt 2 ] &amp;&amp; [[ ${SNAP[0]} =~ ^[0-9]+$ ]] &amp;&amp; [ $((now - SNAP[0])) -ge 0 ] &amp;&amp; [ $((now - SNAP[0])) -lt "$INTERVAL" ] \
+     &amp;&amp; [ "${SNAP[-1]}" = "@@end" ]; then
+    S[nat]=$'\n'; S[mangle]=$'\n'; S[filter]=$'\n'
+    for l in "${SNAP[@]:1}"; do
+      case "$l" in @@nat|@@mangle|@@filter) sec=${l#@@};; @@end) ok=1;; *) [ -n "$sec" ] &amp;&amp; S[$sec]+="$l"$'\n';; esac
+    done
+  fi
+  if [ $ok != 1 ]; then
+<span class="c">    # только нужные цепочки, а не таблицы целиком (у UniFi в mangle и filter сотни правил)</span>
+    S[nat]=$'\n'$(iptables -t nat -S POSTROUTING 2&gt;/dev/null)$'\n' || return 0
+    S[mangle]=$'\n'$(iptables -t mangle -S FORWARD 2&gt;/dev/null)$'\n' || return 0
+    S[filter]=$'\n'$(iptables -t filter -S FORWARD 2&gt;/dev/null)$'\n' || return 0
+    printf '%s\n@@nat%s@@mangle%s@@filter%s@@end\n' "$now" "${S[nat]}" "${S[mangle]}" "${S[filter]}" &gt; "$SNAPF" 2&gt;/dev/null
+  fi
   for i in "${TUNS[@]}"; do
+    [ -n "${FWR[$i]:-}" ] || FWR[$i]=$(fw_rules "$i")
     while IFS='|' read -r t r; do
-      grep -q -x -F -- "-A $r" &lt;&lt;&lt; "${S[$t]}" &amp;&amp; continue
+      [[ ${S[$t]} == *$'\n'"-A $r"$'\n'* ]] &amp;&amp; continue
 <span class="c">      # shellcheck disable=SC2086</span>
       ensure "$t" -I $r
-    done &lt; &lt;(fw_rules "$i")
+    done &lt;&lt;&lt; "${FWR[$i]}"
   done
 <span class="c">  # правило PBR (если UniFi его потерял) добавляем со своей меткой proto 99: так удаление отличит его от правила UniFi</span>
-  ip rule show | grep -q "fwmark $MARK" || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null \
+  rules=$(ip rule show 2&gt;/dev/null)
+  [[ $rules == *"fwmark $MARK"* ]] || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null \
     || ip rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO"
   [ "$V6" = 1 ] &amp;&amp; prepare6
   return 0
@@ -1193,7 +1272,8 @@ prepare6(){  # IPv6 через туннель (#23): правило PBR IPv6 и 
   local i t r S6
   ip -6 rule show 2&gt;/dev/null | grep -q "fwmark $MARK" || ip -6 rule add fwmark "$MARK" lookup "$TABLE" priority "$PRIO" proto 99 2&gt;/dev/null
   for t in nat mangle filter; do
-    S6=$(ip6tables -t "$t" -S 2&gt;/dev/null) || continue
+    if [ "$t" = nat ]; then S6=$(ip6tables -t nat -S POSTROUTING 2&gt;/dev/null) || continue
+    else S6=$(ip6tables -t "$t" -S FORWARD 2&gt;/dev/null) || continue; fi
     for i in "${TUNS[@]}"; do
       while IFS='|' read -r tt r; do
         [ "$tt" = "$t" ] || continue
@@ -1210,7 +1290,7 @@ v6_sync(){  # при включённом IPv6 через туннель: тун
   for i in "${TUNS[@]}"; do
     cf=$("$DD/up.sh" --conf-of "$i" 2&gt;/dev/null); [ -n "$cf" ] &amp;&amp; [ -f "$DD/$cf" ] || continue
     grep -i -E '^[[:space:]]*Address[[:space:]]*=' "$DD/$cf" | grep -q ':' || continue
-    ip link show "$i" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ! has_v6 "$i" &amp;&amp; { log "$i: IPv6 через туннель — поднимаю заново с IPv6-адресом"; up_once "$i" force; }
+    link_up "$i" &amp;&amp; ! has_v6 "$i" &amp;&amp; { log "$i: IPv6 через туннель — поднимаю заново с IPv6-адресом"; up_once "$i" force; }
   done
   return 0
 }
@@ -1224,9 +1304,9 @@ v6_off(){  # IPv6 через туннель выключен: убрать св�
 
 declare -A NEXT_TRY
 ensure_tunnels(){
-  local i now; now=$(date +%s)
+  local i now; epoch now
   for i in "${TUNS[@]}"; do
-    ip link show "$i" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; continue
+    link_up "$i" &amp;&amp; continue
     [ "${NEXT_TRY[$i]:-0}" -gt "$now" ] &amp;&amp; continue
     NEXT_TRY[$i]=$((now + 30))
     log "$i отсутствует, поднимаю"
@@ -1236,18 +1316,33 @@ ensure_tunnels(){
 <span class="c"># поднять туннель один раз, даже если его одновременно поднимает сторож другого маршрута (#22); force — пересоздать</span>
 up_once(){
   if command -v flock &gt;/dev/null; then
-    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] &amp;&amp; ip link show "$1" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; exit 0; "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1 ) 9&gt;"${AWG_RUN:-/run}/awg-up-$1.lock"
+    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] &amp;&amp; link_up "$1" &amp;&amp; exit 0; "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1 ) 9&gt;"${AWG_RUN:-/run}/awg-up-$1.lock"
   else "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1; fi
 }
 
+route_ok(){  # таблица PBR уже такая, как нужно: маршрут в $1 (метрика METRIC), blackhole, и никаких других туннелей
+  local cur j l ok_a=0 ok_b=0
+  cur=$(ip -4 route show table "$TABLE" 2&gt;/dev/null) || return 1
+  while IFS= read -r l; do
+    case "$l" in
+      "default dev $1 "*"metric $METRIC"|"default dev $1 "*"metric $METRIC "*) ok_a=1;;   # не «metric 50» при METRIC=5
+      "blackhole default"*"metric 200"*) ok_b=1;;
+      "default dev "*) for j in "${TUNS[@]}"; do [[ $l == "default dev $j "* ]] &amp;&amp; return 1; done;;
+    esac
+  done &lt;&lt;&lt; "$cur"
+  [ $ok_a = 1 ] &amp;&amp; [ $ok_b = 1 ]
+}
 set_active(){
   local a=${TUNS[$1]} j
 <span class="c">  # интерфейса ещё нет (старт до up.sh): маршрут не ставим, остаётся blackhole; цикл поставит его, когда туннель поднимется</span>
-  ip link show "$a" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip route replace default dev "$a" metric $METRIC table "$TABLE"
-  for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
-  ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+<span class="c">  # в обычном проходе таблица уже верная — одно чтение вместо трёх изменений</span>
+  if ! { link_up "$a" &amp;&amp; route_ok "$a"; }; then
+    link_up "$a" &amp;&amp; ip route replace default dev "$a" metric $METRIC table "$TABLE"
+    for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
+    ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
+  fi
   if [ "$V6" = 1 ]; then
-    if ip link show "$a" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; has_v6 "$a"; then ip -6 route replace default dev "$a" metric $METRIC table "$TABLE" 2&gt;/dev/null
+    if link_up "$a" &amp;&amp; has_v6 "$a"; then ip -6 route replace default dev "$a" metric $METRIC table "$TABLE" 2&gt;/dev/null
     else ip -6 route del default metric $METRIC table "$TABLE" 2&gt;/dev/null; fi
     for j in "${TUNS[@]}"; do [ "$j" != "$a" ] &amp;&amp; ip -6 route del default dev "$j" table "$TABLE" 2&gt;/dev/null; done
 <span class="c">    # у активного туннеля нет IPv6: отказ сразу (устройства переходят на IPv4), а не тишина и не WAN</span>
@@ -1262,16 +1357,16 @@ cleanup(){  # cleanup [all] — убрать маршруты туннелей; 
   return 0
 }
 
+STATE_LAST=""; STATE_T=0
 write_state(){
-  local i
-  {
-    echo "ACTIVE=${TUNS[$idx]}"
-    echo "FORCED=$forced"
-    echo "UPDATED=$(date +%s)"
-    echo "TUNNELS=\"${TUNS[*]}\""
-    echo "ROUTE=$ROUTE"; echo "RAIL=${RAIL_IF:-}"; echo "TABLE=$TABLE"; echo "V6=$V6"
-    for i in "${TUNS[@]}"; do echo "LOSS_$i=${QLOSS[$i]:-}"; echo "RTT_$i=${QRTT[$i]:-}"; echo "QMETH_$i=${QMETH[$i]:-}"; echo "DNS_$i=${DNSOK[$i]:-}"; done
-  } &gt; "$STATEF.tmp" &amp;&amp; mv "$STATEF.tmp" "$STATEF"
+<span class="c">  # файл переписывается (mv — отдельный процесс), только если состояние изменилось или прошло 10 с: UPDATED служит</span>
+<span class="c">  # «сердцебиением» для панели, awgctl и метрик (тревога — при возрасте больше 30–60 с)</span>
+  local i EPOCH_NOW body; epoch EPOCH_NOW
+  body="ACTIVE=${TUNS[$idx]}"$'\n'"FORCED=$forced"$'\n'
+  body+="TUNNELS=\"${TUNS[*]}\""$'\n'"ROUTE=$ROUTE"$'\n'"RAIL=${RAIL_IF:-}"$'\n'"TABLE=$TABLE"$'\n'"V6=$V6"$'\n'
+  for i in "${TUNS[@]}"; do body+="LOSS_$i=${QLOSS[$i]:-}"$'\n'"RTT_$i=${QRTT[$i]:-}"$'\n'"QMETH_$i=${QMETH[$i]:-}"$'\n'"DNS_$i=${DNSOK[$i]:-}"$'\n'; done
+  [ "$body" = "$STATE_LAST" ] &amp;&amp; [ $((EPOCH_NOW - STATE_T)) -lt 10 ] &amp;&amp; [ -f "$STATEF" ] &amp;&amp; return 0
+  printf 'UPDATED=%s\n%s' "$EPOCH_NOW" "$body" &gt; "$STATEF.tmp" &amp;&amp; mv "$STATEF.tmp" "$STATEF" &amp;&amp; { STATE_LAST=$body; STATE_T=$EPOCH_NOW; }
 }
 
 tun_addr(){ ip -4 -o addr show dev "$1" 2&gt;/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n1; }
@@ -1296,7 +1391,12 @@ ct_flush(){  # ct_flush ТУННЕЛЬ — сбросить записи conntra
 index_of(){ local k; for k in "${!TUNS[@]}"; do [ "${TUNS[$k]}" = "$1" ] &amp;&amp; { echo "$k"; return 0; }; done; return 1; }
 
 [ "$1" = cleanup ] &amp;&amp; { cleanup "$2"; exit 0; }
-trap 'cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0' INT TERM
+<span class="c"># сигнал только ставит флажок, остановка — в основном цикле. Обработчик, запущенный посреди «read -t» (паузы), bash</span>
+<span class="c"># прерывает, когда истекает время паузы: при длинной уборке сторож не завершался (уборка обрывалась после записи в журнал,</span>
+<span class="c"># дальше шёл обычный цикл) — systemd ждал 90 с и убивал его</span>
+STOP=""
+trap 'STOP=1' INT TERM
+stop_now(){ cleanup; log "остановка: маршруты туннелей убраны, blackhole оставлен (трафик PBR блокируется)"; ev stop "сторож остановлен"; rm -f "$STATEF"; exit 0; }
 
 <span class="c"># kill switch сразу, ещё до паузы и проверок: пока маршрута в туннель нет, трафик PBR не уйдёт в WAN</span>
 ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
@@ -1306,7 +1406,7 @@ ip route replace blackhole default metric 200 table "$TABLE" 2&gt;/dev/null
 n=$(dedup); [ "${n:-0}" -gt 0 ] &amp;&amp; log "убрано дубликатов правил iptables: $n"
 
 idx=0; fails=0; both_flag=0; forced=""; qbad=0; last_q=0; last_sw=0
-declare -A OKS QOK
+declare -A OKS QOK RDEAD RNEXT
 for k in "${!TUNS[@]}"; do OKS[$k]=0; QOK[$k]=1; done
 <span class="c"># сначала поднять отсутствующие туннели, потом ставить маршрут (иначе «Cannot find device» в журнале при каждом старте)</span>
 ensure_tunnels
@@ -1318,23 +1418,31 @@ for k in "${!TUNS[@]}"; do [ "$k" = 0 ] &amp;&amp; continue; ct_flush "${TUNS[$k
 [ -x "$DD/awg-restore.sh" ] &amp;&amp; [ -z "${AWG_NO_FWCHECK:-}" ] &amp;&amp; { setsid "$DD/awg-restore.sh" --fw-check &gt;&gt; "$DD/restore.log" 2&gt;&amp;1 &lt; /dev/null &amp; }
 log "старт: туннели ${TUNS[*]}, таблица $TABLE${RAIL_IF:+ (профиль $RAIL_IF)}, возврат через ${RECOVER_SEC}с, качество: $QUALITY$( [ "$V6" = 1 ] &amp;&amp; echo ", IPv6 через туннель")"
 ev start "основной $MAIN, всего туннелей $N"
+<span class="c"># состояние — сразу: первый проход с пробами качества и DNS длится 10–20 с, и всё это время панель, бот и метрики</span>
+<span class="c"># видели «сторож не отвечает» (файла состояния нет)</span>
+write_state
 
 switch_to(){  # switch_to индекс тип сообщение
   local old=${TUNS[$idx]}
 <span class="c">  # соединения, заNATенные на адрес прежнего туннеля, иначе так и пойдут в новый туннель со старым адресом и умрут</span>
 <span class="c">  # (UDP с постоянным портом — VoIP, игры, WireGuard клиентов — не восстановились бы сами)</span>
   local prev=$idx
-  idx=$1; fails=0; qbad=0; both_flag=0; last_sw=$(date +%s)
+  idx=$1; fails=0; qbad=0; both_flag=0; epoch last_sw
   set_active "$idx"                      # сначала маршрут на новый туннель, потом сброс записей: иначе они тут же создадутся заново
   [ "$idx" != "$prev" ] &amp;&amp; ct_flush "$old"
-  for k in "${!TUNS[@]}"; do OKS[$k]=0; done
+  for k in "${!TUNS[@]}"; do OKS[$k]=0; RDEAD[$k]=0; RNEXT[$k]=0; done
   ev "$2" "$3"
 }
 
+exec {SLEEPFD}&lt;&gt; &lt;(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
+<span class="c"># сторож дополнительного маршрута сдвинут на полпаузы от основного: иначе (оба стартуют вместе) они читают цепочки</span>
+<span class="c"># одновременно и не пользуются общим снимком друг друга</span>
+[ -n "$ROUTE" ] &amp;&amp; read -r -t "$((INTERVAL / 2)).5" -u "$SLEEPFD" _ 2&gt;/dev/null
 while true; do
+  [ -n "$STOP" ] &amp;&amp; stop_now
   ensure_tunnels
   prepare
-  now=$(date +%s)
+  epoch now
 
 <span class="c">  # ---- ручное управление ----</span>
   if [ -s "$FORCEF" ]; then
@@ -1382,7 +1490,10 @@ while true; do
 <span class="c">    # ---- возврат на более приоритетный ----</span>
     for ((k=0; k&lt;idx; k++)); do
       t=${TUNS[$k]}
-      if check "$t" &amp;&amp; [ "${QOK[$k]}" = 1 ]; then
+      [ "${OKS[$k]}" = 0 ] &amp;&amp; [ "$now" -lt "${RNEXT[$k]:-0}" ] &amp;&amp; continue    # давно лежит — проверяем реже (ниже)
+      alive=0; check "$t" &amp;&amp; alive=1
+      if [ $alive = 1 ] &amp;&amp; [ "${QOK[$k]}" = 1 ]; then
+        RDEAD[$k]=0; RNEXT[$k]=0
         [ "${OKS[$k]}" = 0 ] &amp;&amp; { OKS[$k]=$now; log "$t снова отвечает, жду ${RECOVER_SEC}с без сбоев"; }
         if [ $(( now - ${OKS[$k]} )) -ge "$RECOVER_SEC" ]; then
           if [ "$k" -eq 0 ]; then log "ВОЗВРАТ на основной канал $t"; else log "возврат на более приоритетный канал $t"; fi
@@ -1391,6 +1502,17 @@ while true; do
       else
         [ "${OKS[$k]}" != 0 ] &amp;&amp; log "$t снова сбоит, отсчёт возврата сброшен"
         OKS[$k]=0
+<span class="c">        # канал, который не отвечает больше RECHECK_AFTER секунд, проверяем раз в RECHECK_SLOW, а дольше 10 минут — раз</span>
+<span class="c">        # в RECHECK_MAX: проверка мёртвого туннеля — это 3 HTTPS по 3 с и ping, проход растягивался до ~15 с, и сторож</span>
+<span class="c">        # медленнее замечал падение работающего (активного) канала. Возврат запаздывает не больше чем на RECHECK_MAX.</span>
+<span class="c">        # Отвечает, но с плохим качеством — не «лежит»: проверяется как обычно (иначе проба качества, которая его</span>
+<span class="c">        # оправдает, тоже откладывалась бы).</span>
+        if [ $alive = 1 ]; then RDEAD[$k]=0; RNEXT[$k]=0
+        else
+          [ "${RDEAD[$k]:-0}" = 0 ] &amp;&amp; RDEAD[$k]=$now
+          if [ $((now - RDEAD[$k])) -ge 600 ]; then RNEXT[$k]=$((now + RECHECK_MAX))
+          elif [ $((now - RDEAD[$k])) -ge "$RECHECK_AFTER" ]; then RNEXT[$k]=$((now + RECHECK_SLOW)); fi
+        fi
       fi
     done
   fi
@@ -1403,7 +1525,7 @@ while true; do
     last_q=$now
     active=${TUNS[$idx]}
     if probe "$active"; then qbad=$((qbad+1)); else qbad=0; fi
-    for ((k=0; k&lt;idx; k++)); do probe "${TUNS[$k]}" &amp;&amp; QOK[$k]=0 || QOK[$k]=1; done
+    for ((k=0; k&lt;idx; k++)); do [ "$now" -lt "${RNEXT[$k]:-0}" ] &amp;&amp; continue; probe "${TUNS[$k]}" &amp;&amp; QOK[$k]=0 || QOK[$k]=1; done
     if [ $qbad -ge "$QUALITY_FAILS" ] &amp;&amp; [ $(( now - last_sw )) -ge "$MIN_DWELL" ]; then
       for k in "${!TUNS[@]}"; do
         [ "$k" = "$idx" ] &amp;&amp; continue
@@ -1429,10 +1551,11 @@ while true; do
     fi
   fi
   write_state
-  sleep "$INTERVAL"
+  [ -n "$STOP" ] &amp;&amp; stop_now
+  read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 459 строк">Показать целиком · 459 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 573 строк">Показать целиком · 573 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1494,6 +1617,9 @@ blackhole default metric 200
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
+<span class="c"># одновременно один запуск: сторож (--fw-check) и on_boot.d (--if-needed) после смены прошивки стартуют вместе —</span>
+<span class="c"># без замка оба восстанавливали бы службы и слали два сообщения. Второй дождётся первого и увидит, что всё сделано.</span>
+command -v flock &gt;/dev/null &amp;&amp; { exec 9&gt;"${AWG_RUN:-/run}/awg-restore.lock"; } 2&gt;/dev/null &amp;&amp; flock -w 300 9
 ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha"
 <span class="c"># что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть</span>
 if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] &amp;&amp; UNITS="$UNITS $u"; done; fi
@@ -1562,7 +1688,7 @@ $fw_changed
 fi
 echo "готово; проверьте: awgctl selftest"
 EOF
-chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 80 строк">Показать целиком · 80 строк</button></figure>
+chmod 755 /data/awg/awg-restore.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 83 строк">Показать целиком · 83 строк</button></figure>
     <p>Запускать сейчас не нужно. Как пользоваться после обновления, описано в <a href="#p11">части 11</a>.</p>
   </div></div>
 
@@ -1669,15 +1795,50 @@ cleanup(){  # убрать правила для подсетей не из сп
     fi
   done
 }
+<span class="c"># Проход повторяется каждые 5 с: одно чтение правил и таблицы за проход, разбор — средствами bash; изменения — только если нужны</span>
+rule_in(){  # rule_in СНИМОК ПРИОРИТЕТ ПОДСЕТЬ ТАБЛИЦА(main | номер) — правило есть
+  local l
+  while IFS= read -r l; do
+    [[ $l =~ ^"$2:"[[:space:]]+"from $3 lookup "([^ ]+) ]] || continue
+    if [ "$4" = main ]; then [ "${BASH_REMATCH[1]}" = main ] &amp;&amp; return 0
+    else [ "${BASH_REMATCH[1]%%.*}" = "$4" ] &amp;&amp; return 0; fi
+  done &lt;&lt;&lt; "$1"
+  return 1
+}
+cleanup_from(){  # как cleanup, по снимку правил; ip rule del — только если есть что убирать
+  local l p src tbl key keep s n; local -A cnt=()
+  while IFS= read -r l; do
+    read -r p _ src _ tbl _ &lt;&lt;&lt; "$l"
+    [ "$p" = "$P_LOCAL:" ] || [ "$p" = "$P_PBR:" ] || continue
+    cnt["$p $src $tbl"]=$(( ${cnt["$p $src $tbl"]:-0} + 1 ))
+  done &lt;&lt;&lt; "$1"
+  for key in "${!cnt[@]}"; do
+    read -r p src tbl &lt;&lt;&lt; "$key"; n=${cnt[$key]}
+    keep=0
+    for s in $EXTRA_SUBNETS; do [ "$s" = "$src" ] &amp;&amp; keep=1; done
+    [ "$p" = "$P_PBR:" ] &amp;&amp; [ "${tbl%%.*}" != "$TABLE" ] &amp;&amp; keep=0
+    if [ $keep = 0 ]; then
+      while ip -4 rule del from "$src" priority "${p%:}" 2&gt;/dev/null; do :; done
+      [ "$p" = "$P_PBR:" ] &amp;&amp; ip -4 route del "$src" table "$TABLE" 2&gt;/dev/null
+    elif [ "$n" -gt 1 ]; then
+      for ((; n&gt;1; n--)); do ip -4 rule del from "$src" priority "${p%:}" 2&gt;/dev/null; done
+    fi
+  done
+}
 apply_body(){
   load
   [ -n "$TABLE" ] &amp;&amp; [ "$TABLE" != 0 ] || return 0
-  cleanup
-  local s i
+  local R RT s i o
+  R=$(ip -4 rule show 2&gt;/dev/null) || return 0
+  cleanup_from "$R"
+  [ -n "$EXTRA_SUBNETS" ] || return 0
+  RT=$(ip -4 route show table "$TABLE" 2&gt;/dev/null)
   for s in $EXTRA_SUBNETS; do
-    has_rule "$P_LOCAL" "$s" main || ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2&gt;/dev/null
-    has_rule "$P_PBR" "$s" "${TABLE}[^ ]*" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2&gt;/dev/null
-    i=$(sub_iface "$s")
+    rule_in "$R" "$P_LOCAL" "$s" main || ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2&gt;/dev/null
+    rule_in "$R" "$P_PBR" "$s" "$TABLE" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2&gt;/dev/null
+    o=$(ip -4 route show table all to "$s" 2&gt;/dev/null); i=""
+    [[ $o =~ (^|[[:space:]])dev[[:space:]]+([^[:space:]]+) ]] &amp;&amp; i=${BASH_REMATCH[2]}
+    [ -n "$i" ] &amp;&amp; [[ $'\n'$RT == *$'\n'"$s dev $i "* ]] &amp;&amp; continue
     [ -n "$i" ] &amp;&amp; ip -4 route replace "$s" dev "$i" table "$TABLE" 2&gt;/dev/null
   done
   return 0
@@ -1713,7 +1874,8 @@ check(){
   return $rc
 }
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; while :; do apply; sleep 5 &amp; wait $!; done;;
+  run)    STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}&lt;&gt; &lt;(:)       # сигнал — флажок (см. failover.sh)
+          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] &amp;&amp; read -r -t 5 -u "$SLEEPFD" _ 2&gt;/dev/null; done; exit 0;;
   apply)  apply;;
   remove) load; EXTRA_SUBNETS=""; cleanup;;
   check)  check;;
@@ -1721,7 +1883,7 @@ case "${1:-run}" in
   *)      echo "использование: $0 [run|apply|remove|check|status]"; exit 1;;
 esac
 EOF
-chmod 755 /data/awg/subnets.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 89 строк">Показать целиком · 89 строк</button></figure>
+chmod 755 /data/awg/subnets.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 125 строк">Показать целиком · 125 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-subnets.service &lt;&lt;'EOF'
 [Unit]
 Description=AWG: route VPN-server subnets (WireGuard Server, Teleport) through the tunnel
@@ -2566,6 +2728,7 @@ After=awg-failover.service network-online.target
 ExecStart=/data/awg/awg-notify.sh
 Restart=always
 RestartSec=5
+Nice=5
 <span class="c"># остановка systemd (SIGTERM) — штатное завершение, а не сбой</span>
 SuccessExitStatus=143
 
@@ -2621,7 +2784,7 @@ awgctl drift<span class="c">                  # сверка правил и с�
   <h3>Home Assistant и токены API</h3>
   <p>С версии 1.5 роутер появляется в Home Assistant сам, через MQTT discovery: «Настройки → Home Assistant» — адрес брокера (Mosquitto или встроенный брокер HA), логин, пароль, TLS — и «Проверить подключение». В HA появится устройство «UDR-Amnezia»: активный канал, состояние, kill switch, процессор, память, температура; по каждому туннелю — связь, handshake, RTT, потери, трафик; выбор канала (авто или туннель) и кнопки перезапуска туннелей. Кнопка перезагрузки роутера в HA выключена, пока её явно не включить. Служба — <code>awg-ha</code>, действия из HA попадают в журнал панели.</p>
   <p>С 1.7 в HA есть и дополнительные маршруты: по каждому — активный канал, связь и выбор канала (авто или туннель из цепочки маршрута). Добавили или убрали маршрут — сущности в HA появляются и исчезают сами.</p>
-  <p>Для REST и скриптов — токены API: «Настройки → Пользователи и 2FA → Токены API». Права «только чтение» или «управление»; токен показывается один раз; пароли, сеансы, ключи туннелей, перезагрузка и настройки панели токену недоступны никогда. Пример: <code>curl -k -H "Authorization: Bearer awg_…" https://192.168.1.1:4443/api/overview</code>. Сеансы панели с 1.5 переживают её перезапуск и обновление.</p>
+  <p>Для REST и скриптов — токены API: «Настройки → Пользователи и 2FA → Токены API». Права «только чтение» или «управление»; токен показывается один раз; пароли, сеансы, ключи и конфиги туннелей (правка, добавление, импорт, откат), перезагрузка и настройки панели токену недоступны никогда. Пример: <code>curl -k -H "Authorization: Bearer awg_…" https://192.168.1.1:4443/api/overview</code>. Сеансы панели с 1.5 переживают её перезапуск и обновление.</p>
   <h3>Сертификат UniFi для панели</h3>
   <p>Если у веб-интерфейса роутера настоящий сертификат (свой домен, автообновление в UniFi), панель возьмёт его: «Настройки → Панель и сертификат → Источник: сертификат UniFi». Панель перечитывает файлы раз в минуту, поэтому продление подхватывается без перезапуска. Имена из сертификата разрешены для входа: открывайте <code>https://ваше.имя:4443/</code>. Файлы UniFi панель только читает.</p>
   <h3>Сверка правил и обновление с откатом</h3>
@@ -2659,7 +2822,7 @@ systemctl restart awg-web<span class="c">      # после правки /data/a
 /data/awg/install.sh<span class="c">          # → Компоненты → Маршрутизация и защита → Выключить службу</span></code></pre></figure>
 
   <h3>Трафик самого роутера и unifi.ui.com: awg-self</h3>
-  <p>Основа — ваш скрипт awg-ui-fix. Соединения самого роутера повторяют правила PBR UniFi, которые задают адреса назначения (правила по устройствам и MAC для роутера не повторяются). Исправление unifi.ui.com из РФ: домены <code>UI_DOMAINS</code> (по умолчанию <code>ui.com</code>) dnsmasq спрашивает у <code>UI_DNS</code> (по умолчанию <code>9.9.9.9</code>) через туннель, а адреса облака Ubiquiti попадают в ipset <code>AWG_UI</code> и тоже идут через туннель. Остальной DNS роутера не меняется.</p>
+  <p>Основа — ваш скрипт awg-ui-fix. Соединения самого роутера повторяют правила PBR UniFi, которые задают адреса назначения (правила по устройствам и MAC для роутера не повторяются, маршрут «весь интернет» — тоже: иначе в туннель ушёл бы весь трафик роутера, включая его DNS, NTP и связь с облаком UniFi). Исправление unifi.ui.com из РФ: домены <code>UI_DOMAINS</code> (по умолчанию <code>ui.com</code>) dnsmasq спрашивает у <code>UI_DNS</code> (по умолчанию <code>9.9.9.9</code>) через туннель, а адреса облака Ubiquiti попадают в ipset <code>AWG_UI</code> и тоже идут через туннель. Остальной DNS роутера не меняется.</p>
   <ul>
     <li>Мимо туннеля всегда: серверы туннелей (из всех конфигов, даже если туннель сейчас пересоздаётся), DNS-серверы роутера, частные сети, DHCP и широковещание, подсеть провайдера на WAN, ответы на входящие соединения (WireGuard Server роутера, проброшенные порты, SSH).</li>
     <li>Цепочка <code>AWG_SELF</code> собирается целиком в отдельной цепочке и подменяется: рабочая цепочка не бывает пустой. Если в момент сборки блокировка xtables занята, подмена откладывается.</li>
@@ -2688,7 +2851,7 @@ systemctl restart awg-web<span class="c">      # после правки /data/a
   <p>Бот написан на Python (он есть на роутере); без Python работает прежний вариант с текстовыми командами. Боту нужен отдельный токен: если тот же бот читает другая программа (например, 3x-ui), Telegram вернёт 409.</p>
 
   <h3>Метрики Prometheus</h3>
-  <p>Служба <code>awg-metrics</code> каждые 15 с пишет <code>/data/awg/metrics/metrics</code>: handshake и трафик туннелей, активный канал, потери и RTT, события, состояние служб. С <code>METRICS_PORT</code> отдаёт его по HTTP только на LAN-адресе роутера.</p>
+  <p>Служба <code>awg-metrics</code> каждые 15 с пишет <code>/data/awg/metrics/metrics</code> (с 1.8 это ссылка на <code>/run/awg-metrics</code>: файл в памяти, флеш-память не изнашивается): handshake и трафик туннелей, активный канал, потери и RTT, события, состояние служб. С <code>METRICS_PORT</code> отдаёт его по HTTP только на LAN-адресе роутера.</p>
 
   <h3>Резервные копии и перенос</h3>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">зашифрованная копия настроек</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/backup.sh create<span class="c">    # конфиги, ключи, awg.env, telegram.env, юниты; AES-256, пароль спросит</span>
@@ -2717,8 +2880,8 @@ awgctl routes remove us</code></pre></figure>
   <p>По умолчанию IPv6 устройств под PBR блокируется, и они идут по IPv4 через туннель. Если сервер выдал туннелю IPv6-адрес (строка <code>Address</code> в конфиге с IPv6), можно пустить и IPv6 через туннель: «<b>Маршрутизация → Защита от утечек → IPv6 → Через туннель</b>» (<code>LEAK_V6=route</code>). Сторож добавляет правило IPv6 для метки PBR (своё, <code>proto 99</code>) и маршрут IPv6 в таблице PBR на активный туннель с NAT66 и MSS. У активного туннеля нет IPv6 — маршрут <code>unreachable</code>: устройство сразу переходит на IPv4. В WAN помеченный IPv6 не выпускается в любом случае; правила и маршруты IPv6 самой UniFi не трогаются.</p>
   <div class="note n-warn"><b>Условие</b><p>Работает, только если UniFi помечает IPv6-трафик устройств под PBR (правила PBR для IPv6). Иначе <code>guard.sh check</code> и самопроверка подскажут: надёжнее отключить IPv6 в сетях с такими устройствами.</p></div>
 
-  <h3>Списки и GeoIP — по желанию (1.7)</h3>
-  <p>По умолчанию устройства под PBR идут через туннель целиком. «<b>Маршрутизация → Списки и GeoIP</b>» (<code>LISTS_MODE</code>) меняет это для основного и дополнительных маршрутов:</p>
+  <h3>Списки, GeoIP и исключения — по желанию (1.7; исключения в той же форме — 1.8)</h3>
+  <p>По умолчанию устройства под PBR идут через туннель целиком. «<b>Маршрутизация → Списки, GeoIP и исключения</b>» (<code>LISTS_MODE</code>) меняет это для основного и дополнительных маршрутов. В той же форме — исключения в обе стороны: «Сайты напрямую» (<code>DIRECT_DOMAINS</code>, например иностранный сайт, который должен открываться без туннеля) и «Сайты через туннель» (<code>TUN_DOMAINS</code>, например российский сайт, которому нужен туннель); оба действуют и для домашней сети, и для клиентов VPN-сервера роутера. Режимы:</p>
   <div class="tw"><table>
     <tr><th>Режим</th><th>Через туннель</th><th>Напрямую</th></tr>
     <tr><td>Всё (<code>off</code>, по умолчанию)</td><td>весь трафик устройств под PBR</td><td>только исключения</td></tr>
@@ -2729,7 +2892,8 @@ awgctl routes remove us</code></pre></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">списки по SSH</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl lists<span class="c">                 # режим, страны, сетей в наборах, когда обновлено</span>
 awgctl lists update<span class="c">          # скачать сейчас (при ошибке остаются прежние)</span></code></pre></figure>
   <div class="note n-warn"><b>Правило в UniFi</b><p>Режимы только сужают то, что UniFi уже отправила в туннель. Для «Всё, кроме стран» правило Policy-Based Route для устройства должно вести в VPN Client весь его трафик (назначение — Internet / любое), а не отдельные домены или адреса.</p></div>
-  <div class="note n-info"><b>Важно</b><p>Список и GeoIP работают по IP-адресам. Сайт за CDN может делить адреса с другими сайтами, поэтому для отдельных сайтов надёжнее «Домены через туннель» и исключения по доменам — они действуют вместе со списками.</p></div>
+  <div class="note n-warn"><b>Нужен маршрут UniFi на весь трафик</b><p>Списки и GeoIP только сужают то, что UniFi уже ведёт в туннель. Если в UniFi маршруты по политике заданы лишь для доменов и адресов, режимы ни на что не влияют: <code>ifconfig.me</code> покажет ваш IP. Для «Всё, кроме стран» создайте в UniFi маршрут: устройства (или сеть) → VPN-клиент (<code>wgclt1</code>), назначение — весь интернет. Kill Switch UniFi в этом маршруте <b>не включайте</b>: при падении туннелей трафик и так блокирует сторож (blackhole в таблице маршрута), а Kill Switch UniFi ломает DNS — UniFi ждёт DNS-сервер VPN-клиента, а у профиля-«рельсы» его нет (ERR_NAME_NOT_RESOLVED). С 1.8 сторож снимает его флаг с меток наших маршрутов, но надёжнее просто не включать. Когда такого маршрута нет, панель, <code>awgctl lists</code> и самопроверка предупреждают (1.8). Маршруты UniFi по доменам и адресам и «Сайты через туннель» остаются в туннеле при любом режиме, даже если адрес из выбранной страны (кэш-серверы YouTube у российских провайдеров).</p></div>
+  <div class="note n-info"><b>Важно</b><p>Список и GeoIP работают по IP-адресам. Сайт за CDN может делить адреса с другими сайтами, поэтому для отдельных сайтов надёжнее «Сайты через туннель» и «Сайты напрямую» — они действуют по доменам вместе со списками и GeoIP. Если сайт указан в обоих, он идёт напрямую. Сайт может брать содержимое с других доменов — например, yandex.ru/internet узнаёт адрес через <code>yandex.net</code>: такие домены добавляйте отдельной строкой. Изменения действуют для новых DNS-запросов — после «Применить» перезапустите браузер.</p></div>
 
   <h3>DNS устройств: перехват — по желанию (1.7)</h3>
   <p>Телевизоры, приставки и умный дом часто спрашивают DNS не у роутера, а у «зашитого» сервера (8.8.8.8, 114.114.114.114). Тогда домены через туннель, исключения по доменам и правила UniFi по доменам их не видят, а провайдер видит и может подменить ответы. «<b>Маршрутизация → DNS устройств → Перехват DNS устройств</b>» (<code>DNS_INTERCEPT=yes</code>): такие запросы (порт 53) заворачиваются на DNS роутера — для всей LAN или для клиентов из <code>DNS_CLIENTS</code>. Вместе с «Весь DNS роутера через туннель» (<code>DNS_ALL_TUNNEL=yes</code>) DNS этих устройств уходит через туннель.</p>
@@ -2997,6 +3161,8 @@ EOF</code></pre></figure>
     <tr><td><code>WANIF</code></td><td><code>eth3</code></td><td>WAN-интерфейс для панели и диагностики</td></tr>
     <tr><td><code>MAIN</code>, <code>BACKUP</code></td><td><code>awgmain</code>, <code>awgbackup</code> или пусто</td><td>Имена туннелей; пустой <code>BACKUP</code> означает режим одного туннеля</td></tr>
     <tr><td><code>RECOVER_SEC</code></td><td><code>600</code></td><td>Сколько основной должен работать без сбоев до возврата</td></tr>
+    <tr><td><code>CHECK_RX_MIN</code>, <code>CHECK_MAX_AGE</code></td><td><code>65536</code>, <code>60</code></td><td>Трафик из туннеля за проход (байт), при котором HTTPS-проверка не нужна, и как часто она всё равно делается, с (1.8); <code>CHECK_RX_MIN=0</code> — проверять всегда</td></tr>
+    <tr><td><code>RECHECK_AFTER</code>, <code>RECHECK_SLOW</code>, <code>RECHECK_MAX</code></td><td><code>120</code>, <code>30</code>, <code>60</code></td><td>Недоступный приоритетный канал после <code>RECHECK_AFTER</code> с проверяется раз в <code>RECHECK_SLOW</code> с, после 10 минут — раз в <code>RECHECK_MAX</code> с (1.8)</td></tr>
     <tr><td><code>EXTRA_SUBNETS</code></td><td><code>"192.168.3.0/24"</code></td><td>Подсети VPN-сервера роутера для PBR</td></tr>
     <tr><td><code>VPS_IP</code></td><td><code>203.0.113.10</code></td><td>Только для подсказок в панели и исключения из трафика роутера</td></tr>
     <tr><td><code>TUNNELS_EXTRA</code>, <code>QUALITY</code>, <code>QUALITY_LOSS</code>, <code>QUALITY_RTT</code>, <code>MIN_DWELL</code></td><td><code>""</code>, <code>yes</code>, <code>40</code>, <code>0</code>, <code>120</code></td><td>Дополнительные туннели и выбор по качеству (часть ★)</td></tr>

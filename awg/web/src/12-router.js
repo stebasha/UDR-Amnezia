@@ -50,7 +50,7 @@
       const kv = (rows) => el('dl', { class: 'kv' }, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)]));
       replace(info, kv([[T('Модель'), h.model], [T('Ядро'), h.kernel_ver], [T('Без перезагрузки'), fmtDur(h.uptime)], [T('Процессов'), String(h.nproc)],
         [T('Своп'), h.mem.swap_total_mb ? h.mem.swap_used_mb + ' / ' + h.mem.swap_total_mb + T(' МБ') : T('нет')],
-        [T('OOM за сутки'), h.kernel.oom < 0 ? '—' : String(h.kernel.oom)], [T('Ошибки ввода-вывода за сутки'), h.kernel.io < 0 ? '—' : String(h.kernel.io)]].concat(
+        [T('OOM за сутки'), h.kernel.oom < 0 ? '—' : String(h.kernel.oom_sys == null ? h.kernel.oom : h.kernel.oom_sys) + (h.kernel.oom > (h.kernel.oom_sys == null ? h.kernel.oom : h.kernel.oom_sys) ? ' ' + T('(ещё в пределах лимита служб: ') + (h.kernel.oom - h.kernel.oom_sys) + ')' : '')], [T('Ошибки ввода-вывода за сутки'), h.kernel.io < 0 ? '—' : String(h.kernel.io)]].concat(
         h.temps.map((t) => [t.name, Math.round(t.c) + '°C']))));
       replace(disks, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Раздел')), el('th', { class: 'r' }, T('Свободно')), el('th', null, T('Занято')))),
         el('tbody', null, h.disks.map((d) => el('tr', null, el('td', null, el('span', { class: 'mono' }, d.path)), el('td', { class: 'r nowrap' }, fmtMB(d.free_mb)),

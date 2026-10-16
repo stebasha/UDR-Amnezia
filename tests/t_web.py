@@ -939,6 +939,14 @@ def main():
         s, j = a.post("/api/hooks", {"hook_clear": True, "ntfy": ""})
         check("хуки: всё убрано — файл удалён", s == 200 and not os.path.exists(hf), j)
 
+        # ---------- 1.8: отрицательная длина тела — сразу 400, а не ожидание до таймаута
+        import socket as _sk
+        t0 = time.time()
+        sk = _sk.create_connection(("127.0.0.1", PORT), timeout=10)
+        sk.sendall(("POST /api/tunnel/auto HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nCookie: %s\r\nX-CSRF: %s\r\nContent-Length: -5\r\n\r\n"
+                    % (PORT, a.cookie, a.csrf)).encode())
+        resp = sk.recv(200).decode("latin-1", "replace"); sk.close()
+        check("отрицательная длина тела → 400 сразу", resp.startswith("HTTP/1.1 400") and time.time() - t0 < 5, resp[:60])
         # ---------- 1.5 (#6): токены API
         s, j = a.post("/api/token/create", {"name": "ha", "role": "read", "days": 0, "current": "nope"})
         check("токен: без пароля не создать", s == 403, j)
@@ -970,6 +978,13 @@ def main():
         s2, j2 = r_.req("POST", "/api/tunnel/export", {"name": "awgmain", "current": ""}, headers=bh(atok))
         s3, b3, _ = r_.req("GET", "/api/backup/file/x.tgz", headers=bh(atok), raw=True)
         check("токен admin: перезагрузка, ключи и копии недоступны", s == 403 and s2 == 403 and s3 == 403, (s, s2, s3))
+        bad = []
+        for path, body in (("/api/tunnel/conf", {"name": "awgmain", "text": "[Interface]\n"}), ("/api/tunnel/add", {"name": "awgevil", "text": "x"}),
+                           ("/api/import/apply", {"items": []}), ("/api/tunnel/revision/restore", {"name": "awgmain", "rev": "1"})):
+            s, j = r_.req("POST", path, body, headers=bh(atok))
+            if s != 403:
+                bad.append((path, s))
+        check("токен admin: конфиг туннеля, новый туннель, импорт и откат конфига — только по паролю (#1.8)", not bad, bad)
         s, j = r_.get("/api/overview", headers=bh("awg_" + "A" * 43))
         check("токен: неверный → 401", s == 401, j)
         s, j = a.get("/api/tokens")

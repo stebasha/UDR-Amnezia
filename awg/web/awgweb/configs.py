@@ -311,10 +311,10 @@ def apply_conf_text(h, t, text, why):
             rev_save(t, old, "до: " + why)
             write_secure(cp + ".prev", old)
         write_secure(cp, text)
-        rc, out = run([os.path.join(DD, "up.sh"), t], timeout=60)
+        rc, out = up_tunnel(t)
         if rc != 0 and old:
             write_secure(cp, old)
-            run([os.path.join(DD, "up.sh"), t], timeout=60)
+            up_tunnel(t)
             h.act("conf-set-failed", {t: why})
             return {"ok": False, "msg": "туннель с новым конфигом не поднялся, возвращён прежний:\n" + out.strip()}
         rev_save(t, text, why)

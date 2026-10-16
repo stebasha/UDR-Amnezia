@@ -119,7 +119,7 @@ ship_tg(){  # ship_tg ФАЙЛ — документом администрато
   for c in "${chats[@]}"; do
     for i in "${ifs[@]}"; do
       code=$(printf 'url = "https://api.telegram.org/bot%s/sendDocument"\n' "$TG_TOKEN" | curl -4 -s -m 60 ${i:+--interface "$i"} -o /dev/null -w '%{http_code}' -K - \
-        -F "chat_id=$c" -F "document=@$1" -F "caption=💾 Резервная копия UDR-Amnezia · $(hostname) · $(date '+%F %H:%M'). Пароль — ваш пароль автокопии." 2>/dev/null)
+        --form-string "chat_id=$c" -F "document=@$1" --form-string "caption=💾 Резервная копия UDR-Amnezia · $(hostname) · $(date '+%F %H:%M'). Пароль — ваш пароль автокопии." 2>/dev/null)
       [ "$code" = 200 ] && { ok=0; break; }
     done
     [ "$code" = 200 ] || echo "Telegram: чат $c — HTTP ${code:-000}"
@@ -209,6 +209,9 @@ case "$cmd" in
     tmp=$(mktemp "$DD/.bk.XXXXXX")
     open_copy "$FILE" "$tmp" || { rm -f "$tmp"; exit 1; }
     echo "содержимое копии:"; tar tzf "$tmp" | sed 's/^/  /'
+    # в копии только обычные файлы с именами из набора: ссылка или путь «../» записали бы файл вне $DD
+    bad=$( { tar tvzf "$tmp" | awk 'substr($1,1,1) != "-"'; tar tzf "$tmp" | grep -vE '^((web|vps\.d)/)?[A-Za-z0-9._][A-Za-z0-9._-]*$'; tar tzf "$tmp" | grep -E '(^|/)\.\.?(/|$)'; } 2>/dev/null | head -n3)
+    if [ -n "$bad" ]; then rm -f "$tmp"; echo "копия отклонена: в ней не только файлы настроек:"; echo "$bad" | sed 's/^/  /'; exit 1; fi
     if [ "$cmd" = verify ]; then rm -f "$tmp"; echo "копия читается, пароль верный"; exit 0; fi
     mkdir -p "$BK"; pre=$BK/pre-restore-$(date +%Y%m%d-%H%M%S).tgz
     # shellcheck disable=SC2046

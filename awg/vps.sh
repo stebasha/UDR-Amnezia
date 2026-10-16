@@ -22,6 +22,8 @@ RKEY=${RKEY:-$DD/ssh/id_ed25519}
 SRV=${SRV:-$DD/server}
 VPS_WAIT=${VPS_WAIT:-25}
 umask 077
+# файл с паролем VPS (из панели) не остаётся на диске, даже если команда завершилась раньше, чем прочла его
+[ -n "${VPS_PASS_FILE:-}" ] && trap 'rm -f "$VPS_PASS_FILE"' EXIT
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}
@@ -154,6 +156,9 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   fi
   bk=$(echo "$out" | sed -n 's/^BACKUP_FILE=//p'); sp=$(echo "$out" | sed -n 's/^NEW_SERVER_PUB=//p')
   say "· VPS: изменено, сервер перезапущен (копия $bk)"
+  # VPS уже на новых значениях: прерывание (остановка задачи, срок, Ctrl+C) до конца проверки возвращает обе стороны,
+  # иначе роутер и сервер остались бы с разными ключами или параметрами и туннель не поднялся бы
+  trap 'trap - INT TERM; say "✘ прервано: возвращаю обе стороны"; cp -p "$pre" "$CF"; vrun "ROLLBACK=$bk bash /root/vps-rotate.sh" >/dev/null 2>&1; "$DD/up.sh" "$T" >/dev/null 2>&1; vrun "rm -f /root/vps-rotate.sh /root/awg-obf.txt" >/dev/null 2>&1; exit 1' INT TERM
   "$apply" "$sp"
   say "· роутер: конфиг $T обновлён, туннель пересоздан; жду handshake (до ${VPS_WAIT} с)…"
   "$DD/up.sh" "$T" >/dev/null 2>&1
@@ -163,8 +168,9 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
     if [ -n "${VPS_NO_KEEP:-}" ]; then rm -f "$pre"; [[ $bk =~ ^/[A-Za-z0-9._/-]+$ ]] && vrun "rm -f '$bk'" >/dev/null 2>&1   # автоподбор (#33): копии не копятся
     else say "  прежний конфиг роутера: $pre (со старым ключом — удалите: shred -u $pre); на VPS: $bk"; fi
     [ -z "${VPS_QUIET:-}" ] && { event "$what: $T — готово"; notify "🔑 $what · $(hostname): туннель $T работает на новых значениях"; }
-    return 0
+    trap - INT TERM; return 0
   fi
+  trap - INT TERM
   say "✘ $what: туннель $T не заработал — откатываю обе стороны"
   cp -p "$pre" "$CF"
   out=$(vrun "ROLLBACK=$bk bash /root/vps-rotate.sh" 2>&1); echo "$out" | grep -q ROLLED_BACK && say "· VPS: возвращена копия $bk" || say "· VPS: откат не подтвердился: $(echo "$out" | tail -n1)"
@@ -180,8 +186,8 @@ apply_obf(){ set_obf "$CF" "$OBFL"; }
 
 latest(){  # latest amneziawg-go|amneziawg-tools — последний релиз или самый свежий тег в github.com/amnezia-vpn
   local tag
-  tag=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$1/releases/latest" 2>/dev/null | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
-  [ -n "$tag" ] || tag=$(curl -fsSL -m 20 "https://api.github.com/repos/amnezia-vpn/$1/tags?per_page=30" 2>/dev/null | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
+  tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$1/releases/latest" 2>/dev/null | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+  [ -n "$tag" ] || tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 "https://api.github.com/repos/amnezia-vpn/$1/tags?per_page=30" 2>/dev/null | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
   [[ $tag =~ ^v[0-9][0-9.]*$ ]] && echo "$tag"
 }
 remote_versions(){  # → «go TAG» и «tools TAG» (из amnezia-build.txt или --version)

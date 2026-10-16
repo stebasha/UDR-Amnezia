@@ -8,6 +8,9 @@
 D=${DD:-/data/awg}
 SYSD=${SYSD:-/etc/systemd/system}
 BASHRC=${BASHRC:-/root/.bashrc}
+# одновременно один запуск: сторож (--fw-check) и on_boot.d (--if-needed) после смены прошивки стартуют вместе —
+# без замка оба восстанавливали бы службы и слали два сообщения. Второй дождётся первого и увидит, что всё сделано.
+command -v flock >/dev/null && { exec 9>"${AWG_RUN:-/run}/awg-restore.lock"; } 2>/dev/null && flock -w 300 9
 ALL="awg-failover awg-notify awg-motd awg-subnets awg-self awg-guard awg-bot awg-metrics awg-ha"
 # что включено у пользователя: список ведёт установщик (/data/awg/.units); если его нет — всё, чьи файлы есть
 if [ -s "$D/.units" ]; then UNITS=$(cat "$D/.units"); else UNITS=""; for u in $ALL; do [ -f "$D/$u.service" ] && UNITS="$UNITS $u"; done; fi

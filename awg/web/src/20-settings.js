@@ -13,6 +13,8 @@
       add(body, [
         settingsForm(T('Переключение каналов'), 'switch', ['RECOVER_SEC', 'QUALITY', 'QUALITY_LOSS', 'QUALITY_RTT', 'MIN_DWELL'], d,
           el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Сторож проверяет каналы каждые несколько секунд (HTTPS к 1.1.1.1, 8.8.8.8, 9.9.9.9). При падении активного — уходит на следующий по приоритету; на основной возвращается после стабильной работы.')))),
+        settingsForm(T('Экономия ресурсов роутера'), 'cpu', ['CHECK_RX_MIN', 'CHECK_MAX_AGE', 'RECHECK_AFTER', 'RECHECK_SLOW', 'RECHECK_MAX'], d,
+          el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Значения по умолчанию подходят почти всем: меньше запросов через туннели и процессов на роутере без потери скорости переключения.')))),
         settingsForm(T('Мониторинг'), 'activity', ['METRICS_PORT'], d)]);
     } catch (e) { err(e); }
   }

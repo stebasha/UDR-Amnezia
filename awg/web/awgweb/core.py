@@ -3,6 +3,7 @@
 
 import base64
 import collections
+import fcntl
 import getpass
 import hashlib
 import hmac
@@ -25,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -92,13 +93,74 @@ def run(cmd, timeout=60, env=None, inp=None):
     if env:
         e.update(env)
     try:
-        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=e,
-                           input=inp.encode() if isinstance(inp, str) else inp)
-        return p.returncode, ANSI.sub("", p.stdout.decode("utf-8", "replace"))
-    except subprocess.TimeoutExpired:
-        return 124, "превышено время ожидания (%d с)" % timeout
+        # своя группа процессов: по истечении срока завершаются и потомки (curl, ping), а не только сама команда
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=e, start_new_session=True,
+                             stdin=subprocess.PIPE if inp is not None else subprocess.DEVNULL)
     except OSError as ex:
         return 127, str(ex)
+    try:
+        out = p.communicate(inp.encode() if isinstance(inp, str) else inp, timeout=timeout)[0]
+        return p.returncode, ANSI.sub("", out.decode("utf-8", "replace"))
+    except subprocess.TimeoutExpired:
+        stop_group(p)
+        try:
+            p.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        return 124, "превышено время ожидания (%d с)" % timeout
+
+
+def stop_group(p, grace=3):
+    """Завершить команду вместе с потомками: сначала TERM (скрипт успеет вернуть конфиг туннеля — у mtu.sh, подбора
+    обфускации обработчики на TERM), через grace секунд — KILL всей группе."""
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+    except OSError:
+        p.terminate()
+    try:
+        p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(p.pid, signal.SIGKILL)       # потомки (curl, ping) могли остаться и после выхода самой команды
+    except OSError:
+        pass
+
+
+def up_tunnel(t, timeout=60, wait=30):
+    """Поднять (перезапустить) туннель через up.sh под тем же замком, что берут сторож и подбор параметров
+    (/run/awg-up-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del)."""
+    try:
+        f = open(os.path.join(RUN, "awg-up-%s.lock" % t), "w")
+    except OSError:
+        return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
+    with f:
+        end = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() > end:
+                    return 1, "туннель %s сейчас перезапускает другая служба — повторите позже" % t
+                time.sleep(0.3)
+        return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
+
+
+def url_origin(u):
+    """(схема, узел, порт) адреса: сохранённый секрет (токен, заголовок) идёт только туда же, куда шёл раньше."""
+    try:
+        x = urllib.parse.urlparse(str(u or ""))
+        return (x.scheme.lower(), (x.hostname or "").lower(), x.port or {"https": 443, "http": 80}.get(x.scheme.lower()))
+    except ValueError:
+        return ("", "", None)
+
+
+def keep_secret(old_url, new_url, what):
+    """Прежний секрет можно оставить, только если адрес ведёт туда же (схема, узел, порт). Иначе — ввести заново:
+    смена адреса с сохранённым токеном отправила бы его на новый узел (украденная сессия панели → чужой сервер)."""
+    if url_origin(old_url) != url_origin(new_url):
+        raise ValueError("адрес сменился: введите %s заново (прежний на другой узел не отправляется)" % what)
 
 
 def parse_env_text(text):
@@ -114,8 +176,18 @@ def parse_env_text(text):
     return res
 
 
+_ENVC = {}
+
+
 def env():
-    return parse_env_text(read_file(os.path.join(DD, "awg.env")))
+    """awg.env как словарь. Разбирается заново только при изменении текста (сборщик читает его каждые 2 с,
+    обзор — по несколько раз за запрос). Возвращается копия: вызывающий может её менять."""
+    text = read_file(os.path.join(DD, "awg.env"))
+    c = _ENVC.get("v")
+    if not c or c[0] != text:
+        c = (text, parse_env_text(text))
+        _ENVC["v"] = c
+    return dict(c[1])
 
 
 def env_set(updates):
@@ -139,8 +211,12 @@ def env_set(updates):
 
 
 def fmt_env(k, v):
+    """Строка KEY=значение для файлов, которые читает bash (source). Значение с символами, которые bash раскрыл бы
+    внутри кавычек, не записывается никогда — даже если проверка конкретной настройки что-то пропустила."""
     v = str(v)
-    if v == "" or re.search(r"[\s]", v):
+    if not re.match(r"^[A-Z_][A-Z0-9_]*$", str(k)) or re.search(r'["$`\\\x00-\x08\x0a-\x1f\x7f]', v):
+        raise ValueError("недопустимое значение для %s" % k)
+    if not re.match(r"^[A-Za-z0-9_./:@%+,=-]+$", v):       # пусто, пробелы, ; & | < > ( ) * ? и т. п. — только в кавычках
         return '%s="%s"' % (k, v)
     return "%s=%s" % (k, v)
 
@@ -244,6 +320,21 @@ def hs_age(t):
     return -1 if ts == 0 else max(0, now() - ts)
 
 
+def hs_all():
+    """Возраст handshake всех туннелей одним вызовом awg (у интерфейса с несколькими peer — самый свежий). → {имя: сек | -1}"""
+    out = run([os.path.join(DD, "awg"), "show", "all", "latest-handshakes"], timeout=5)[1]
+    res = {}
+    for line in out.splitlines():
+        p = line.split()
+        if len(p) < 3 or not p[2].isdigit():
+            continue
+        ts = int(p[2])
+        age = -1 if ts == 0 else max(0, now() - ts)
+        if p[0] not in res or (age >= 0 and (res[p[0]] < 0 or age < res[p[0]])):
+            res[p[0]] = age
+    return res
+
+
 def awg_show(t, what):
     rc, out = run([os.path.join(DD, "awg"), "show", t, what], timeout=5)
     return out.strip() if rc == 0 else ""
@@ -266,6 +357,15 @@ def state():
 
 def svc_active(u):
     return run(["systemctl", "is-active", "--quiet", u], timeout=5)[0] == 0
+
+
+def svc_states(units):
+    """Активность нескольких служб одним вызовом systemctl (по строке на службу, в том же порядке). → {служба: bool}"""
+    units = list(units)
+    out = run(["systemctl", "is-active"] + units, timeout=8)[1].split()
+    if len(out) != len(units):          # непривычный ответ — по одной, как раньше
+        return {u: svc_active(u) for u in units}
+    return {u: out[i] == "active" for i, u in enumerate(units)}
 
 
 def svc_installed(u):
@@ -432,10 +532,15 @@ SETTINGS = {
     "QUALITY_LOSS": (v_int(5, 100), ["awg-failover"], "Порог потерь, %"),
     "QUALITY_RTT": (v_int(0, 5000), ["awg-failover"], "Порог задержки, мс (0 — не учитывать)"),
     "MIN_DWELL": (v_int(0, 3600), ["awg-failover"], "Не переключаться по качеству после смены, с"),
+    "CHECK_RX_MIN": (v_int(0, 104857600), ["awg-failover"], "Трафик из туннеля за проход, при котором проверка не нужна, байт"),
+    "CHECK_MAX_AGE": (v_int(10, 3600), ["awg-failover"], "Настоящая проверка канала не реже, с"),
+    "RECHECK_AFTER": (v_int(0, 3600), ["awg-failover"], "Недоступный приоритетный канал проверять реже через, с"),
+    "RECHECK_SLOW": (v_int(5, 600), ["awg-failover"], "Тогда проверять раз в, с"),
+    "RECHECK_MAX": (v_int(5, 3600), ["awg-failover"], "После 10 минут — раз в, с"),
     "EXTRA_SUBNETS": (v_subnets, ["awg-subnets", "awg-guard"], "Подсети VPN-сервера роутера"),
-    "TUN_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Домены через туннель"),
-    "TUN_CLIENTS": (v_hosts, ["awg-guard"], "Для каких клиентов (пусто — вся LAN)"),
-    "DIRECT_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Домены напрямую (исключения)"),
+    "TUN_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Сайты через туннель (даже из выбранных стран)"),
+    "TUN_CLIENTS": (v_hosts, ["awg-guard"], "Для кого сайты через туннель без PBR (пусто — LAN и клиенты VPN-сервера)"),
+    "DIRECT_DOMAINS": (v_domains, ["awg-self", "awg-guard"], "Сайты напрямую (даже иностранные)"),
     "DIRECT_SUBNETS": (v_subnets, ["awg-guard"], "Подсети напрямую (исключения)"),
     "LEAK_GUARD": (v_choice("yes", "no"), ["awg-guard"], "Защита от утечек"),
     "LEAK_V6": (v_choice("block", "off", "route"), ["awg-guard", "awg-failover"], "IPv6 устройств под PBR"),
@@ -454,6 +559,7 @@ SETTINGS = {
     "METRICS_PORT": (v_int(1024, 65535, True), ["awg-metrics"], "Порт метрик Prometheus"),
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
+            "CHECK_RX_MIN": "65536", "CHECK_MAX_AGE": "60", "RECHECK_AFTER": "120", "RECHECK_SLOW": "30", "RECHECK_MAX": "60",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
             "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no"}
 
@@ -546,6 +652,16 @@ def hash_pw(pw, salt=None, it=200000):
     return {"salt": salt, "iter": it, "hash": h}
 
 
+_DUMMY = {}
+
+
+def dummy_pw():
+    """Запись с паролем, который никто не знает, — та же стоимость проверки, что у настоящей (считается один раз)."""
+    if not _DUMMY:
+        _DUMMY.update(hash_pw(secrets.token_hex(16)))
+    return _DUMMY
+
+
 def check_pw(rec, pw):
     h = hashlib.pbkdf2_hmac("sha256", pw.encode("utf-8"), bytes.fromhex(rec["salt"]), int(rec["iter"])).hex()
     return hmac.compare_digest(h, rec["hash"])
@@ -635,15 +751,28 @@ class Sessions:
         tok = secrets.token_urlsafe(32)
         with self.lock:
             self.s = {k: v for k, v in self.s.items() if self.alive(v)}
-            self.s[self.key(tok)] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160]}
+            self.s[self.key(tok)] = {"user": user, "csrf": secrets.token_urlsafe(24), "ip": ip, "born": now(), "seen": now(), "ua": ua[:160],
+                                     "pw": self.pw_mark(user)}
             self.save()
         return tok
+
+    @staticmethod
+    def pw_mark(user):
+        """Отпечаток пароля пользователя (или None, если его нет): смена пароля или удаление — в том числе из командной
+        строки (panel.py passwd / deluser), мимо панели — завершает его сеансы."""
+        rec = load_users().get(user)
+        return hashlib.sha256(str(rec.get("hash", "")).encode()).hexdigest()[:16] if isinstance(rec, dict) else None
 
     def get(self, tok):
         k = self.key(tok)
         with self.lock:
             x = self.s.get(k) if tok else None
             if not x:
+                return None
+            m = self.pw_mark(x["user"])
+            if m is None or ("pw" in x and x["pw"] != m):
+                del self.s[k]
+                self.save()
                 return None
             if not self.alive(x):
                 del self.s[k]
@@ -746,7 +875,10 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
               "/api/vps", "/api/vps/test", "/api/vps/status", "/api/vps/versions", "/api/vps/run", "/api/vps/job",
               "/api/xui", "/api/xui/test", "/api/xui/create", "/api/xui/remove", "/api/xui/panel/remove", "/api/xui/inbounds",
               "/api/xui/import", "/api/xui/link", "/api/xui/sync", "/api/vps/del", "/api/route/save", "/api/route/remove",
-              "/api/tune/run", "/api/tune/apply"}
+              "/api/tune/run", "/api/tune/apply",
+              # куда идёт трафик: конфиг туннеля (Endpoint, ключи), новый туннель, откат конфига — только при входе по паролю.
+              # Иначе утёкший токен (из Home Assistant, скрипта) мог бы направить трафик устройств под PBR на чужой сервер.
+              "/api/tunnel/conf", "/api/tunnel/add", "/api/import/apply", "/api/tunnel/revision/restore"}
 
 
 class Throttle:
@@ -907,18 +1039,40 @@ def read_int(p, default=-1):
     return int(v) if v.isdigit() else default
 
 
+_KE = {"t": 0.0, "v": None}
+
+
 def kernel_events():
-    """OOM и ошибки ввода-вывода за сутки из журнала ядра (если доступен)."""
+    """OOM и ошибки ввода-вывода за сутки из журнала ядра (если доступен). Журнал за сутки читается не чаще раза
+    в 5 минут: бот проверяет здоровье каждую минуту, панель — при каждом открытии страницы."""
+    if _KE["v"] is not None and time.time() - _KE["t"] < 300:
+        return _KE["v"]
+    _KE["v"], _KE["t"] = _kernel_events(), time.time()
+    return _KE["v"]
+
+
+def _kernel_events():
     rc, out = run(["journalctl", "-k", "--since", "-24h", "-q", "--no-pager", "-o", "cat"], timeout=10)
     if rc != 0:
         return {"oom": -1, "io": -1, "lines": []}
-    oom = [l for l in out.splitlines() if re.search(r"Out of memory|oom-kill|Killed process", l)]
+    # одно завершение — одна строка «Killed process» (вокруг неё ядро пишет ещё 2–3 строки про OOM: их не считаем).
+    # «Memory cgroup out of memory» — служба упёрлась в свой собственный лимит (так бывает у UniFi Network, Java):
+    # это не нехватка памяти роутера, другие процессы не затронуты.
+    kills = []
+    for l in out.splitlines():
+        m = re.search(r"(Memory cgroup out of memory|Out of memory)[^:]*: Killed process \d+ \(([^)]*)\)", l)
+        if m:
+            kills.append({"cg": m.group(1).startswith("Memory cgroup"), "name": m.group(2), "line": l})
     io = [l for l in out.splitlines() if re.search(r"I/O error|EXT4-fs error|UBIFS error|squashfs error|Buffer I/O", l)]
-    return {"oom": len(oom), "io": len(io), "lines": (oom + io)[-6:]}
+    return {"oom": len(kills), "oom_sys": sum(not k["cg"] for k in kills),
+            "oom_cg": collections.Counter(k["name"] for k in kills if k["cg"]),
+            "oom_sys_names": collections.Counter(k["name"] for k in kills if not k["cg"]),
+            "io": len(io), "lines": ([k["line"] for k in kills] + io)[-6:]}
 
 
-def system_health(cpu=None, hist=None):
-    """Показатели железа и проверки с понятным текстом: что не так и что делать."""
+def system_health(cpu=None, hist=None, procs=True):
+    """Показатели железа и проверки с понятным текстом: что не так и что делать.
+    procs=False — без списка процессов (обход /proc): боту, который проверяет здоровье каждую минуту, он не нужен."""
     mi = {}
     for line in read_file(os.path.join(PROC, "meminfo")).splitlines():
         p = line.split()
@@ -947,7 +1101,7 @@ def system_health(cpu=None, hist=None):
         if k not in seen:
             seen.add(k)
             dl.append(d)
-    procs, nproc = top_procs()
+    procs, nproc = top_procs() if procs else ([], 0)
     ke = kernel_events()
     checks = []
 
@@ -1011,8 +1165,13 @@ def system_health(cpu=None, hist=None):
         else:
             ck("ct", "ok", "Соединений: %d из %d" % (ct_n, ct_m))
     # ядро
-    if ke["oom"] > 0:
-        ck("oom", "warn", "За сутки ядро %d раз завершало процессы из-за нехватки памяти" % ke["oom"], "журнал: journalctl -k | grep -i oom")
+    if ke.get("oom_sys", ke["oom"]) > 0:
+        names = ", ".join("%s ×%d" % kv for kv in (ke.get("oom_sys_names") or {}).items())
+        ck("oom", "warn", "За сутки памяти роутера не хватило %d раз, ядро завершало процессы%s" % (ke.get("oom_sys", ke["oom"]), ": " + names if names else ""),
+           "журнал: journalctl -k | grep -i 'Killed process'")
+    for name, n in sorted((ke.get("oom_cg") or {}).items()):
+        ck("oomcg-" + name, "info", "Процесс %s %d раз упирался в свой лимит памяти и перезапускался" % (name, n),
+           "это лимит самой службы (у unifi — приложение UniFi Network), а не нехватка памяти роутера; если часто — перезапустите UniFi Network или обновите прошивку")
     if ke["io"] > 0:
         ck("io", "warn", "За сутки ошибок ввода-вывода: %d" % ke["io"], "возможен износ флеш-памяти: сделайте резервную копию")
     if up < 900:

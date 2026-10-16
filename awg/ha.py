@@ -81,6 +81,7 @@ def _str(s):
 class MQTT:
     def __init__(self, host, port, user="", pw="", tls="no", client_id=NODE, keepalive=60, timeout=10):
         self.host, self.port, self.user, self.pw, self.tls = host, port, user, pw, tls
+        self.flags = 0
         self.cid, self.keepalive, self.timeout = client_id, keepalive, timeout
         self.sock = None
         self.buf = b""
@@ -157,8 +158,13 @@ class MQTT:
                         break
                 else:
                     i = -1
+                # пакеты HA — команды в несколько байт: длина больше 256 КБ (или длиннее 4 байт) — брокер не тот или сбой,
+                # копить такой пакет в памяти роутера незачем
+                if n > 256 * 1024 or (i == -1 and len(self.buf) > 5) or i > 5:
+                    raise OSError("брокер прислал слишком большой пакет")
                 if i > 0 and len(self.buf) >= i + n:
                     t, body = self.buf[0] & 0xF0, self.buf[i:i + n]
+                    self.flags = self.buf[0] & 0x0F        # у PUBLISH бит 0 — retain
                     self.buf = self.buf[i + n:]
                     return t, body
             try:
@@ -188,7 +194,7 @@ def overview():
     """Состояние для HA: как в панели, плюс дополнительные маршруты."""
     ov = P.overview()
     try:
-        ov["routes"] = [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+        ov["routes"] = P.routes_brief(extra_only=True)
     except Exception as ex:   # маршруты — не повод не публиковать остальное
         log("маршруты: %s" % ex)
         ov["routes"] = []
@@ -364,7 +370,11 @@ def serve():
                 if time.time() - m.last_tx > 30:
                     m.ping()
                 t, body = m.read_packet(1.0)
-                if t == 0x30:
+                if t == 0x30 and m.flags & 1:
+                    # сохранённое (retain) сообщение брокер отдаёт при каждой подписке: команда из него выполнялась бы
+                    # при каждом переподключении (перезапуск туннеля, перезагрузка). Команды — только «живые».
+                    log("пропускаю сохранённую команду %s" % parse_publish(body)[0].rsplit("/", 1)[-1])
+                elif t == 0x30:
                     topic, payload = parse_publish(body)
                     try:
                         msg = handle(topic, payload.strip(), c)

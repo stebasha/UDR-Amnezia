@@ -33,6 +33,10 @@ def api_ha_set(h, d):
     tls = str(d.get("tls", "no"))
     if tls not in ("no", "yes", "insecure"):
         raise ValueError("TLS: no, yes или insecure")
+    if str(d.get("pass", "")) == "" and pw:   # прежний пароль — только тому же брокеру и не открытым текстом вместо TLS
+        sch = lambda t: "mqtts" if t != "no" else "mqtt"
+        keep_secret("%s://%s:%s" % (sch(old.get("MQTT_TLS", "no")), old.get("MQTT_HOST", ""), old.get("MQTT_PORT", "1883")),
+                    "%s://%s:%s" % (sch(tls), host, port), "пароль брокера MQTT")
     prefix = str(d.get("prefix", "homeassistant")).strip() or "homeassistant"
     if not re.match(r"^[a-z0-9_/-]{1,40}$", prefix):
         raise ValueError("префикс discovery: латиница, цифры, _ - /")
@@ -147,6 +151,8 @@ def api_hooks_set(h, d):
         hdr = ""
     elif not hdr:
         hdr = k.get("HOOK_HEADER", "")
+        if hdr:
+            keep_secret(k.get("HOOK_URL", ""), hook, "заголовок вебхука")
     if hdr and not re.match(r"^[A-Za-z0-9-]{1,64}: [ -~]{1,400}$", hdr) or re.search(r"[\"\\$`]", hdr):
         raise ValueError("заголовок: «Имя: значение», латиница, без кавычек, \\, $ и `")
     ntfy = str(d.get("ntfy", "")).strip()
@@ -157,6 +163,8 @@ def api_hooks_set(h, d):
         tok = ""
     elif not tok:
         tok = k.get("NTFY_TOKEN", "")
+        if tok:
+            keep_secret(k.get("NTFY_URL", ""), ntfy, "токен ntfy")
     if tok and not re.match(r"^[A-Za-z0-9_.-]{1,128}$", tok):
         raise ValueError("токен ntfy: латиница, цифры, _ . -")
     for key, v in (("HOOK_URL", hook), ("HOOK_HEADER", hdr), ("NTFY_URL", ntfy), ("NTFY_TOKEN", tok)):

@@ -35,9 +35,9 @@ printf 'LISTS_MODE=blocked\n' >> "$DD/awg.env"
 ck "blocked: список скачан, мусор, частные сети и ошибки формата отброшены" 'grep -q "✔ список заблокированного: 151 сетей" $T/o && ! grep -q "10.0.0.0" "$DD/lists/blocked.cidr" && grep -qx "198.51.100.7" "$DD/lists/blocked.cidr" && [ "$(stat -c %a "$DD/lists")" = 700 ]' || cat $T/o
 ck "blocked: набор AWG_LIST загружен" '[ "$(grep -c . "$STUB/ipset-AWG_LIST")" = 151 ]'
 "$G" apply
-ck "blocked: под PBR через туннель только список (метка снимается для остального)" 'cx | grep -q -- "-m mark --mark 0x6a0000/0x7e0000 -m set ! --match-set AWG_LIST dst -j MARK --set-xmark 0x0/0x7e0000"'
+ck "blocked: под PBR через туннель только список (метка снимается для остального)" 'cx | grep -q -- "-m mark --mark 0x6a0000/0x7e0000 -m set ! --match-set AWG_LIST dst -m set ! --match-set AWG_KEEP dst -j MARK --set-xmark 0x0/0x7f0000"'
 printf 'TUN_DOMAINS="openai.com"\n' >> "$DD/awg.env"; "$G" apply
-ck "blocked + домены через туннель: домены не теряют туннель" 'cx | grep -q -- "! --match-set AWG_LIST dst -m set ! --match-set AWG_DOM dst"'
+ck "blocked + домены через туннель: домены не теряют туннель (AWG_DOM в AWG_KEEP)" 'grep -qx AWG_DOM "$STUB/ipset-AWG_KEEP"'
 sed -i '/^TUN_DOMAINS=/d' "$DD/awg.env"
 cp "$DD/lists/blocked.cidr" $T/keep; printf '<html>blocked</html>\n' > "$T/srv/allyouneed.lst"
 ck "плохой ответ источника — прежний список остаётся" '! "$L" update --force > $T/o2 2>&1; grep -q "остаётся прежний" $T/o2 && cmp -s $T/keep "$DD/lists/blocked.cidr"'
@@ -47,7 +47,7 @@ sed -i 's/^LISTS_MODE=.*/LISTS_MODE=geoip/' "$DD/awg.env"; printf 'GEO_COUNTRIES
 ck "geoip: напрямую недоступно — скачано через туннель" 'grep -q "curl awgmain .*ru.cidr" "$STUB/curl.log" && grep -q "✔ RU: 6" $T/o3 && grep -q "✔ CN: 6" $T/o3'
 ck "geoip: страна с ответом-не-списком пропущена" 'grep -q "✘ ZZ" $T/o3 && [ "$(grep -c . "$STUB/ipset-AWG_GEO")" = 12 ]'
 rm -f "$STUB/direct_down"; "$G" apply
-ck "geoip: адреса стран — напрямую (метка снимается), остальное через туннель" 'cx | grep -q -- "-m mark --mark 0x6a0000/0x7e0000 -m set --match-set AWG_GEO dst -j MARK --set-xmark 0x0/0x7e0000" && ! cx | grep -q AWG_LIST'
+ck "geoip: адреса стран — напрямую (метка снимается), остальное через туннель" 'cx | grep -q -- "-m mark --mark 0x6a0000/0x7e0000 -m set --match-set AWG_GEO dst -m set ! --match-set AWG_KEEP dst -j MARK --set-xmark 0x0/0x7f0000" && ! cx | grep -q AWG_LIST'
 mkdir -p "$DD/route.d"; printf 'RAIL_IF="wgclt2"\nMARK="0x6c0000/0x7e0000"\nTABLE="179"\nTUNNELS="awgmain"\n' > "$DD/route.d/iot.env"; "$G" apply
 ck "geoip: и для дополнительного маршрута (умный дом на своём профиле)" 'cx | grep -q -- "-m mark --mark 0x6c0000/0x7e0000 -m set --match-set AWG_GEO dst"'
 "$G" check > $T/c
@@ -61,5 +61,37 @@ date +%s > "$DD/lists/geo.ts"
 ck "due: страны поменялись — пора, хоть кэш и свежий" '! "$L" due && sed -i "s/^GEO_COUNTRIES=.*/GEO_COUNTRIES=\"ru by\"/" "$DD/awg.env" && "$L" due'
 "$L" json > $T/j
 ck "json: разбирается, видно расхождение со странами" 'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d[\"mode\"]==\"geoip\" and d[\"sets\"][\"geo\"][\"set\"]==12 and d[\"sets\"][\"geo\"][\"stale\"] and d[\"due\"]" $T/j' || cat $T/j
+( flock 8; sleep 2 ) 8>"$DD/lists/.lock" & LP=$!; sleep 0.3
+ck "второе обновление при идущем первом — пропускается" '"$L" update | grep -q "уже идёт"'
+wait $LP
+# маршрута UniFi «весь интернет» нет — режим ни на что не влияет: панель и check предупреждают
+ck "full: цепочки UniFi нет — не знаем (-1), не предупреждаем" '[ "$("$L" full)" = -1 ]'
+iptables -t mangle -N UBIOS_PREROUTING_PBR
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_dn_1 dst -j MARK --set-xmark 0x6a0000/0x7e0000
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_9 src -j MARK --set-xmark 0x1a0000/0x7e0000
+"$G" check > $T/c2; "$L" json > $T/j2; "$L" status > $T/s2
+ck "full: только маршруты по доменам — 0 и предупреждение (check, status, json)" '[ "$("$L" full)" = 0 ] && grep -q "WARN   списки: в UniFi нет маршрута PBR" $T/c2 && grep -q "нет маршрута PBR" $T/s2 && python3 -c "import json,sys; assert json.load(open(sys.argv[1]))[\"full\"]==0" $T/j2'
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_13 src -m set ! --match-set UBIOS_local_network dst -j MARK --set-xmark 0x6c0000/0x7e0000
+"$G" check > $T/c3
+ck "full: маршрут на весь интернет (кроме локальных сетей) для профиля route.d — считается, предупреждения нет" '[ "$("$L" full)" = 1 ] && ! grep -q "нет маршрута PBR" $T/c3'
+# явные маршруты UniFi по доменам/адресам остаются в туннеле и при GeoIP (их IPv4-наборы — в AWG_KEEP), чужие метки и
+# отрицания не в счёт; изменения маршрутов UniFi подхватываются (сверка раз в 60 с)
+for n in UBIOS4trafficroute_dn_1 UBIOS4trafficroute_dn_13 UBIOS4trafficroute_ip_9 UBIOS4trafficroute_dn_2; do ipset create $n hash:ip; done
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_dn_2 dst -j MARK --set-xmark 0x1a0000/0x7e0000
+rm -f "$AWG_RUN/awg-guard.keep.ts"; "$G" apply
+ck "GeoIP: наборы маршрутов UniFi с нашей меткой — в AWG_KEEP, чужая метка и «кроме» (отрицание) — нет" 'grep -qx UBIOS4trafficroute_dn_1 "$STUB/ipset-AWG_KEEP" && ! grep -q -e trafficroute_dn_2 -e local_network "$STUB/ipset-AWG_KEEP"'
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_ip_9 dst -j MARK --set-xmark 0x6a0000/0x7e0000
+"$G" run > /dev/null 2>&1 & GP=$!; sleep 3
+ck "GeoIP: служба не перечитывает маршруты UniFi каждые 5 с — новый подхватывается при сверке раз в 60 с" '! grep -qx UBIOS4trafficroute_ip_9 "$STUB/ipset-AWG_KEEP"'
+echo 1 > "$AWG_RUN/awg-guard.keep.ts"; sleep 6; kill -TERM $GP; wait $GP 2>/dev/null
+ck "GeoIP: …и подхвачен при сверке" 'grep -qx UBIOS4trafficroute_ip_9 "$STUB/ipset-AWG_KEEP"'
+# маршрут UniFi «весь интернет» с Kill Switch (как на роутере): метка 0x6b0000/0x7f0000, DNS к роутеру помечен и отбрасывается
+iptables -t mangle -A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set ! --match-set UBIOS_local_network dst -j MARK --set-xmark 0x6b0000/0x7f0000
+iptables -t mangle -A UBIOS_PREROUTING_PBR -p udp -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_local_network dst -m udp --dport 53 -j MARK --set-xmark 0x6b0000/0x7f0000
+ipset create UBIOS4local_network hash:net
+"$G" apply
+ck "Kill Switch: маршрут «весь интернет» с флагом 0x10000 узнаётся (full = 2: он и route.d)" '[ "$("$L" full)" = 2 ]'
+ck "Kill Switch: флаг 0x10000 снимается с пакета и с метки соединения (метки — как без Kill Switch, DNS не отбрасывается)" 'cx | grep -q -- "-m mark --mark 0x6b0000/0x7f0000 -j CONNMARK --set-xmark 0x0/0x10000" && cx | grep -q -- "-m mark --mark 0x6b0000/0x7f0000 -j MARK --set-xmark 0x0/0x10000" && cx | grep -q -- "-m mark --mark 0x6d0000/0x7f0000 -j MARK --set-xmark 0x0/0x10000"'
+ck "Kill Switch: снятие флага — первым, до GeoIP; набор «локальные сети» не попадает в AWG_KEEP" '[ "$(cx | grep -n -- "0x6b0000/0x7f0000" | head -1 | cut -d: -f1)" -lt "$(cx | grep -n AWG_GEO | head -1 | cut -d: -f1)" ] && ! grep -q local_network "$STUB/ipset-AWG_KEEP"'
 echo "== lists: ошибок $fails"
 [ $fails = 0 ]

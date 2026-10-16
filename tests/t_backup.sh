@@ -95,5 +95,15 @@ ck "timer: еженедельно, юниты в systemd" 'grep -q "^OnCalendar=
 conf no 7 no "" "$T/vps/bk" 14 no
 "$B" timer >/dev/null
 ck "timer: выключено — юниты убраны" '[ ! -e "$SYSD/awg-backup.timer" ] && [ ! -e "$SYSD/awg-backup.service" ]'
+# --- восстановление: в копии только обычные файлы с именами из набора (ссылка или «../» вывели бы запись за пределы $DD)
+E=$T/evil; mkdir -p "$E/src/web" "$T/outside"
+printf 'MAIN=awgmain\n' > "$E/src/awg.env"; printf '{}' > "$E/src/web/labels.json"
+( cd "$E/src" && tar czf "$E/good.tgz" awg.env web/labels.json )
+ln -s "$T/outside" "$E/src/lnk"; ( cd "$E/src" && tar czf "$E/link.tgz" awg.env lnk )
+( cd "$E/src" && tar czf "$E/dots.tgz" --transform 's#^web/labels.json#../escaped.json#' awg.env web/labels.json )
+cp "$DD/awg.env" "$E/awg.env.before"
+ck "восстановление: копия со ссылкой отклонена, ничего не распаковано" '! "$B" restore "$E/link.tgz" >/dev/null 2>&1 && [ ! -e "$DD/lnk" ] && cmp -s "$DD/awg.env" "$E/awg.env.before"'
+ck "восстановление: копия с «../» отклонена" '! "$B" restore "$E/dots.tgz" >/dev/null 2>&1 && [ ! -e "$T/escaped.json" ] && [ ! -e "$DD/../escaped.json" ]'
+ck "восстановление: обычная копия принимается" '"$B" restore "$E/good.tgz" >/dev/null 2>&1 && [ -f "$DD/web/labels.json" ] && grep -qx "MAIN=awgmain" "$DD/awg.env"'
 echo "== backup: ошибок $fails"
 [ $fails = 0 ]

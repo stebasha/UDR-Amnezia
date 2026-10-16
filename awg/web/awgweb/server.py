@@ -75,6 +75,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def body(self):
         n = int(self.headers.get("Content-Length") or 0)
+        if n < 0:
+            raise ApiError(400, "неверная длина запроса")
         if n > 3 * 1024 * 1024:
             raise ApiError(413, "слишком большой запрос")
         raw = self.rfile.read(n) if n else b"{}"
@@ -198,7 +200,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         users = load_users()
         u = str(d.get("user", ""))
         rec = users.get(u)
-        ok = bool(rec) and check_pw(rec, str(d.get("password", "")))
+        # нет такого имени — пароль всё равно проверяется (по случайной записи): по времени ответа имена не подобрать
+        ok = check_pw(rec or dummy_pw(), str(d.get("password", ""))) and bool(rec)
         if ok and rec.get("totp"):
             if not d.get("totp"):
                 return self.send(200, {"need_totp": True})

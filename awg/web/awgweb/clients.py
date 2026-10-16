@@ -32,35 +32,43 @@ def clients():
     names = leases()
     cl = {}
     total = 0
+    priv = {}
     for line in conntrack_lines()[:60000]:
-        if "src=" not in line:
-            continue
-        kv = re.findall(r"(\w+)=(\S+)", line)
-        srcs = [v for k, v in kv if k == "src"]
-        dsts = [v for k, v in kv if k == "dst"]
-        bts = [int(v) for k, v in kv if k == "bytes" and v.isdigit()]
-        mark = next((v for k, v in kv if k == "mark"), "0")
+        # разбор split, а не регулярным выражением: в 2–3 раза быстрее на десятках тысяч соединений
+        srcs, dsts, bts, mark = [], [], 0, "0"
+        for tok in line.split():
+            if tok.startswith("src="):
+                srcs.append(tok[4:])
+            elif tok.startswith("dst="):
+                dsts.append(tok[4:])
+            elif tok.startswith("bytes="):
+                b = tok[6:]
+                if b.isdigit():
+                    bts += int(b)
+            elif tok.startswith("mark="):
+                mark = tok[5:]
         if len(srcs) < 2 or len(dsts) < 2:
             continue
         src, dst, rdst = srcs[0], dsts[0], dsts[1]
-        try:
-            ip = ipaddress.ip_address(src)
-        except ValueError:
-            continue
-        if not ip.is_private or src in own:
-            continue
         tun = taddr.get(rdst, "")
-        try:
-            mm = int(mark)
-        except ValueError:
-            mm = 0
-        marked = mv is not None and mk and (mm & mk) == (mv & mk) and mv != 0
-        if not tun and not marked:
+        if not tun:
+            try:
+                mm = int(mark)
+            except ValueError:
+                mm = 0
+            if not (mv is not None and mk and mv != 0 and (mm & mk) == (mv & mk)):
+                continue
+        if src not in priv:
+            try:
+                priv[src] = ipaddress.ip_address(src).is_private and src not in own
+            except ValueError:
+                priv[src] = False
+        if not priv[src]:
             continue
         total += 1
         c = cl.setdefault(src, {"ip": src, "conns": 0, "bytes": 0, "tunnels": collections.Counter(), "dst": collections.Counter()})
         c["conns"] += 1
-        c["bytes"] += sum(bts)
+        c["bytes"] += bts
         c["tunnels"][tun or "PBR"] += 1
         c["dst"][dst] += 1
     out = []

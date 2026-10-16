@@ -33,15 +33,50 @@ cleanup(){  # убрать правила для подсетей не из сп
     fi
   done
 }
+# Проход повторяется каждые 5 с: одно чтение правил и таблицы за проход, разбор — средствами bash; изменения — только если нужны
+rule_in(){  # rule_in СНИМОК ПРИОРИТЕТ ПОДСЕТЬ ТАБЛИЦА(main | номер) — правило есть
+  local l
+  while IFS= read -r l; do
+    [[ $l =~ ^"$2:"[[:space:]]+"from $3 lookup "([^ ]+) ]] || continue
+    if [ "$4" = main ]; then [ "${BASH_REMATCH[1]}" = main ] && return 0
+    else [ "${BASH_REMATCH[1]%%.*}" = "$4" ] && return 0; fi
+  done <<< "$1"
+  return 1
+}
+cleanup_from(){  # как cleanup, по снимку правил; ip rule del — только если есть что убирать
+  local l p src tbl key keep s n; local -A cnt=()
+  while IFS= read -r l; do
+    read -r p _ src _ tbl _ <<< "$l"
+    [ "$p" = "$P_LOCAL:" ] || [ "$p" = "$P_PBR:" ] || continue
+    cnt["$p $src $tbl"]=$(( ${cnt["$p $src $tbl"]:-0} + 1 ))
+  done <<< "$1"
+  for key in "${!cnt[@]}"; do
+    read -r p src tbl <<< "$key"; n=${cnt[$key]}
+    keep=0
+    for s in $EXTRA_SUBNETS; do [ "$s" = "$src" ] && keep=1; done
+    [ "$p" = "$P_PBR:" ] && [ "${tbl%%.*}" != "$TABLE" ] && keep=0
+    if [ $keep = 0 ]; then
+      while ip -4 rule del from "$src" priority "${p%:}" 2>/dev/null; do :; done
+      [ "$p" = "$P_PBR:" ] && ip -4 route del "$src" table "$TABLE" 2>/dev/null
+    elif [ "$n" -gt 1 ]; then
+      for ((; n>1; n--)); do ip -4 rule del from "$src" priority "${p%:}" 2>/dev/null; done
+    fi
+  done
+}
 apply_body(){
   load
   [ -n "$TABLE" ] && [ "$TABLE" != 0 ] || return 0
-  cleanup
-  local s i
+  local R RT s i o
+  R=$(ip -4 rule show 2>/dev/null) || return 0
+  cleanup_from "$R"
+  [ -n "$EXTRA_SUBNETS" ] || return 0
+  RT=$(ip -4 route show table "$TABLE" 2>/dev/null)
   for s in $EXTRA_SUBNETS; do
-    has_rule "$P_LOCAL" "$s" main || ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2>/dev/null
-    has_rule "$P_PBR" "$s" "${TABLE}[^ ]*" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2>/dev/null
-    i=$(sub_iface "$s")
+    rule_in "$R" "$P_LOCAL" "$s" main || ip -4 rule add from "$s" lookup main suppress_prefixlength 0 priority "$P_LOCAL" 2>/dev/null
+    rule_in "$R" "$P_PBR" "$s" "$TABLE" || ip -4 rule add from "$s" lookup "$TABLE" priority "$P_PBR" 2>/dev/null
+    o=$(ip -4 route show table all to "$s" 2>/dev/null); i=""
+    [[ $o =~ (^|[[:space:]])dev[[:space:]]+([^[:space:]]+) ]] && i=${BASH_REMATCH[2]}
+    [ -n "$i" ] && [[ $'\n'$RT == *$'\n'"$s dev $i "* ]] && continue
     [ -n "$i" ] && ip -4 route replace "$s" dev "$i" table "$TABLE" 2>/dev/null
   done
   return 0
@@ -77,7 +112,8 @@ check(){
   return $rc
 }
 case "${1:-run}" in
-  run)    trap 'exit 0' TERM INT; while :; do apply; sleep 5 & wait $!; done;;
+  run)    STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}<> <(:)       # сигнал — флажок (см. failover.sh)
+          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null; done; exit 0;;
   apply)  apply;;
   remove) load; EXTRA_SUBNETS=""; cleanup;;
   check)  check;;

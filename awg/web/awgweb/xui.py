@@ -73,6 +73,17 @@ def xui_panel(pid, db=None):
     return pid, db["panels"][pid]
 
 
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Переадресация — только на тот же хост и не с https на http: заголовок с API-токеном urllib переносит
+    в новый запрос как есть, и чужой адрес из ответа (или подмена на http) получил бы токен 3x-ui."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        a, b = urllib.parse.urlparse(req.full_url), urllib.parse.urlparse(newurl)
+        if b.hostname != a.hostname or (a.scheme == "https" and b.scheme != "https"):
+            return None          # → HTTPError с кодом переадресации
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def xui_req(method, path, body=None, p=None, timeout=20):
     """Запрос к API 3x-ui: Bearer-токен, ответ {success, msg, obj} → obj; ошибки — понятным ValueError."""
     p = p if p is not None else xui_panel("")[1]
@@ -90,7 +101,8 @@ def xui_req(method, path, body=None, p=None, timeout=20):
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, data=data, method=method, headers=hdr), timeout=timeout, context=ctx) as r:
+        op = urllib.request.build_opener(_SafeRedirect, urllib.request.HTTPSHandler(context=ctx) if ctx else urllib.request.HTTPHandler)
+        with op.open(urllib.request.Request(url, data=data, method=method, headers=hdr), timeout=timeout) as r:
             raw = r.read(4 << 20)
     except urllib.error.HTTPError as ex:
         if ex.code == 401:
@@ -99,6 +111,9 @@ def xui_req(method, path, body=None, p=None, timeout=20):
             raise ValueError("3x-ui: у токена нет прав на это действие (нужна область admin)")
         if ex.code == 404:
             raise ValueError("3x-ui: нет такого пути — проверьте адрес панели вместе с секретным путём (webBasePath) и версию 3x-ui (≥ 3.8.5)")
+        if 300 <= ex.code < 400:
+            raise ValueError("3x-ui: панель переадресует на другой адрес (HTTP %d, %s) — укажите его в настройках панели сами"
+                             % (ex.code, urllib.parse.urlparse(ex.headers.get("Location", "") or "").hostname or "?"))
         raise ValueError("3x-ui: HTTP %d" % ex.code)
     except ssl.SSLError as ex:
         raise ValueError("3x-ui: сертификат не прошёл проверку (%s) — для самоподписанного включите «без проверки сертификата»" % ex.reason)
@@ -312,7 +327,10 @@ def api_xui_set(h, d):
         url = str(d.get("url", "")).strip().rstrip("/")
         if not XUI_URL_RE.match(url):
             raise ValueError("адрес 3x-ui: https://узел:порт/секретный-путь (как в браузере, без /panel)")
-        tok = str(d.get("token", "")).strip() or old.get("token", "")
+        tok = str(d.get("token", "")).strip()
+        if not tok and old.get("token"):
+            keep_secret(old.get("url", ""), url, "API-токен 3x-ui")
+            tok = old["token"]
         if not XUI_TOKEN_RE.match(tok):
             raise ValueError("API-токен 3x-ui: возьмите в 3x-ui («Учетная запись → Токен API», область admin) и вставьте целиком")
         host = str(d.get("host", "")).strip()

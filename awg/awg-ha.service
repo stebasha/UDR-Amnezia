@@ -6,6 +6,7 @@ After=awg-failover.service network-online.target
 ExecStart=/usr/bin/env python3 /data/awg/ha.py
 Restart=always
 RestartSec=10
+Nice=5
 # остановка systemd (SIGTERM) — штатное завершение
 SuccessExitStatus=143 SIGTERM
 

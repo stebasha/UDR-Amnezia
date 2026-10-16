@@ -1287,7 +1287,7 @@
       const kv = (rows) => el('dl', { class: 'kv' }, rows.map(([k, v]) => [el('dt', null, k), el('dd', null, v)]));
       replace(info, kv([[T('Модель'), h.model], [T('Ядро'), h.kernel_ver], [T('Без перезагрузки'), fmtDur(h.uptime)], [T('Процессов'), String(h.nproc)],
         [T('Своп'), h.mem.swap_total_mb ? h.mem.swap_used_mb + ' / ' + h.mem.swap_total_mb + T(' МБ') : T('нет')],
-        [T('OOM за сутки'), h.kernel.oom < 0 ? '—' : String(h.kernel.oom)], [T('Ошибки ввода-вывода за сутки'), h.kernel.io < 0 ? '—' : String(h.kernel.io)]].concat(
+        [T('OOM за сутки'), h.kernel.oom < 0 ? '—' : String(h.kernel.oom_sys == null ? h.kernel.oom : h.kernel.oom_sys) + (h.kernel.oom > (h.kernel.oom_sys == null ? h.kernel.oom : h.kernel.oom_sys) ? ' ' + T('(ещё в пределах лимита служб: ') + (h.kernel.oom - h.kernel.oom_sys) + ')' : '')], [T('Ошибки ввода-вывода за сутки'), h.kernel.io < 0 ? '—' : String(h.kernel.io)]].concat(
         h.temps.map((t) => [t.name, Math.round(t.c) + '°C']))));
       replace(disks, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Раздел')), el('th', { class: 'r' }, T('Свободно')), el('th', null, T('Занято')))),
         el('tbody', null, h.disks.map((d) => el('tr', null, el('td', null, el('span', { class: 'mono' }, d.path)), el('td', { class: 'r nowrap' }, fmtMB(d.free_mb)),
@@ -1344,10 +1344,15 @@
     QUALITY_LOSS: { t: 'num', unit: '%', hint: T('Потери пакетов, при которых канал считается плохим.') },
     QUALITY_RTT: { t: 'num', unit: T('мс'), hint: T('Порог задержки; 0 — не учитывать.') },
     MIN_DWELL: { t: 'num', unit: T('с'), hint: T('Пауза после переключения, чтобы каналы не «прыгали».') },
+    CHECK_RX_MIN: { t: 'num', unit: T('байт'), hint: T('Если из туннеля за проход (5 с) пришло столько данных, канал жив без отдельного запроса HTTPS. 0 — проверять всегда.') },
+    CHECK_MAX_AGE: { t: 'num', unit: T('с'), hint: T('Даже при живом трафике настоящая проверка HTTPS — не реже этого.') },
+    RECHECK_AFTER: { t: 'num', unit: T('с'), hint: T('Приоритетный канал, который не отвечает дольше этого, проверяется реже: проверка мёртвого туннеля не тормозит слежение за рабочим.') },
+    RECHECK_SLOW: { t: 'num', unit: T('с'), hint: T('Как часто тогда проверять недоступный канал. Возврат на него запаздывает не больше чем на это время.') },
+    RECHECK_MAX: { t: 'num', unit: T('с'), hint: T('Как часто проверять канал, недоступный дольше 10 минут.') },
     EXTRA_SUBNETS: { t: 'list', ph: '192.168.3.0/24', hint: T('Подсети VPN-сервера на роутере (WireGuard / L2TP / OpenVPN): их клиенты тоже идут через туннель.') },
-    TUN_DOMAINS: { t: 'list', ph: 'youtube.com\ngooglevideo.com', hint: T('Сайты, которые открываются через туннель для всей LAN (или выбранных клиентов) без PBR. Поддомены включаются. Клиенты должны спрашивать DNS у роутера.') },
-    TUN_CLIENTS: { t: 'list', ph: '192.168.1.50\n192.168.1.0/28', hint: T('Для кого действуют домены через туннель. Пусто — вся LAN.') },
-    DIRECT_DOMAINS: { t: 'list', ph: 'gosuslugi.ru\nsberbank.ru', hint: T('Устройства под PBR откроют эти сайты напрямую, мимо туннеля.') },
+    TUN_DOMAINS: { t: 'list', ph: 'youtube.com\nkinopoisk.ru', hint: T('Сайты через туннель — даже из выбранных стран в режиме «Всё, кроме стран». Без маршрута PBR действуют для всей LAN и клиентов VPN-сервера роутера (или только для клиентов ниже). Поддомены включаются. Устройства должны спрашивать DNS у роутера.') },
+    TUN_CLIENTS: { t: 'list', ph: '192.168.1.50\n192.168.1.0/28', hint: T('Для кого «Сайты через туннель» действуют без маршрута PBR. Пусто — вся LAN и клиенты VPN-сервера роутера.') },
+    DIRECT_DOMAINS: { t: 'list', ph: 'gosuslugi.ru\nexample.com', hint: T('Сайты напрямую, мимо туннеля, — даже иностранные. Действует для всего, что идёт в туннель по маршрутам UniFi (домашняя сеть и клиенты VPN-сервера). Поддомены включаются. Устройства должны спрашивать DNS у роутера. Если сайт указан и здесь, и в «через туннель» — идёт напрямую.') },
     DIRECT_SUBNETS: { t: 'list', ph: '95.173.128.0/19', hint: T('Адреса и подсети, куда устройства под PBR ходят напрямую.') },
     LEAK_GUARD: { t: 'bool', hint: T('Запрет выхода трафика PBR-устройств в WAN мимо туннеля — вторая линия защиты после blackhole.') },
     LEAK_V6: { t: 'choice', opts: [['block', T('Блокировать')], ['route', T('Через туннель')], ['off', T('Не трогать')]], hint: T('IPv6 устройств под PBR: «Блокировать» (по умолчанию) — устройства идут по IPv4 через туннель; «Через туннель» — IPv6 тоже идёт через туннель, если сервер выдал туннелю IPv6-адрес (иначе отклоняется); «Не трогать» — IPv6 идёт мимо туннеля.') },
@@ -1431,9 +1436,8 @@
     replace(body,
       el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Какие устройства идут через туннель, задаётся в UniFi Network: Settings → Routing → Policy-Based Routes (профиль '), el('b', null, p.RAIL_IF || '—'), T('). Здесь — то, что работает поверх: домены, исключения, защита от утечек.'))),
       pbr,
-      settingsForm(T('Домены через туннель'), 'globe', ['TUN_DOMAINS', 'TUN_CLIENTS'], d),
-      settingsForm(T('Исключения: напрямую мимо туннеля'), 'link', ['DIRECT_DOMAINS', 'DIRECT_SUBNETS'], d),
-      settingsForm(T('Списки и GeoIP'), 'layers', ['LISTS_MODE', 'GEO_COUNTRIES', 'LIST_URLS'], d, listsStatus()),
+      // всё, что решает «туннель или напрямую», — в одной форме: режим, страны и исключения в обе стороны
+      settingsForm(T('Списки, GeoIP и исключения'), 'layers', ['LISTS_MODE', 'GEO_COUNTRIES', 'DIRECT_DOMAINS', 'TUN_DOMAINS', 'DIRECT_SUBNETS', 'TUN_CLIENTS', 'LIST_URLS'], d, listsStatus()),
       settingsForm(T('Защита от утечек'), 'shield', ['LEAK_GUARD', 'LEAK_V6'], d),
       settingsForm(T('DNS устройств'), 'search', ['DNS_INTERCEPT', 'DNS_CLIENTS', 'DNS_BLOCK_DOT', 'DNS_ALL_TUNNEL'], d),
       settingsForm(T('VPN-сервер роутера'), 'users', ['EXTRA_SUBNETS'], d),
@@ -1666,6 +1670,8 @@
       add(body, [
         settingsForm(T('Переключение каналов'), 'switch', ['RECOVER_SEC', 'QUALITY', 'QUALITY_LOSS', 'QUALITY_RTT', 'MIN_DWELL'], d,
           el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Сторож проверяет каналы каждые несколько секунд (HTTPS к 1.1.1.1, 8.8.8.8, 9.9.9.9). При падении активного — уходит на следующий по приоритету; на основной возвращается после стабильной работы.')))),
+        settingsForm(T('Экономия ресурсов роутера'), 'cpu', ['CHECK_RX_MIN', 'CHECK_MAX_AGE', 'RECHECK_AFTER', 'RECHECK_SLOW', 'RECHECK_MAX'], d,
+          el('div', { class: 'alert info' }, icon('info'), el('div', null, T('Значения по умолчанию подходят почти всем: меньше запросов через туннели и процессов на роутере без потери скорости переключения.')))),
         settingsForm(T('Мониторинг'), 'activity', ['METRICS_PORT'], d)]);
     } catch (e) { err(e); }
   }
@@ -2670,7 +2676,9 @@
       if (r.log) paint(log, r.log);
       const showLog = el('button', { class: 'btn sm ghost' + (r.log ? '' : ' hidden') }, T('Журнал'));
       showLog.addEventListener('click', () => log.classList.toggle('hidden'));
-      replace(box,
+      // режим только сужает то, что UniFi уже ведёт в туннель: без маршрута «весь интернет» он ни на что не влияет
+      const nofull = st.full === 0 ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, T('В UniFi нет маршрута PBR на весь трафик в туннель: сейчас через туннель идут только домены и адреса из маршрутов UniFi, и этот режим ни на что не влияет (сайты вроде ifconfig.me покажут ваш IP). Создайте в UniFi маршрут по политике: устройства (или сеть) → VPN-клиент, назначение — весь интернет, Kill Switch UniFi не включать (его заменяет сторож, а DNS он ломает).'))) : null;
+      replace(box, nofull,
         el('div', { class: 'row' }, badge, el('span', { class: 'small' }, what, el('b', null, String(x.set || 0))),
           el('span', { class: 'small muted' }, T('обновлено: ') + (x.age >= 0 ? fmtAge(x.age) : T('никогда'))),
           x.stale && x.age >= 0 ? el('span', { class: 'badge warn' }, T('собрано для прежних настроек')) : null, go, showLog),

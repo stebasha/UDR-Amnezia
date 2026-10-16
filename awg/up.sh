@@ -47,7 +47,7 @@ bring_up(){
   conf=$(conf_of "$n")
   [ -z "$conf" ] && { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
-  raw=/run/$n.raw; tmp=/run/$n.awg.conf
+  raw=${AWG_RUN:-/run}/$n.raw; tmp=${AWG_RUN:-/run}/$n.awg.conf
   sed 's/\r$//' "$conf" > "$raw"
   # Address и MTU утилита awg не понимает: берём их сами, из Address только IPv4
   addr=$(awk -F'=' 'tolower($1) ~ /^[ \t]*address[ \t]*$/ {print $2; exit}' "$raw" | tr ',' '\n' | tr -d ' \t' | grep -m1 '\.')
@@ -66,7 +66,16 @@ bring_up(){
   resolve_endpoint "$tmp" "$n"
 
   ip link show "$n" >/dev/null 2>&1 && ip link del "$n"
-  ./amneziawg-go "$n" >/dev/null 2>&1
+  # amneziawg-go — в собственной группе процессов (scope systemd), а не в группе службы, которая поднимает туннель
+  # (сторож, панель, маршрут): иначе перезапуск этой службы (смена настроек, обновление) убивал процесс, интерфейс
+  # пропадал и туннель лежал, пока сторож не поднимет его заново.
+  if { [ -n "${AWG_FORCE_SCOPE:-}" ] || { [ "${EUID:-1}" = 0 ] && [ -d /run/systemd/system ]; }; } && [ -z "${AWG_NO_SCOPE:-}" ] \
+     && command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --scope --quiet --collect --description="AmneziaWG $n" "$DD/amneziawg-go" "$n" >/dev/null 2>&1 \
+      || { ip link show "$n" >/dev/null 2>&1 || ./amneziawg-go "$n" >/dev/null 2>&1; }
+  else
+    ./amneziawg-go "$n" >/dev/null 2>&1
+  fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" >/dev/null 2>&1 && break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then
     echo "ОШИБКА: awg setconf $n (строка, которую awg не понял, указана выше)"

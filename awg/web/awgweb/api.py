@@ -105,7 +105,7 @@ def api_tunnel_restart(h, d):
     t = get_tunnel(str(d.get("name", "")))
     h.act("restart-tunnel", t)
     with LOCK:
-        rc, out = run([os.path.join(DD, "up.sh"), t], timeout=60)
+        rc, out = up_tunnel(t)
     return {"ok": rc == 0, "msg": out.strip()}
 
 
@@ -156,7 +156,7 @@ def tunnel_add(name, text, label=""):
             ls = labels()
             ls[name] = lab
             write_secure(LABELS_F, json.dumps(ls, ensure_ascii=False))
-        rc, out = run([os.path.join(DD, "up.sh"), name], timeout=60)
+        rc, out = up_tunnel(name)
         if svc_active("awg-failover"):
             run(["systemctl", "restart", "awg-failover"], timeout=60)
     return rc, out
@@ -254,7 +254,8 @@ def api_settings_set(h, d):
 
 
 def api_services(h, q):
-    return {"services": {u: {"installed": svc_installed(u) or u == "awg-failover", "active": svc_active(u),
+    sv = svc_states(SERVICES)
+    return {"services": {u: {"installed": svc_installed(u) or u == "awg-failover", "active": sv[u],
                              "enabled": u in units_list(), "info": SERVICE_INFO[u],
                              "available": os.path.exists(os.path.join(DD, u + ".service"))} for u in SERVICES}}
 

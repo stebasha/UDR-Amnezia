@@ -28,8 +28,9 @@ ck "ip6tables: REJECT помеченного" 'ip6tables -S AWG_GUARD | grep -q 
 ck "ip6tables: REJECT клиентов VPN-сервера" 'ip6tables -S AWG_GUARD | grep -q -- "-i wgsrv1 -o eth3 -j REJECT"'
 ck "домены: AWG_DOM_PRE первой в PREROUTING" 'iptables -t mangle -S PREROUTING | sed -n 2p | grep -q -- "-j AWG_DOM_PRE"'
 ck "домены: маркировка из br+ по набору" 'iptables -t mangle -S AWG_DOM_PRE | grep -q -- "-i br+ -m set --match-set AWG_DOM dst -j MARK --set-xmark 0x6a0000/0x7e0000"'
+ck "домены: и клиенты VPN-сервера роутера (wgsrv+)" 'iptables -t mangle -S AWG_DOM_PRE | grep -q -- "-i wgsrv+ -m set --match-set AWG_DOM dst -j MARK --set-xmark 0x6a0000/0x7e0000"'
 ck "исключения: AWG_DIRECT_POST последней" 'iptables -t mangle -S PREROUTING | tail -n1 | grep -q -- "-j AWG_DIRECT_POST"'
-ck "исключения: подсеть и набор снимают метку" 'iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "-d 10.99.0.0/16 -j MARK --set-xmark 0x0/0x7e0000" && iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "--match-set AWG_DIRECT dst -j MARK --set-xmark 0x0/0x7e0000"'
+ck "исключения: подсеть и набор снимают метку (и флаг kill switch 0x10000 — иначе blackhole UniFi)" 'iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "-d 10.99.0.0/16 -j MARK --set-xmark 0x0/0x7f0000" && iptables -t mangle -S AWG_DIRECT_POST | grep -q -- "--match-set AWG_DIRECT dst -j MARK --set-xmark 0x0/0x7f0000"'
 ck "наборы ipset созданы" 'grep -qx AWG_DOM $STUB/ipsets && grep -qx AWG_DIRECT $STUB/ipsets'
 n1=$(iptables -S AWG_GUARD | wc -l); $G apply; $G apply
 ck "идемпотентность (число правил не растёт)" '[ "$(iptables -S AWG_GUARD | wc -l)" = "$n1" ] && [ "$(iptables -t mangle -S PREROUTING | grep -c AWG_)" = 2 ]'
@@ -72,6 +73,16 @@ ck "check: DNS в отчёте" 'echo "$out" | grep -q "^OK     DNS устрой
 sed -i 's/^DNS_INTERCEPT=.*/DNS_INTERCEPT=no/' $DD/awg.env; $G apply
 ck "DNS выключен: цепочки убраны" '! iptables -t nat -S PREROUTING | grep -q AWG_ && ! iptables -S FORWARD | grep -q AWG_DNS_FWD && ! ip6tables -S FORWARD | grep -q AWG_DNS_FWD'
 sed -i 's/^DNS_INTERCEPT=.*/DNS_INTERCEPT=yes/' $DD/awg.env; $G apply
+# бюджет процессов (1.8): обычный проход службы (ничего не менялось) — не больше 5 внешних команд (в 1.7.0 — ~50)
+SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
+for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables ipset md5sum flock logger; do
+  printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \
+    "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
+done
+chmod +x $SH/*
+PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
+GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
+ck "guard: обычный проход — не больше 5 внешних команд (проходов $np, команд $ng; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ]'
 $G remove
 ck "remove: цепочек нет" '! iptables -S FORWARD | grep -q AWG_GUARD && ! iptables -t mangle -S PREROUTING | grep -q AWG_ && ! ip6tables -S FORWARD | grep -q AWG_GUARD && ! iptables -t nat -S PREROUTING | grep -q AWG_ && ! iptables -S FORWARD | grep -q AWG_DNS'
 echo "guard: провалов $fails"; rm -rf $T; exit $fails

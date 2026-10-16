@@ -41,6 +41,25 @@ bash "$COMP/failover.sh" forget awgbackup
 ck "forget: правил awgbackup не осталось" '! iptables -t nat -S | grep -q awgbackup && ! iptables -t mangle -S | grep -q awgbackup && ! iptables -S | grep -q awgbackup'
 ck "forget: правила awgmain целы" '[ "$(cnt nat "-A POSTROUTING -o awgmain -j MASQUERADE")" = 1 ]'
 
+# --- сторож (1.8): правила туннеля сверяются по цепочкам POSTROUTING/FORWARD; второй проход ничего не добавляет
+( source <(sed -n '/^iptables(){/p;/^ensure(){/p;/^fw_rules(){/,/^}/p;/^declare -A FWR/,/^}/p' "$COMP/failover.sh")
+  TUNS=(awgq); MARK=0x6a0000/0x7e0000; TABLE=178; PRIO=32504; V6=0
+  prepare; prepare
+  for r in "nat|POSTROUTING -o awgq -j MASQUERADE" "mangle|FORWARD -o awgq -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu" \
+           "filter|FORWARD -i awgq -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"; do
+    [ "$(cnt "${r%%|*}" "-A ${r#*|}")" = 1 ] || exit 1
+  done ) && r=0 || r=1
+ck "сторож: правила туннеля — по одному после двух проходов (сверка по цепочкам)" '[ $r = 0 ]'
+# --- route_ok по формату настоящего роутера (job25): «scope link metric 5 » с пробелом в конце; metric 50 — не metric 5
+( source <(sed -n '/^route_ok(){/,/^}/p' "$COMP/failover.sh")
+  TABLE=178; METRIC=5; TUNS=(awgmain awgbackup)
+  ip(){ printf '%s\n' "${RT[@]}"; }
+  RT=("default dev awgbackup scope link metric 5 " "blackhole default metric 200 "); route_ok awgbackup || exit 1
+  RT=("default dev awgbackup scope link metric 50 " "blackhole default metric 200 "); route_ok awgbackup && exit 2
+  RT=("default dev awgbackup scope link metric 5 " "default dev awgmain scope link metric 7 " "blackhole default metric 200 "); route_ok awgbackup && exit 3
+  RT=("default dev awgbackup scope link metric 5"); route_ok awgbackup && exit 4
+  exit 0 ) && r=0 || r=$?
+ck "сторож: «таблица уже верная» — формат роутера, metric 50 и чужой туннель не считаются (код $r)" '[ $r = 0 ]'
 # --- guard: занятая блокировка не ломает цепочки и не плодит переходы
 bash "$COMP/guard.sh" apply
 ck "guard: один переход в FORWARD" '[ "$(cnt filter "-A FORWARD -j AWG_GUARD")" = 1 ]'
@@ -78,4 +97,40 @@ ck "self: временных цепочек не осталось" '! iptables -
 printf 'TUN_DOMAINS="good.com bad;rm x/y"\n' >> "$DD/awg.env"
 source <(sed -n '/^valid_domain(){/p;/^domains(){/p;/^log(){/p' "$COMP/self.sh")
 ck "self: в файл dnsmasq попадают только корректные домены" '[ "$(domains good.com "bad;rm" x/y | tr "\n" " ")" = "good.com " ]'
+# --- self (1.8): быстрый разбор правил UniFi совпадает с прежним конвейером; время старта процесса — без awk
+cat > "$T/mg" <<'MG'
+-P PREROUTING ACCEPT
+-N UBIOS_PREROUTING_PBR
+-A PREROUTING -j UBIOS_PREROUTING_JUMP
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_trafficroute_clients_13 src -m set --match-set UBIOS_trafficroute_dn_13 dst -m comment --comment 00000001095216670481 -j MARK --set-xmark 0x6c0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_ip_6 dst -m comment --comment 00000001095216670482 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_ip_6 dst -j RETURN
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_trafficroute_dn_1 dst -m comment --comment 00000001095216670484 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_networkv6 src -m set --match-set UBIOS_trafficroute_dn_1 dst -m comment --comment 00000001095216670499 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m mac --mac-source aa:bb:cc:dd:ee:ff -m comment --comment 1 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -i br20 -m comment --comment 2 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -s 192.168.1.50/32 -m comment --comment 3 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -d 203.0.113.0/24 -m comment --comment 4 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m comment --comment 5 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set ! --match-set UBIOS_local_network dst -m comment --comment 6 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src ! -d 192.168.0.0/16 -m comment --comment 7 -j MARK --set-xmark 0x6a0000/0x7e0000
+-A UBIOS_PREROUTING_PBR -m set --match-set UBIOS_local_network src -m set ! --match-set UBIOS_local_network dst -m comment --comment 8 -j MARK --set-xmark 0x6b0000/0x7f0000
+-A UBIOS_PREROUTING_PBR -p udp -m set --match-set UBIOS_local_network src -m set --match-set UBIOS_local_network dst -m udp --dport 53 -m comment --comment 9 -j MARK --set-xmark 0x6b0000/0x7f0000
+MG
+mkdir -p "$T/mgbin"; printf '#!/bin/bash\ncat "%s/mg"\n' "$T" > "$T/mgbin/iptables"; chmod 755 "$T/mgbin/iptables"
+source <(sed -n '/^want(){/,/^}/p;/^want_from(){/,/^}/p;/^pstart(){/,/^}/p;/^pstart_v(){/,/^}/p' "$COMP/self.sh")
+old_w=$(PATH="$T/mgbin:$PATH"; want); want_from "$(cat "$T/mg")"
+ck "self: want_from совпадает с want; маршрут UniFi «весь интернет» на трафик роутера не переносится" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ] && ! printf "%s\n" "$W" | grep -q -e "^-j MARK" -e "! --match-set" -e "! -d" -e "UBIOS_local_network dst"' || printf '%s\n---\n%s\n' "$old_w" "$W"
+HZ=$(getconf CLK_TCK); pstart_v pv $$
+ck "self: время старта процесса — как у прежнего pstart" '[ "$pv" = "$(pstart $$)" ]'
+# --- awg-self (1.8): бюджет внешних команд в обычном проходе службы (в 1.7.0 — ~58)
+SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
+for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables ipset md5sum flock logger getent pidof ss dnsmasq; do
+  printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \
+    "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
+done
+chmod +x $SH/*
+PATH=$SH:$PATH bash "$COMP/self.sh" run > /dev/null 2>&1 &
+SP=$!; sleep 3; : > $CNT; sleep 10; ns=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $SP; wait $SP 2>/dev/null
+ck "self: обычный проход — не больше 6 внешних команд (проходов $np, команд $ns; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ns" -le $((6 * np)) ]'
 echo "fw: провалов $fails"; [ $fails = 0 ]

@@ -26,7 +26,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.7.0
+INSTALLER_VERSION=1.8.0
 # Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
 #   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
 #   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
@@ -72,6 +72,8 @@ if [ -t 1 ] && [ -z "$NO_COLOR" ]; then
 else G='' R='' Y='' C='' B='' D='' N=''; fi
 say(){ printf '%s\n' "$*"; }
 ilog(){ [ -d "$DD" ] && printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$ILOG" 2>/dev/null; return 0; }
+# журнал установки растёт с каждым обновлением: больше 256 КБ — оставить последние 2000 строк
+[ -f "$ILOG" ] && [ "$(stat -c %s "$ILOG" 2>/dev/null || echo 0)" -gt 262144 ] && { tail -n 2000 "$ILOG" > "$ILOG.t" && mv -f "$ILOG.t" "$ILOG"; } 2>/dev/null
 ok(){ say "  ${G}✔${N} $*"; ilog "OK   $*"; }
 warn(){ say "  ${Y}▲${N} $*"; ilog "WARN $*"; }
 err(){ say "  ${R}✖${N} $*"; ilog "ERR  $*"; }
@@ -323,7 +325,7 @@ resolve_ref(){
   [ -n "$AWG_REF" ] && return 0
   case "$AWG_CHANNEL" in
     stable)
-      AWG_REF=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$AWG_REPO/releases/latest" 2>/dev/null \
+      AWG_REF=$(curl -fsSL --proto =https --proto-redir =https -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$AWG_REPO/releases/latest" 2>/dev/null \
         | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
       if [ -n "$AWG_REF" ] && valid_ref "$AWG_REF"; then AWG_REF_KIND=tag
       else warn "релиз в $AWG_REPO не найден (или GitHub API недоступен) — беру ветку main"; AWG_REF=main; AWG_REF_KIND=branch; fi;;
@@ -337,14 +339,14 @@ fetch_kit_archive(){  # fetch_kit_archive ФАЙЛ — релиз: архив + 
   local out=$1 base name want have
   if [ "$AWG_REF_KIND" = tag ]; then
     base="https://github.com/$AWG_REPO/releases/download/$AWG_REF"; name="udr-amnezia-$AWG_REF.tar.gz"
-    curl -fsSL -m 120 "$base/$name" -o "$out" || { err "нет архива $name в релизе $AWG_REF"; return 1; }
-    want=$(curl -fsSL -m 30 "$base/SHA256SUMS" 2>/dev/null | awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}')
+    curl -fsSL --proto =https --proto-redir =https -m 120 "$base/$name" -o "$out" || { err "нет архива $name в релизе $AWG_REF"; return 1; }
+    want=$(curl -fsSL --proto =https --proto-redir =https -m 30 "$base/SHA256SUMS" 2>/dev/null | awk -v n="$name" '$2==n || $2=="*"n {print $1; exit}')
     have=$(sha256sum "$out" | cut -d' ' -f1)
     [ -n "$want" ] || { err "в релизе $AWG_REF нет SHA256SUMS для $name: архив не устанавливаю"; rm -f "$out"; return 1; }
     [ "$want" = "$have" ] || { err "контрольная сумма архива НЕ совпала (ожидалась $want, получена $have): не устанавливаю"; rm -f "$out"; return 1; }
     ok "контрольная сумма архива релиза совпала"
   else
-    curl -fsSL -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_REF.tar.gz" -o "$out"
+    curl -fsSL --proto =https --proto-redir =https -m 120 "https://github.com/$AWG_REPO/archive/refs/heads/$AWG_REF.tar.gz" -o "$out"
   fi
 }
 write_channel(){
@@ -485,9 +487,9 @@ bins_ver(){  # bins_ver amneziawg-go|awg — тег установленной �
 }
 bins_latest(){  # bins_latest amneziawg-go|amneziawg-tools — последний релиз (или самый свежий тег) в github.com/amnezia-vpn
   local r=$1 tag
-  tag=$(curl -fsSL -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$r/releases/latest" 2>/dev/null \
+  tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/amnezia-vpn/$r/releases/latest" 2>/dev/null \
     | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
-  [ -n "$tag" ] || tag=$(curl -fsSL -m 20 "https://api.github.com/repos/amnezia-vpn/$r/tags?per_page=30" 2>/dev/null \
+  [ -n "$tag" ] || tag=$(curl -fsSL --proto =https --proto-redir =https -m 20 "https://api.github.com/repos/amnezia-vpn/$r/tags?per_page=30" 2>/dev/null \
     | sed -n 's/^ *"name": *"\(v[0-9][0-9.]*\)".*/\1/p' | sort -V | tail -n1)
   [[ $tag =~ ^v[0-9][0-9.]*$ ]] && echo "$tag"
 }
@@ -575,7 +577,7 @@ step_bins(){
          case "$url" in https://*) ;; *) err "нужна ссылка https://"; continue;; esac
          if [[ "$url" == *.tar.gz || "$url" == *.tgz ]]; then
            ask sum "SHA-256 архива (64 символа; пусто — без проверки, не рекомендуется)" ""
-           curl -fL -m 300 "$url" -o "$t/b.tgz" || { err "скачать не удалось"; continue; }
+           curl -fL --proto =https --proto-redir =https -m 300 "$url" -o "$t/b.tgz" || { err "скачать не удалось"; continue; }
            if [ -n "$sum" ]; then
              [ "$(sha256sum "$t/b.tgz" | cut -d' ' -f1)" = "${sum,,}" ] && ok "SHA-256 архива совпал" || { err "SHA-256 архива не совпал: файл не устанавливаю"; continue; }
            else yn "Ставить без проверки SHA-256?" N || continue; fi
@@ -586,7 +588,7 @@ step_bins(){
            ask u2 "Ссылка на awg" ""
            ask s1 "SHA-256 amneziawg-go" ""; ask s2 "SHA-256 awg" ""
            [[ "${s1,,}" =~ ^[0-9a-f]{64}$ && "${s2,,}" =~ ^[0-9a-f]{64}$ ]] || { err "для прямых ссылок нужны обе суммы SHA-256 (64 шестнадцатеричных символа)"; continue; }
-           curl -fL -m 300 "$url" -o "$t/amneziawg-go" && curl -fL -m 300 "$u2" -o "$t/awg" || { err "скачать не удалось"; continue; }
+           curl -fL --proto =https --proto-redir =https -m 300 "$url" -o "$t/amneziawg-go" && curl -fL --proto =https --proto-redir =https -m 300 "$u2" -o "$t/awg" || { err "скачать не удалось"; continue; }
            printf '%s  amneziawg-go\n%s  awg\n' "${s1,,}" "${s2,,}" > "$t/SHA256SUMS"
            bins_install_from "$t" && { rm -rf "$t"; return 0; }
          fi;;
@@ -1258,12 +1260,12 @@ do_selfupdate(){
   resolve_ref || die "не удалось определить версию для скачивания"
   base="https://raw.githubusercontent.com/$AWG_REPO/$AWG_REF"
   mkdir -p "$WORK"
-  curl -fsSL -m 60 "$base/install.sh" -o "$tmp" || die "не удалось скачать $base/install.sh"
+  curl -fsSL --proto =https --proto-redir =https -m 60 "$base/install.sh" -o "$tmp" || die "не удалось скачать $base/install.sh"
   bash -n "$tmp" || die "скачанный файл не проходит проверку синтаксиса"
   newv=$(sed -n 's/^INSTALLER_VERSION=//p' "$tmp" | head -n1)
   info "сейчас: $INSTALLER_VERSION, в репозитории: ${newv:-?}"
   have=$(sha256sum "$tmp" | cut -d' ' -f1)
-  want=$(curl -fsSL -m 30 "$base/install.sh.sha256" 2>/dev/null | awk '{print $1; exit}')
+  want=$(curl -fsSL --proto =https --proto-redir =https -m 30 "$base/install.sh.sha256" 2>/dev/null | awk '{print $1; exit}')
   if [ -n "$want" ]; then
     [ "$want" = "$have" ] && ok "контрольная сумма sha256 совпала" || die "контрольная сумма НЕ совпала (ожидалась $want, получена $have): файл не устанавливаю."
   else

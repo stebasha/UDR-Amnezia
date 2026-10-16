@@ -111,7 +111,8 @@ class TG:
                 if doc:
                     cmd += ["-F", "document=@%s" % doc]
                     for k, v in (params or {}).items():
-                        cmd += ["-F", "%s=%s" % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))]
+                        # --form-string: значение, начинающееся с @ или <, curl иначе понял бы как имя файла для отправки
+                        cmd += ["--form-string", "%s=%s" % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))]
                 else:
                     if tmp is None:
                         fd, tmp = tempfile.mkstemp(prefix=".bot-", dir=DD)
@@ -338,7 +339,7 @@ def scr_tunnel(chat, name):
 
 def routes_list():
     try:
-        return [r for r in P.api_routes_get(None, {})["routes"] if r["id"] != "main"]
+        return P.routes_brief(extra_only=True)
     except Exception as ex:
         log("маршруты: %r" % ex)
         return []
@@ -504,9 +505,36 @@ ADMIN_ONLY = ("svc",)
 
 
 # ======================================================================= действия
+JOBS = set()
+JOBS_LOCK = threading.Lock()
+JOBS_MAX = 2          # тяжёлые проверки (диагностика, отчёт, замер) нагружают роутер: не больше двух сразу
+
+
 def run_job(chat, kind, arg=""):
-    """Долгие проверки — в фоне, результат отдельным сообщением."""
+    """Долгие проверки — в фоне, результат отдельным сообщением.
+    Одна и та же проверка не запускается повторно, пока идёт прежняя; всего не больше JOBS_MAX сразу:
+    частые нажатия кнопок не должны размножать diagnose.sh и curl на роутере."""
+    if kind == "test" and arg not in P.tunnels(P.env()):
+        send(chat, "Туннеля %s нет" % esc(arg))
+        return
+    key = (kind, arg)
+    with JOBS_LOCK:
+        if key in JOBS:
+            send(chat, "⏳ Эта проверка уже выполняется — дождитесь результата")
+            return
+        if len(JOBS) >= JOBS_MAX:
+            send(chat, "⏳ Уже идут другие проверки — повторите через минуту")
+            return
+        JOBS.add(key)
+
     def go():
+        try:
+            work()
+        finally:
+            with JOBS_LOCK:
+                JOBS.discard(key)
+
+    def work():
         try:
             if kind == "diag":
                 rc, out = P.run([os.path.join(DD, "diagnose.sh")], timeout=300)
@@ -650,10 +678,19 @@ def on_callback(q):
             edit(chat, mid, "⚠️ " + esc(ex), [[("⚙️ Службы", "m:svc")]])
 
 
+STALE = 600     # команда, отправленная больше 10 минут назад (бот был остановлен, роутер перезагружался), не выполняется
+
+
 def on_message(m):
     chat = str((m.get("chat") or {}).get("id", ""))
     text = (m.get("text") or "").strip()
     if not chat:
+        return
+    d = m.get("date")
+    if isinstance(d, int) and d > 0 and time.time() - d > STALE:
+        log("пропускаю старое сообщение %s (%d мин назад): %s" % (chat, (time.time() - d) // 60, text[:20]))
+        if role(chat) and text.startswith("/"):
+            send(chat, "⏳ Команда «%s» пришла, пока бот был недоступен (%d мин назад), и не выполнена. Повторите её." % (esc(text[:40]), (time.time() - d) // 60))
         return
     r = role(chat)
     if not r:
@@ -805,14 +842,17 @@ def monitor():
     while True:
         time.sleep(60)
         try:
-            h = P.system_health(hist=list(hist))
+            h = P.system_health(hist=list(hist), procs=False)
             hist.append({"t": P.now(), "cpu": h["cpu"], "data_free": P.disk_free_mb()})
             cur = {}
             for c in h["checks"]:
                 if c["level"] in ("warn", "crit"):
                     cur["sys:" + c["key"]] = (c["level"], "%s %s%s" % (LV[c["level"]], c["text"], "\n↳ " + c["advice"] if c["advice"] else ""))
-            for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify", "awg-ha"):
-                if P.svc_installed(u) and u in P.units_list() and not P.svc_active(u):
+            watch = [u for u in ("awg-subnets", "awg-self", "awg-guard", "awg-metrics", "awg-web", "awg-notify", "awg-ha")
+                     if P.svc_installed(u) and u in P.units_list()]
+            sv = P.svc_states(watch) if watch else {}
+            for u in watch:
+                if not sv.get(u):
                     cur["svc:" + u] = ("warn", "🛑 Служба %s остановлена" % u)
             for s in P.env().get("EXTRA_SUBNETS", "").split():
                 rc, out = P.run(["ip", "-4", "route", "show", "table", "all", "to", s], timeout=5)

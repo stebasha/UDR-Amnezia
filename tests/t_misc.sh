@@ -86,6 +86,9 @@ ck "прошивка: первый запуск — только запомни�
 out=$(fw); ck "прошивка: без смены — ничего" '[ -z "$out" ] && [ ! -s "$F/dd/events.log" ]'
 out=$(fw env FWVER=5.1.2)
 ck "прошивка: смена → восстановление, событие с самопроверкой" 'echo "$out" | grep -q "сменилась прошивка" && grep -q "|firmware|прошивка: os=5.0.10 net=10.0.1 → os=5.1.2 net=10.0.1; службы восстановлены; самопроверка: OK: 29" "$F/dd/events.log" && [ "$(cat "$F/dd/.fwver")" = "os=5.1.2 net=10.0.1" ]'
+# два запуска сразу (сторож и on_boot.d после прошивки): восстановление и событие — один раз
+fw env FWVER=5.2.0 FW_SETTLE=1 >/dev/null & fw env FWVER=5.2.0 FW_SETTLE=1 >/dev/null; wait
+ck "прошивка: два запуска одновременно — одно событие" '[ "$(grep -c "→ os=5.2.0" "$F/dd/events.log")" = 1 ]'
 # автокопия (#12): прошивка стёрла таймер — on_boot.d (--if-needed) возвращает его по backup.env
 cp "$COMP/backup.sh" "$COMP/awg-backup.service" "$F/dd/"; printf 'BK_AUTO="daily"\n' > "$F/dd/backup.env"; touch "$F/bashrc"
 out=$(PATH="$F/bin:$PATH" DD=$F/dd SYSD=$F/sys BASHRC=$F/bashrc AWG_BINDIR=$F/nobin bash "$F/dd/awg-restore.sh" --if-needed 2>&1)
@@ -113,4 +116,34 @@ printf '{"ok":true,"result":[{"update_id":7,\n"message":{"message_id":5,"from":{
 ck "бот: chat id разбирается (python3)" '[ "$(bash -c "source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
 ck "бот: chat id разбирается без python3" '[ "$(bash -c "command(){ [ \"\$2\" = python3 ] && return 1; builtin command \"\$@\"; }; source <(sed -n \"/^parse()/,/^}/p\" $COMP/bot.sh); parse < $BJ")" = "7|130181984|/status|message" ]'
 rm -f "$BJ"
+# метрики (1.8): один вызов awg/systemctl/awk на сбор, вывод — как раньше
+MD=$T/mdd; mkdir -p "$MD" "$STUB/hs" "$STUB/svc"; echo 30 > "$STUB/hs/awgmain"; touch "$STUB/svc/awg-failover"
+printf 'MAIN=awgmain\nBACKUP=awgbackup\nTABLE=178\n' > "$MD/awg.env"; ln -sf "$H/stubs5/awg" "$MD/awg"
+printf 'ACTIVE=awgmain\nFORCED=\nUPDATED=1\nLOSS_awgmain=0\nRTT_awgmain=41\n' > "$T/mstate"
+printf '1|switch|a\n2|switch|b\n3|return|c\n' > "$MD/events.log"
+mkdir -p "$MD/metrics"; echo old > "$MD/metrics/metrics"      # прежняя папка метрик на /data (до 1.8)
+mo=$(DD=$MD STATEF=$T/mstate PATH="$H/stubs5:$PATH" bash "$COMP/metrics.sh" once)
+ck "метрики: файл в памяти (/run), \$DD/metrics — ссылка туда, прежняя папка убрана" '[ -L "$MD/metrics" ] && [ "$(readlink "$MD/metrics")" = "$AWG_RUN/awg-metrics" ]'
+ck "метрики: handshake, активный канал, события, служба" 'echo "$mo" | grep -qx "awg_handshake_age_seconds{tunnel=\"awgmain\"} 30" && echo "$mo" | grep -qx "awg_tunnel_up{tunnel=\"awgbackup\"} 0" && echo "$mo" | grep -qx "awg_active{tunnel=\"awgmain\"} 1" && echo "$mo" | grep -qx "awg_events_total{type=\"switch\"} 2" && echo "$mo" | grep -qx "awg_service_up{service=\"awg-failover\"} 1"'
+# отчёт для issue (report.sh): ключи, токены, имя сервера и публичные адреса скрыты
+mk=$(printf 'PrivateKey = cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5cHI=\nEndpoint = vpn.example.org:51820\nTG_TOKEN="123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nVPS_HOST="vpn.example.org"\nendpoint: 95.31.7.8:51820\n' \
+  | bash -c 'source <(sed -n "/^mask(){/,/^}/p" "$1"); mask' _ "$COMP/report.sh")
+ck "report: ключ, токен, имя сервера, адрес VPS и публичный IP скрыты" '! echo "$mk" | grep -qE "cHJpdmF0|vpn\.example|AAAAAAAA|95\.31\.7\.8" && echo "$mk" | grep -q "Endpoint = <узел>:51820"'
+# up.sh (1.8): amneziawg-go — в своей группе процессов (scope systemd), а не в группе службы, что подняла туннель:
+# перезапуск сторожа или панели больше не убивает туннели
+U=$T/up; mkdir -p "$U/dd" "$U/bin" "$U/run" "$U/links"
+cp "$COMP/up.sh" "$U/dd/"; printf 'MAIN=awgmain\n' > "$U/dd/awg.env"
+printf '[Interface]\nPrivateKey = cHJpdmF0ZQ==\nAddress = 10.9.0.2/32\n[Peer]\nPublicKey = cHVibGlj\nEndpoint = 203.0.113.9:51820\nAllowedIPs = 0.0.0.0/0\n' > "$U/dd/main.conf"
+printf '#!/bin/bash\ntouch "%s/links/$1"; echo "go $1" >> "%s/go.log"\n' "$U" "$U" > "$U/dd/amneziawg-go"
+printf '#!/bin/bash\nexit 0\n' > "$U/dd/awg"
+printf '#!/bin/bash\ncase "$1 $2" in "link show") [ -e "%s/links/$3" ];; "link del") rm -f "%s/links/$3";; *) exit 0;; esac\n' "$U" "$U" > "$U/bin/ip"
+printf '#!/bin/bash\necho "systemd-run $*" >> "%s/sr.log"; while [ "${1#-}" != "$1" ]; do shift; done; exec "$@"\n' "$U" > "$U/bin/systemd-run"
+printf '#!/bin/bash\nexit 0\n' > "$U/bin/sysctl"
+chmod +x "$U/dd/amneziawg-go" "$U/dd/awg" "$U/bin/"*
+DD=$U/dd AWG_RUN=$U/run AWG_FORCE_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1
+ck "up.sh: amneziawg-go запущен через systemd-run --scope (своя группа процессов)" 'grep -q -- "--scope" "$U/sr.log" && grep -q "amneziawg-go awgmain" "$U/sr.log" && [ -e "$U/links/awgmain" ] && grep -q "awgmain поднят" "$U/out"'
+ck "up.sh: временные файлы с ключом не остаются" '! ls "$U/run"/awgmain.* >/dev/null 2>&1'
+rm -f "$U/sr.log" "$U/links/awgmain"
+DD=$U/dd AWG_RUN=$U/run AWG_NO_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1
+ck "up.sh: без systemd — как раньше, напрямую" '[ ! -e "$U/sr.log" ] && [ -e "$U/links/awgmain" ]'
 echo "misc: провалов $fails"; [ $fails = 0 ]
