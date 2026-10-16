@@ -41,7 +41,7 @@ bash "$COMP/failover.sh" forget awgbackup
 ck "forget: правил awgbackup не осталось" '! iptables -t nat -S | grep -q awgbackup && ! iptables -t mangle -S | grep -q awgbackup && ! iptables -S | grep -q awgbackup'
 ck "forget: правила awgmain целы" '[ "$(cnt nat "-A POSTROUTING -o awgmain -j MASQUERADE")" = 1 ]'
 
-# --- сторож (1.7.1): правила туннеля сверяются по цепочкам POSTROUTING/FORWARD; второй проход ничего не добавляет
+# --- сторож (1.8): правила туннеля сверяются по цепочкам POSTROUTING/FORWARD; второй проход ничего не добавляет
 ( source <(sed -n '/^iptables(){/p;/^ensure(){/p;/^fw_rules(){/,/^}/p;/^declare -A FWR/,/^}/p' "$COMP/failover.sh")
   TUNS=(awgq); MARK=0x6a0000/0x7e0000; TABLE=178; PRIO=32504; V6=0
   prepare; prepare
@@ -97,7 +97,7 @@ ck "self: временных цепочек не осталось" '! iptables -
 printf 'TUN_DOMAINS="good.com bad;rm x/y"\n' >> "$DD/awg.env"
 source <(sed -n '/^valid_domain(){/p;/^domains(){/p;/^log(){/p' "$COMP/self.sh")
 ck "self: в файл dnsmasq попадают только корректные домены" '[ "$(domains good.com "bad;rm" x/y | tr "\n" " ")" = "good.com " ]'
-# --- self (1.7.1): быстрый разбор правил UniFi совпадает с прежним конвейером; время старта процесса — без awk
+# --- self (1.8): быстрый разбор правил UniFi совпадает с прежним конвейером; время старта процесса — без awk
 cat > "$T/mg" <<'MG'
 -P PREROUTING ACCEPT
 -N UBIOS_PREROUTING_PBR
@@ -123,7 +123,7 @@ old_w=$(PATH="$T/mgbin:$PATH"; want); want_from "$(cat "$T/mg")"
 ck "self: want_from совпадает с want; маршрут UniFi «весь интернет» на трафик роутера не переносится" '[ "$W" = "$old_w" ] && [ "$(printf "%s\n" "$W" | wc -l)" = 3 ] && ! printf "%s\n" "$W" | grep -q -e "^-j MARK" -e "! --match-set" -e "! -d" -e "UBIOS_local_network dst"' || printf '%s\n---\n%s\n' "$old_w" "$W"
 HZ=$(getconf CLK_TCK); pstart_v pv $$
 ck "self: время старта процесса — как у прежнего pstart" '[ "$pv" = "$(pstart $$)" ]'
-# --- awg-self (1.7.1): бюджет внешних команд в обычном проходе службы (в 1.7.0 — ~58)
+# --- awg-self (1.8): бюджет внешних команд в обычном проходе службы (в 1.7.0 — ~58)
 SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
 for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables ipset md5sum flock logger getent pidof ss dnsmasq; do
   printf '#!/bin/bash\necho %s >> "%s"\nIFS=: read -ra P <<< "$PATH"\nfor d in "${P[@]}"; do [ "$d" = "%s" ] && continue; [ -x "$d/%s" ] && exec "$d/%s" "$@"; done\nexit 127\n' \

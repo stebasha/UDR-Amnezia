@@ -104,7 +104,7 @@ STATEF=$T/v6s bash $COMP/failover.sh > $T/v6b.log 2>&1 &
 VP=$!; sleep 2; kill -TERM $VP; wait $VP 2>/dev/null
 ck "IPv6 выключен: своё правило IPv6 убирается, маршруты UniFi в таблице не трогаются" 'grep -q "rule del fwmark 0x6a0000/0x7e0000 lookup 178 priority 32504 proto 99" $STUB/rule6-del.log && ! grep -q "flush" $STUB/routes6.log'
 
-# ---- экономия (1.7.1): живой трафик заменяет HTTPS-проверку; верная таблица не переписывается каждый проход
+# ---- экономия (1.8): живой трафик заменяет HTTPS-проверку; верная таблица не переписывается каждый проход
 S2=$T/s2; mkdir -p $S2/up $S2/links/awgmain/statistics $S2/links/awgbackup/statistics $S2/loss $S2/rtt $T/dd2
 for i in awgmain awgbackup; do touch $S2/up/$i; echo 0 > $S2/links/$i/statistics/rx_bytes; done
 printf 'TABLE=190\nMARK=0x7a0000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=no\n' > $T/dd2/awg.env
@@ -138,7 +138,7 @@ FP4=$!; sleep 2; : > $T/inodes
 for _ in $(seq 12); do stat -c %i $T/state2 >> $T/inodes 2>/dev/null; sleep 0.5; done
 ck "состояние без изменений: файл не переписывается каждый проход" '[ "$(sort -u $T/inodes | wc -l)" -le 2 ] && . $T/state2 && [ "$ACTIVE" = awgmain ] && [ -n "$UPDATED" ]'
 kill -TERM $FP4; wait $FP4 2>/dev/null
-# ---- давно лежащий основной канал проверяется реже (1.7.1): проход не растягивается на проверки мёртвого туннеля
+# ---- давно лежащий основной канал проверяется реже (1.8): проход не растягивается на проверки мёртвого туннеля
 S4=$T/s4; mkdir -p $S4/up $S4/links $S4/loss $S4/rtt $T/dd4; touch $S4/up/awgbackup $S4/links/awgmain $S4/links/awgbackup
 printf 'TABLE=192\nMARK=0x7e0000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=no\n' > $T/dd4/awg.env
 printf '#!/bin/bash\nexit 0\n' > $T/dd4/up.sh; chmod +x $T/dd4/up.sh
@@ -162,7 +162,7 @@ rm -f $S6/loss/awgmain; sleep 10
 b6=$(. $T/st6 2>/dev/null; echo "$ACTIVE")
 kill -TERM $P6; wait $P6 2>/dev/null
 ck "основной с потерями: ушли на запасной ($a6), качество вернулось — вернулись ($b6), без отсрочки RECHECK_SLOW" '[ "$a6" = awgbackup ] && [ "$b6" = awgmain ]'
-# ---- ICMP через туннель не ходит, TCP ходит: пробы качества — по TCP, без пяти пингов каждый раз (1.7.1)
+# ---- ICMP через туннель не ходит, TCP ходит: пробы качества — по TCP, без пяти пингов каждый раз (1.8)
 S5=$T/s5; mkdir -p $S5/up $S5/links $S5/loss $S5/rtt $S5/noicmp $T/dd5; for i in awgmain awgbackup; do touch $S5/up/$i $S5/links/$i $S5/noicmp/$i; done
 printf 'TABLE=193\nMARK=0x780000/0x7e0000\nMAIN=awgmain\nBACKUP=awgbackup\nQUALITY=yes\n' > $T/dd5/awg.env
 printf '#!/bin/bash\nexit 0\n' > $T/dd5/up.sh; chmod +x $T/dd5/up.sh
@@ -170,7 +170,7 @@ STUB=$S5 DD=$T/dd5 AWG_SYSNET=$S5/links STATEF=$T/st5 FORCEF=$T/f5 INTERVAL=1 QU
 P5=$!; sleep 7; kill -TERM $P5; wait $P5 2>/dev/null
 np=$(grep -c -x awgmain $S5/ping.log 2>/dev/null)
 ck "ICMP закрыт, TCP работает: пробы по TCP, ping — дважды для уверенности, а не каждую пробу (ping: $np)" '[ "${np:-0}" -le 2 ]'
-# ---- бюджет процессов (1.7.1): в обычном проходе сторож запускает не больше 8 внешних команд (в 1.7.0 — ~27).
+# ---- бюджет процессов (1.8): в обычном проходе сторож запускает не больше 8 внешних команд (в 1.7.0 — ~27).
 # Обёртки в начале PATH считают каждый запуск и передают его настоящей команде (или заглушке).
 SH=$T/shim; mkdir -p $SH; CNT=$T/execs.log
 for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep ip iptables ip6tables curl ping logger conntrack flock md5sum; do
@@ -195,7 +195,7 @@ P8=$!
 PATH=$SH:$T/ipt7:$PATH STUB=$S7 DD=$T/dd7 AWG_SYSNET=$S7/links STATEF=$T/st8 FORCEF=$T/f8 INTERVAL=4 bash "$COMP/failover.sh" --route r9 > /dev/null 2>&1 &
 P9=$!; sleep 6; : > $CNT; sleep 16; ni=$(grep -c -x iptables $CNT); kill -TERM $P8 $P9; wait $P8 $P9 2>/dev/null
 ck "два сторожа: снимок цепочек общий (iptables за 16 с: $ni; без общего снимка ~24)" '[ "$ni" -le 17 ]'
-# ---- остановка (1.7.1): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
+# ---- остановка (1.8): обработчик TERM, запущенный посреди паузы «read -t», bash обрывает, как только истекает
 # время паузы (подстановка $(…) внутри обработчика проверяет таймер read). Раньше уборка обрывалась после записи
 # в журнал, сторож работал дальше, systemd ждал 90 с и убивал его. Медленный logger делает обрыв неизбежным.
 mkdir -p $T/slow; printf '#!/bin/bash\nsleep 1.5\n' > $T/slow/logger; chmod +x $T/slow/logger

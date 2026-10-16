@@ -939,7 +939,7 @@ def main():
         s, j = a.post("/api/hooks", {"hook_clear": True, "ntfy": ""})
         check("хуки: всё убрано — файл удалён", s == 200 and not os.path.exists(hf), j)
 
-        # ---------- 1.7.1: отрицательная длина тела — сразу 400, а не ожидание до таймаута
+        # ---------- 1.8: отрицательная длина тела — сразу 400, а не ожидание до таймаута
         import socket as _sk
         t0 = time.time()
         sk = _sk.create_connection(("127.0.0.1", PORT), timeout=10)
@@ -984,7 +984,7 @@ def main():
             s, j = r_.req("POST", path, body, headers=bh(atok))
             if s != 403:
                 bad.append((path, s))
-        check("токен admin: конфиг туннеля, новый туннель, импорт и откат конфига — только по паролю (#1.7.1)", not bad, bad)
+        check("токен admin: конфиг туннеля, новый туннель, импорт и откат конфига — только по паролю (#1.8)", not bad, bad)
         s, j = r_.get("/api/overview", headers=bh("awg_" + "A" * 43))
         check("токен: неверный → 401", s == 401, j)
         s, j = a.get("/api/tokens")
