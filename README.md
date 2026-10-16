@@ -3,6 +3,8 @@
 
 Туннель AmneziaWG прямо на UDR7, встроенный в штатные правила **Policy-Based Routes** UniFi: в туннель уходят только те устройства, сети и домены, которые вы выбрали в интерфейсе UniFi. По желанию: запасной канал на своём VPS с автопереключением, защита от утечек, трафик самого роутера и unifi.ui.com через туннель, панель состояния, аудит и самопроверка, уведомления и бот в Telegram, веб-панель управления в стиле UniFi.
 
+**In English.** UDR-Amnezia runs [AmneziaWG](https://github.com/amnezia-vpn/amneziawg-go) (WireGuard with DPI obfuscation) directly on the **UniFi Dream Router 7** (UniFi OS), wired into UniFi's own **Policy-Based Routes**: only the devices, networks and domains you pick in the UniFi UI go through the tunnel. Optional: backup channel on your own VPS with automatic **failover**, **kill switch** and leak protection, **GeoIP** routing (everything except selected countries goes through the tunnel) with per-domain exceptions both ways, router's own traffic and unifi.ui.com via the tunnel, a UniFi-style **web panel** (English UI included), **Telegram bot**, Home Assistant (MQTT) and Prometheus metrics. One-command install (below), self-test, auto-rollback on failed updates. Full step-by-step guide (Russian): https://stebasha.github.io/UDR-Amnezia/
+
 ## Быстрая установка
 
 На роутере по SSH под root:
