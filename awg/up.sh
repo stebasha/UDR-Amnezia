@@ -4,15 +4,19 @@
 #   up.sh awgmain    один туннель (интерфейс пересоздаётся; так применяют новый конфиг)
 #   up.sh --conf-of ИМЯ   имя файла конфига туннеля (для сторожа)
 # IPv6 (#23): при LEAK_V6=route IPv6-адрес из Address тоже назначается, AllowedIPs = 0.0.0.0/0, ::/0.
+# VLESS/Reality (#42): туннели из XRAY_TUNNELS — процесс Xray (служба awg-xray-ИМЯ, вход tun), конфиг xray/ИМЯ.json.
 # Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, <имя>.conf — дополнительные.
 DD=${DD:-/data/awg}
 cd "$DD" || exit 1
 [ -r awg.env ] && . ./awg.env
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}
 umask 077
 
+is_xray(){ case " $XRAY_TUNNELS " in *" $1 "*) return 0;; esac; return 1; }
+
 conf_of(){
-  if [ "$1" = "$MAIN" ]; then echo main.conf
+  if is_xray "$1"; then case " $TUNNELS_EXTRA " in *" $1 "*) echo "xray/$1.json";; esac
+  elif [ "$1" = "$MAIN" ]; then echo main.conf
   elif [ -n "$BACKUP" ] && [ "$1" = "$BACKUP" ]; then
     if [ -f backup.conf ] || [ ! -f client.conf ]; then echo backup.conf; else echo client.conf; fi
   else
@@ -42,9 +46,41 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
   echo "Endpoint $host → $ip"
 }
 
+jval(){ sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$2" | head -1; }   # jval КЛЮЧ ФАЙЛ — простое поле из .info
+
+bring_up_xray(){  # туннель VLESS: Xray создаёт интерфейс TUN сам; адрес, MTU и rp_filter — как у AmneziaWG
+  local n=$1 cfg="$DD/xray/$1.json" info="$DD/xray/$1.info" addr mtu u="awg-xray-$1"
+  [ -x "$DD/xray/xray" ] || { echo "ОШИБКА: Xray не установлен ($DD/xray/xray): «Туннели → VLESS → Установить Xray»"; return 1; }
+  [ -f "$cfg" ] || { echo "ОШИБКА: нет файла $cfg"; return 1; }
+  addr=$(jval addr "$info"); mtu=$(jval mtu "$info")
+  [[ "$addr" =~ ^[0-9.]+/[0-9]+$ ]] || { echo "ОШИБКА: в $info нет адреса туннеля"; return 1; }
+  [[ "$mtu" =~ ^[0-9]+$ ]] || mtu=1400
+  "$DD/xray/xray" run -test -c "$cfg" >/dev/null 2>&1 || { echo "ОШИБКА: Xray не принял конфиг $cfg:"; "$DD/xray/xray" run -test -c "$cfg" 2>&1 | tail -3; return 1; }
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl stop "$u" >/dev/null 2>&1; systemctl reset-failed "$u" >/dev/null 2>&1
+  else
+    pkill -f "xray run -c $cfg" 2>/dev/null
+  fi
+  ip link show "$n" >/dev/null 2>&1 && ip link del "$n"
+  # отдельная служба с перезапуском при сбое: Xray не зависит от службы, которая поднимает туннель (как scope у amneziawg-go)
+  if [ -z "${AWG_NO_SCOPE:-}" ] && [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --unit="$u" --collect --quiet --description="Xray VLESS $n" -p Restart=on-failure -p RestartSec=5 \
+      -p MemoryMax=192M -p Nice=5 "$DD/xray/xray" run -c "$cfg" >/dev/null 2>&1 || { echo "ОШИБКА: не запустилась служба $u"; return 1; }
+  else
+    setsid "$DD/xray/xray" run -c "$cfg" >"${AWG_RUN:-/run}/$u.log" 2>&1 < /dev/null &
+  fi
+  for _ in $(seq 1 30); do ip link show "$n" >/dev/null 2>&1 && break; sleep 0.3; done
+  ip link show "$n" >/dev/null 2>&1 || { echo "ОШИБКА: Xray не создал интерфейс $n (журнал: journalctl -u $u)"; return 1; }
+  ip addr add "$addr" dev "$n" 2>/dev/null
+  ip link set "$n" up mtu "$mtu"
+  sysctl -qw "net.ipv4.conf.$n.rp_filter=0" 2>/dev/null
+  echo "$n поднят: VLESS через Xray, адрес $addr, MTU $mtu, конфиг xray/$n.json"
+}
+
 bring_up(){
   local n=$1 conf raw tmp addr addr6="" mtu allowed="0.0.0.0\/0"
   conf=$(conf_of "$n")
+  if [ -n "$conf" ] && is_xray "$n"; then bring_up_xray "$n"; return $?; fi
   [ -z "$conf" ] && { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
   raw=${AWG_RUN:-/run}/$n.raw; tmp=${AWG_RUN:-/run}/$n.awg.conf

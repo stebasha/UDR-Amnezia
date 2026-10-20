@@ -427,6 +427,8 @@ case "${1:-run}" in
             apply
             # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
             if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
+            # подписки VLESS (#42): раз в час — те, что старше суток (сдвиг на полчаса от списков)
+            if [ $((k % 720)) = 360 ] && [ -s "$DD/xray/vless.json" ]; then setsid python3 "$DD/web/panel.py" vless-refresh --due >> "$DD/xray/vless.log" 2>&1 < /dev/null & fi
             k=$((k + 1)); [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null
           done; exit 0;;
   apply)  rm -f "$HASHF"; apply;;      # ручной запуск всегда пересобирает цепочки

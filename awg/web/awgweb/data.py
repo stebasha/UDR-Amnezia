@@ -347,10 +347,18 @@ def stats_from_events(days=7, route=None):
 
 
 def tunnel_info(t, e, st, active, hsm=None):
-    cp = conf_path(t, e)
-    text = read_file(cp)
+    xr = is_xray(t, e)
+    cp = os.path.join(XD, t + ".json") if xr else conf_path(t, e)
+    text = "" if xr else read_file(cp)
     hs = (hsm.get(t, -1) if hsm is not None else hs_age(t)) if link_exists(t) else -1
     ep = conf_get(text, "Endpoint")
+    xinfo = {}
+    if xr:                      # VLESS (#42): сервер и протокол — из открытой части записи туннеля (без UUID)
+        try:
+            xinfo = json.loads(read_file(os.path.join(XD, t + ".info")) or "{}")
+        except ValueError:
+            xinfo = {}
+        ep = "%s:%s" % (xinfo.get("host", ""), xinfo.get("port", "")) if xinfo.get("host") else ""
     role = "main" if t == (e.get("MAIN") or "awgmain") else ("backup" if t == e.get("BACKUP") else "extra")
     up = link_exists(t)
     if not up:
@@ -363,9 +371,11 @@ def tunnel_info(t, e, st, active, hsm=None):
         status = "standby"
     return {
         "name": t, "label": labels().get(t, ""), "role": role, "status": status, "exists": up,
-        "handshake": hs, "endpoint": ep, "address": conf_get(text, "Address"),
+        "handshake": hs, "endpoint": ep, "address": xinfo.get("addr", "") if xr else conf_get(text, "Address"),
         "mtu": read_file("%s/%s/mtu" % (SYSNET, t)).strip() or conf_get(text, "MTU"),
-        "proto": proto_of(text), "conf": os.path.basename(cp), "conf_mode": oct(os.stat(cp).st_mode & 0o777)[2:] if os.path.exists(cp) else "",
+        "proto": ("VLESS" + (" · " + xinfo["security"].capitalize() if xinfo.get("security") not in (None, "", "none") else "")) if xr else proto_of(text),
+        "kind": "vless" if xr else "awg", "server": xinfo.get("remark", "") if xr else "", "country": xinfo.get("country", "") if xr else "",
+        "conf": os.path.basename(cp), "conf_mode": oct(os.stat(cp).st_mode & 0o777)[2:] if os.path.exists(cp) else "",
         "rx": sysnet(t, "rx_bytes"), "tx": sysnet(t, "tx_bytes"),
         "loss": st.get("LOSS_" + t, ""), "rtt": st.get("RTT_" + t, ""), "dns": st.get("DNS_" + t, ""), "qm": st.get("QMETH_" + t, ""),
         "active": t == active, "forced": st.get("FORCED", "") == t,
@@ -479,7 +489,7 @@ def tunnel_test(t):
             res["ip"] = out.strip()
             break
     mtu = read_file("%s/%s/mtu" % (SYSNET, t)).strip()
-    if mtu.isdigit():
+    if mtu.isdigit() and not is_xray(t):     # Xray не пропускает ICMP: MTU так не проверить (#42)
         rc, out = run(["ping", "-I", t, "-M", "do", "-c", "2", "-W", "2", "-s", str(int(mtu) - 28), "1.1.1.1"], timeout=8)
         res["mtu"] = "ok" if rc == 0 else "fail"
     res["ok"] = any(x["ok"] for x in res["https"])

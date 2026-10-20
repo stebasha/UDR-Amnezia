@@ -20,7 +20,7 @@ W(){ echo "  ${Y}WARN${N}  $1"; [ -n "$2" ] && echo "        что делать
 F(){ echo "  ${R}FAIL${N}  $1"; [ -n "$2" ] && echo "        что делать: $2"; bad=$((bad+1)); }
 I(){ echo "  ${B}INFO${N}  $1"; }
 sec(){ echo; echo "${B}== $1 ==${N}"; }
-age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+age_s(){ local ts; case " ${XRAY_TUNNELS:-} " in *" $1 "*) ts=$(cat "${AWG_RUN:-/run}/awg-chk-$1" 2>/dev/null); [[ $ts =~ ^[0-9]+$ ]] && echo $(( $(date +%s) - ts )) || echo -1; return;; esac; ts=$($AWG show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 extip(){ local ip u; for u in https://api.ipify.org https://ifconfig.me; do ip=$(curl -4 -s -m 7 ${1:+--interface $1} "$u" 2>/dev/null); [[ $ip =~ ^[0-9.]+$ ]] && { echo "$ip"; return; }; done; }
 # служба включена: юнит стоит в systemd или она в списке включённых ($DD/.units — после обновления прошивки
 # юниты в /etc/systemd/system пропадают). Копии всех юнитов лежат в $DD всегда, по ним судить нельзя.

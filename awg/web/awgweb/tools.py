@@ -109,7 +109,7 @@ def api_tune_get(h, q):
         if VPS_ID_RE.match(vid):
             vt |= set(x for x in vps_sh(["tunnels"], 10, vid)[1].split() if NAME_RE.match(x))
     xm = xui_map_safe()
-    tl = [{"name": t, "active": t in act, "server": t in vt, "xui": t in xm} for t in tunnels(env())]
+    tl = [{"name": t, "active": t in act, "server": t in vt, "xui": t in xm} for t in tunnels(env()) if not is_xray(t)]
     return {"running": tune_running(), "log": read_file(TUNE_LOG)[-20000:], "head": head, "rows": rows, "best": best,
             "tunnels": tl, "auto": env().get("AUTO_TUNE") == "yes", "bot": svc_active("awg-bot")}
 
@@ -120,6 +120,7 @@ def api_tune_run(h, d):
     t = str(d.get("tunnel", ""))
     if t not in tunnels(env()):
         raise ValueError("выберите туннель")
+    wg_only(t)
     mode = str(d.get("mode", "client"))
     if mode not in ("client", "server", "xui"):
         raise ValueError("режим: client, server или xui")

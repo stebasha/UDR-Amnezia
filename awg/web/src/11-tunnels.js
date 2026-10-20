@@ -73,6 +73,7 @@
     const grid = el('div', { class: 'grid g-tun' });
     const alerts = el('div');
     add(main, [head(T('Туннели'), autoBtn,
+      el('button', { class: 'btn', onclick: () => vlessDialog(load) }, icon('server'), 'VLESS'),
       el('button', { class: 'btn', onclick: () => importDialog(load) }, icon('upload'), T('Импорт')),
       el('button', { class: 'btn primary', onclick: () => importDialog(load, 'new') }, icon('plus'), T('Добавить'))), alerts, el('div', { class: 'spacer' }), grid]);
     const cards = {};
@@ -92,7 +93,7 @@
       }
       for (const t of ov.tunnels) grid.appendChild(cards[t.name]);
       let addc = grid.querySelector('.tun.add');
-      if (!addc) addc = el('button', { class: 'card tun add', onclick: () => importDialog(load, 'new') }, el('div', { class: 'stack' }, icon('plus', 'lg'), T('Добавить туннель'), el('span', { class: 'small' }, T('Файл .conf, ссылка vpn:// или текст: сторож будет переключаться и на него'))));
+      if (!addc) addc = el('button', { class: 'card tun add', onclick: () => importDialog(load, 'new') }, el('div', { class: 'stack' }, icon('plus', 'lg'), T('Добавить туннель'), el('span', { class: 'small' }, T('Файл .conf, ссылка vpn:// или текст: сторож будет переключаться и на него. VLESS/Reality — кнопка «VLESS»'))));
       grid.appendChild(addc);
     }
     every(5000, load);
@@ -114,7 +115,8 @@
       el('dt', null, T('Сервер')), el('dd', null, host ? secret('ep-' + t.name, host) : '—'),
       el('dt', null, T('Порт')), el('dd', null, el('span', { class: 'mono' }, port || '—')),
       el('dt', null, T('Адрес туннеля')), el('dd', null, el('span', { class: 'mono' }, (t.address || '—').split(',')[0])),
-      el('dt', null, 'Handshake'), el('dd', null, t.handshake >= 0 ? fmtAge(t.handshake) : el('span', { class: 'badge warn' }, T('нет'))),
+      t.kind === 'vless' ? [el('dt', null, T('Сервер VLESS')), el('dd', null, ((flagOf(t.country) + ' ' + (t.server || '')).trim()) || '—')] : null,
+      el('dt', null, t.kind === 'vless' ? T('Проверка') : 'Handshake'), el('dd', null, t.handshake >= 0 ? fmtAge(t.handshake) : el('span', { class: 'badge warn' }, T('нет'))),
       el('dt', null, T('Качество')), el('dd', null, qText(t)),
       el('dt', null, T('DNS через туннель')), el('dd', null, t.dns === '' ? '—' : t.dns === '1' || t.dns === 'ok' ? el('span', { class: 'badge ok' }, T('работает')) : el('span', { class: 'badge warn' }, T('нет ответа'))),
       el('dt', null, 'MTU'), el('dd', null, t.mtu || '—'),
@@ -144,7 +146,7 @@
       el('div', { class: 'rates' }, el('span', null, '↓ ', el('b', null, r ? fmtBits(r[1]) : '—')), el('span', null, '↑ ', el('b', null, r ? fmtBits(r[2]) : '—'))),
       el('div', { class: 'spark' }, sparkline(S.live[t.name])),
       el('div', { class: 'upw' }, uptimeBar(S.hist, t.name)),
-      el('div', { class: 'ft' }, act, el('button', { class: 'btn sm', onclick: () => tunnelEditor(t, reload) }, icon('settings', 'sm'), T('Настроить')), el('span', { class: 'push' }), more));
+      el('div', { class: 'ft' }, act, el('button', { class: 'btn sm', onclick: () => t.kind === 'vless' ? vlessDialog(reload, t.name) : tunnelEditor(t, reload) }, icon('settings', 'sm'), T('Настроить')), el('span', { class: 'push' }), more));
   }
   function tunnelLabel(t, reload) {
     const inp = el('input', { class: 'input', value: t.label, maxlength: 40, placeholder: T('например: Германия, Hetzner') });
@@ -162,7 +164,7 @@
         el('div', { class: 'alert ' + (r.ok ? 'ok' : 'crit') }, icon(r.ok ? 'okc' : 'alert'), el('div', null, r.ok ? T('Канал работает') : T('Канал не пропускает трафик'))),
         el('div', { class: 'spacer' }),
         el('div', { class: 'test-list' },
-          it('Handshake', r.handshake >= 0 && r.handshake < 180, r.handshake >= 0 ? fmtAge(r.handshake) : T('нет')),
+          it(t.kind === 'vless' ? T('Проверка сторожем') : 'Handshake', r.handshake >= 0 && r.handshake < 180, r.handshake >= 0 ? fmtAge(r.handshake) : T('нет')),
           r.https.map((h) => it('HTTPS ' + h.target, h.ok, h.ok ? h.ms + T(' мс') : T('нет ответа'))),
           it(T('DNS через туннель (DoH)'), r.dns, r.dns ? T('работает') : T('нет')),
           it(T('Внешний IP'), !!r.ip, r.ip ? secret('tip-' + t.name, r.ip) : T('не получен')),

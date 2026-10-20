@@ -4,7 +4,7 @@ from .settings import *  # noqa: F401,F403  (всё из предыдущих м
 
 # ======================================================================= API: туннели (поля, история, экспорт, порядок)
 def api_tunnel_fields_get(h, q):
-    t = get_tunnel((q.get("name") or [""])[0])
+    t = wg_only(get_tunnel((q.get("name") or [""])[0]))
     text = read_file(conf_path(t))
     f = conf_fields(text)
     return {"name": t, "fields": f["fields"], "other": f["other"], "peers": f["peers"], "proto": proto_of(text),
@@ -23,19 +23,19 @@ def preview_text(t, d):
 
 
 def api_tunnel_preview(h, d):
-    t = get_tunnel(str(d.get("name", "")))
+    t = wg_only(get_tunnel(str(d.get("name", ""))))
     old, new = preview_text(t, d)
     return {"errors": conf_validate(new), "old": mask_conf(old), "new": mask_conf(new), "changed": old.strip() != new.strip()}
 
 
 def api_tunnel_conf_set(h, d):
-    t = get_tunnel(str(d.get("name", "")))
+    t = wg_only(get_tunnel(str(d.get("name", ""))))
     old, new = preview_text(t, d)
     return apply_conf_text(h, t, new, "форма" if "fields" in d else "редактор")
 
 
 def api_tunnel_revisions(h, q):
-    t = get_tunnel((q.get("name") or [""])[0])
+    t = wg_only(get_tunnel((q.get("name") or [""])[0]))
     cur = read_file(conf_path(t))
     lst = rev_list(t)
     seen = False
@@ -48,7 +48,7 @@ def api_tunnel_revisions(h, q):
 
 
 def api_tunnel_revision(h, q):
-    t = get_tunnel((q.get("name") or [""])[0])
+    t = wg_only(get_tunnel((q.get("name") or [""])[0]))
     rid = (q.get("id") or [""])[0]
     if not REV_RE.match(rid) or not os.path.exists(os.path.join(rev_dir(t), rid)):
         raise ApiError(404, "нет такой версии")
@@ -56,7 +56,7 @@ def api_tunnel_revision(h, q):
 
 
 def api_tunnel_revision_restore(h, d):
-    t = get_tunnel(str(d.get("name", "")))
+    t = wg_only(get_tunnel(str(d.get("name", ""))))
     rid = str(d.get("id", ""))
     if not REV_RE.match(rid) or not os.path.exists(os.path.join(rev_dir(t), rid)):
         raise ApiError(404, "нет такой версии")
@@ -64,7 +64,7 @@ def api_tunnel_revision_restore(h, d):
 
 
 def api_tunnel_export(h, d):
-    t = get_tunnel(str(d.get("name", "")))
+    t = wg_only(get_tunnel(str(d.get("name", ""))))
     users = load_users()
     if not check_pw(users.get(h.user, {"salt": "00", "iter": 1, "hash": ""}), str(d.get("current", ""))):
         h.act("export-denied", t)

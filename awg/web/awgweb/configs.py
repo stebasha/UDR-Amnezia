@@ -298,6 +298,7 @@ def summary_of(text):
 
 def apply_conf_text(h, t, text, why):
     """Проверить, сохранить (с версией в истории), перезапустить туннель; при ошибке вернуть прежний. → ответ API."""
+    wg_only(t)
     cp = conf_path(t)
     with LOCK:
         old = read_file(cp)

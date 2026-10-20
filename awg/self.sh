@@ -76,6 +76,7 @@ endpoints(){
   {
     "$DD/awg" show all endpoints 2>/dev/null | awk '{print $3}'; wg show all endpoints 2>/dev/null | awk '{print $3}'; echo "$VPS_IP"
     cat "$EPF" 2>/dev/null
+    cat "$DD"/xray/*.server 2>/dev/null          # серверы туннелей VLESS (#42): адрес записывает панель
     for f in "$DD"/main.conf "$DD"/backup.conf "$DD"/client.conf $(for t in $TUNNELS_EXTRA; do echo "$DD/$t.conf"; done); do
       [ -r "$f" ] || continue
       ep=$(awk -F'=' 'tolower($1) ~ /^[ \t]*endpoint[ \t]*$/ {gsub(/[ \t\r]/,"",$2); print $2; exit}' "$f"); h=${ep%:*}
@@ -308,7 +309,7 @@ slow_inputs(){  # → EP UP WS
   { [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt "$SLOW_TTL" ]; } || stale=1
   [ -f "$EPF" ] && [ -f "$UPF" ] || stale=1
   if [ $stale = 0 ]; then
-    for f in "$DD"/*.conf "$DD"/.endpoint-* "$DD/awg.env"; do [ "$f" -nt "$SLOWF.ts" ] && { stale=1; break; }; done
+    for f in "$DD"/*.conf "$DD"/.endpoint-* "$DD"/xray/*.server "$DD/awg.env"; do [ "$f" -nt "$SLOWF.ts" ] && { stale=1; break; }; done
   fi
   if [ $stale = 1 ]; then
     EP=$(endpoints); UP=$(upstreams)

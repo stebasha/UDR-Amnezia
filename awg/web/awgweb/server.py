@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTTP-сервер: обработчик запросов, таблица маршрутов API, запуск и командная строка."""
-from .xui import *  # noqa: F401,F403  (всё из предыдущих модулей)
+from .vless import *  # noqa: F401,F403  (всё из предыдущих модулей)
 from .data import _OV  # noqa: F401
 
 STATIC_FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -282,6 +282,14 @@ ROUTES = {
     ("POST", "/api/xui/import"): api_xui_import,
     ("POST", "/api/xui/link"): api_xui_link,
     ("POST", "/api/xui/sync"): api_xui_sync,
+    ("GET", "/api/vless"): api_vless_get,
+    ("POST", "/api/vless/sub"): api_vless_sub_set,
+    ("POST", "/api/vless/sub/refresh"): api_vless_sub_refresh,
+    ("POST", "/api/vless/sub/remove"): api_vless_sub_remove,
+    ("POST", "/api/vless/ping"): api_vless_ping,
+    ("POST", "/api/vless/tunnel"): api_vless_tunnel,
+    ("POST", "/api/vless/tunnel/remove"): api_vless_tunnel_remove,
+    ("POST", "/api/vless/xray"): api_vless_xray,
     ("GET", "/api/vps"): api_vps_get,
     ("POST", "/api/vps"): api_vps_set,
     ("POST", "/api/vps/del"): api_vps_del,
@@ -477,6 +485,13 @@ def cli():
                     print("     клиент %s %s%s%s" % (c["email"], c["address"], " · ключ в 3x-ui" if c["has_key"] else "", " · роутер" if c["router"] else ""))
         for k, v in sorted(db["tunnels"].items()):
             print("туннель %s: панель %s, подключение №%s, %s" % (k, v.get("panel"), v.get("inbound"), XUI_KINDS.get(v.get("kind"), v.get("kind"))))
+        return
+    if cmd == "vless-refresh":         # awg-guard раз в час (--due): подписки VLESS старше суток (#42)
+        msgs = vless_refresh_due() if "--due" in a else [api_vless_sub_refresh(None, {})["msg"]]
+        for m in msgs:
+            print(m)
+        if msgs:
+            audit("cli", "127.0.0.1", "vless-refresh", msgs)
         return
     if cmd in ("xui-obfs", "xui-obfs-check") and len(a) > 1:   # для obfs-tune.sh, режим xui (#37)
         try:

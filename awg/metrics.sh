@@ -40,6 +40,7 @@ collect(){
   echo "# TYPE awg_tunnel_up gauge"
   for t in $TUNS; do
     ts=${HS[$t]:-0}
+    case " ${XRAY_TUNNELS:-} " in *" $t "*) ts=0; { read -r ts < "${AWG_RUN:-/run}/awg-chk-$t"; } 2>/dev/null; [[ $ts =~ ^[0-9]+$ ]] || ts=0;; esac   # VLESS: проверка сторожа вместо handshake
     if [ "$ts" = 0 ]; then a=-1; else a=$(( now - ts )); fi
     echo "awg_handshake_age_seconds{tunnel=\"$t\"} $a"
     [ "$a" -ge 0 ] && [ "$a" -lt 180 ] && echo "awg_tunnel_up{tunnel=\"$t\"} 1" || echo "awg_tunnel_up{tunnel=\"$t\"} 0"

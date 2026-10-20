@@ -48,6 +48,7 @@ for s in AWG_UI AWG_DOM AWG_DIRECT AWG_LIST AWG_GEO AWG_ACC_UP AWG_ACC_DN; do ip
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2>/dev/null; done
 
 # 4. туннели
+for u in $(systemctl list-units --plain --no-legend "awg-xray-*" 2>/dev/null | awk '{print $1}'); do systemctl stop "$u" 2>/dev/null && echo "служба $u остановлена"; done   # VLESS (#42)
 for i in $(ip -br link 2>/dev/null | awk '$1 ~ /^awg/ {sub(/@.*/,"",$1); print $1}'); do ip link del "$i" 2>/dev/null && echo "туннель $i удалён"; done
 pkill -x amneziawg-go 2>/dev/null
 

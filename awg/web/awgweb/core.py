@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -312,6 +312,8 @@ def check_conf(text):
 
 
 def hs_age(t):
+    if is_xray(t):
+        return chk_age(t)
     rc, out = run([os.path.join(DD, "awg"), "show", t, "latest-handshakes"], timeout=5)
     try:
         ts = int(out.split()[1])
@@ -320,10 +322,39 @@ def hs_age(t):
     return -1 if ts == 0 else max(0, now() - ts)
 
 
+XD = os.path.join(DD, "xray")      # VLESS через Xray (#42): бинарник, подписки, конфиги туннелей
+
+
+def xray_tunnels(e=None):
+    """Туннели VLESS (Xray, #42) — из XRAY_TUNNELS в awg.env. У них нет конфига AmneziaWG и handshake."""
+    return [x for x in (e or env()).get("XRAY_TUNNELS", "").split() if NAME_RE.match(x)]
+
+
+def is_xray(t, e=None):
+    return t in xray_tunnels(e)
+
+
+def wg_only(t):
+    """Действие только для туннелей AmneziaWG (конфиг, история, подбор обфускации, MTU)."""
+    if is_xray(t):
+        raise ValueError("%s — туннель VLESS: его сервер и параметры — в «Туннели → VLESS», конфига AmneziaWG у него нет" % t)
+    return t
+
+
+def chk_age(t):
+    """VLESS (#42): вместо handshake — возраст последней успешной проверки сторожем (файл awg-chk-ИМЯ в /run). → сек | -1"""
+    try:
+        ts = int(read_file(os.path.join(RUN, "awg-chk-" + t)).strip() or 0)
+    except ValueError:
+        return -1
+    return max(0, now() - ts) if ts else -1
+
+
 def hs_all():
-    """Возраст handshake всех туннелей одним вызовом awg (у интерфейса с несколькими peer — самый свежий). → {имя: сек | -1}"""
+    """Возраст handshake всех туннелей одним вызовом awg (у интерфейса с несколькими peer — самый свежий). → {имя: сек | -1}
+    У туннелей VLESS (#42) — возраст последней успешной проверки сторожем."""
     out = run([os.path.join(DD, "awg"), "show", "all", "latest-handshakes"], timeout=5)[1]
-    res = {}
+    res = {t: chk_age(t) for t in xray_tunnels()}
     for line in out.splitlines():
         p = line.split()
         if len(p) < 3 or not p[2].isdigit():

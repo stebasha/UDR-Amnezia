@@ -132,6 +132,19 @@ def main():
                 check("Esc закрывает редактор", page.locator(".modal-bg").count() == 0, page.locator(".modal-bg").count())
             step("редактор туннеля", editor)
 
+            def vless():
+                page.goto(URL + "#/tunnels")
+                page.get_by_role("button", name="VLESS", exact=True).click()
+                dlg = page.locator(".modal-bg").last
+                expect(dlg.get_by_text("Подписки", exact=True)).to_be_visible()
+                txt = dlg.inner_text()
+                check("VLESS: окно — Xray, подписки, туннели", "Xray" in txt and "Добавить подписку" in txt and "Туннели VLESS" in txt, txt[:300])
+                check("VLESS: без Xray — кнопка «Установить Xray»", dlg.get_by_role("button", name="Установить Xray").count() == 1)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(300)
+                check("VLESS: окно закрывается", page.locator(".modal-bg").count() == 0)
+            step("VLESS", vless)
+
             def reboot():
                 page.goto(URL + "#/overview")
                 page.get_by_role("button", name="Перезагрузить").first.click()
