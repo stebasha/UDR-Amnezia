@@ -76,5 +76,25 @@ ck "прерванный подбор: исходный набор возвра�
 sleep 4; echo "ACTIVE=awgbackup" > "$STATEF"; wait $TP
 ck "туннель стал активным посреди подбора: подбор прекращён, исходный набор на месте" 'grep -q "стал активным каналом: подбор прекращён" $T/r4 && cmp -s $DD/backup.conf $T/bk1 && [ "$(grep -vc "^#" $DD/tune.tsv)" -lt 7 ]'
 echo "ACTIVE=awgmain" > "$STATEF"
+# режим xui (#37): через panel.py xui-obfs (заглушка: Jc ≥ 8 «не заработало», иначе ставит набор в конфиг)
+mkdir -p "$DD/web"; cat > "$DD/web/panel.py" <<'S'
+#!/usr/bin/env python3
+import os, sys, subprocess
+dd = os.environ["DD"]; open(os.path.join(os.environ["STUB"], "xui.log"), "a").write(" ".join(sys.argv[1:]) + "\n")
+if sys.argv[1] == "xui-obfs-check":
+    if sys.argv[2] != "awgbackup": print("ОШИБКА: подключение обслуживает не только роутер"); sys.exit(2)
+    print("ok"); sys.exit(0)
+kv = dict(x.split("=", 1) for x in sys.argv[3].split())
+if int(kv["Jc"]) >= 8: print("handshake нет: обе стороны возвращены"); sys.exit(1)
+f = os.path.join(dd, "backup.conf"); t = open(f).read().splitlines()
+t = [("%s = %s" % (l.split(" = ")[0], kv[l.split(" = ")[0]])) if " = " in l and l.split(" = ")[0] in kv else l for l in t]
+open(f, "w").write("\n".join(t) + "\n"); subprocess.call([os.path.join(dd, "up.sh"), "awgbackup"]); print("ок")
+S
+chmod 755 "$DD/web/panel.py"; cp $T/bk0 $DD/backup.conf; "$DD/up.sh" awgbackup
+ck "xui: общее подключение — отказ до подбора" '! "$TN" run awgmain xui 2 --active > $T/o && grep -q "не только роутер" $T/o && grep -q "^Jc = 4" $DD/main.conf'
+"$TN" run awgbackup xui 3 > $T/r5 2>&1; rc=$?
+ck "xui: подбор через 3x-ui (пробы --trial, H — диапазоны), в конце исходный набор" '[ $rc = 0 ] && grep -q "xui-obfs awgbackup .*H1=[0-9]*-[0-9]* .*--trial" $STUB/xui.log && head -n1 $DD/tune.tsv | grep -q "awgbackup	xui" && grep -q "^Jc = 4" $DD/backup.conf && grep -q "^H1 = 1111" $DD/backup.conf && tail -n1 $STUB/xui.log | grep -q "Jc=4 .*H4=4444 --trial"' || cat $T/r5
+n=$(awk -F'\t' '!/^#/ && $2==1 && $1>0 {print $1; exit}' $DD/tune.tsv)
+if [ -n "$n" ]; then "$TN" apply "$n" > $T/o 2>&1; ck "xui: apply — без --trial (с историей), набор на роутере" '[ $? = 0 ] && tail -n1 $STUB/xui.log | grep -vq -- "--trial" && ! grep -q "^Jc = 4$" $DD/backup.conf'; fi
 echo "== tune: ошибок $fails"
 [ $fails = 0 ]

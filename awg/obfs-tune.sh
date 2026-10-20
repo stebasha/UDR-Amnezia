@@ -1,9 +1,11 @@
 #!/bin/bash
 # obfs-tune.sh — автоподбор параметров обфускации AmneziaWG (#33): перебор наборов, проверка, оценка, лучший — по кнопке.
-#   obfs-tune.sh run ТУННЕЛЬ [client|server] [N] [--active]
+#   obfs-tune.sh run ТУННЕЛЬ [client|server|xui] [N] [--active]
 #        client — только параметры роутера, которые сервер не сверяет (Jc, Jmin, Jmax): подходит для любого туннеля,
 #                 в том числе провайдера VPN и 3x-ui; сервер не меняется
 #        server — согласованно на своём VPS (awg-server) и роутере: Jc, Jmin, Jmax, S1, S2, H1–H4 (через vps.sh obfs)
+#        xui    — согласованно на сервере 3x-ui (через API) и роутере: Jc…H4 (#37). Только если в подключении 3x-ui
+#                 единственный клиент — роутер: общие подключения не трогаются
 #        N      — сколько новых наборов проверить (1–12, по умолчанию 5); первым меряется текущий набор
 #        --active — разрешить подбор на активном канале (иначе только на резервном: рабочий трафик не трогается)
 #   obfs-tune.sh apply НОМЕР     поставить набор НОМЕР из последнего подбора (с проверкой handshake и откатом)
@@ -88,6 +90,18 @@ gen_server(){  # как vps.sh gen_obf: Jc 4–8, Jmin 40–80, Jmax больш�
   mapfile -t h < <(shuf -i 5-2147483647 -n 4)
   echo "Jc=$jc Jmin=$jmin Jmax=$jmax S1=$s1 S2=$s2 H1=${h[0]} H2=${h[1]} H3=${h[2]} H4=${h[3]}"
 }
+gen_xui(){  # для 3x-ui (AWG 2.0/3.1): Jc…S2 как у своего VPS, H1–H4 — непересекающиеся диапазоны
+  local j hs w i out a b nx
+  j=$(gen_server | cut -d' ' -f1-5)
+  mapfile -t hs < <(shuf -i 5-2140000000 -n 4 | sort -n)
+  out=$j
+  for i in 0 1 2 3; do
+    a=${hs[$i]}; nx=${hs[$((i + 1))]:-2147483000}; w=$(shuf -i 1000-200000 -n 1)
+    b=$((a + w)); [ "$b" -ge "$nx" ] && b=$((nx - 1)); [ "$b" -le "$a" ] && b=$((a + 1))
+    out="$out H$((i + 1))=$a-$b"
+  done
+  echo "$out"
+}
 cur_params(){  # текущие значения ключей набора из конфига
   local k out=""
   for k in $2; do out="$out $k=$(conf_get "$1" "$k" | tr -d ' \r')"; done
@@ -99,6 +113,9 @@ vps_of(){  # свой VPS, сервер (awg-server) которого держи
     "$DD/vps.sh" --vps "$id" tunnels 2>/dev/null | grep -qx "$1" && { echo "$id"; return 0; }
   done
   return 1
+}
+apply_xui(){  # apply_xui ТУННЕЛЬ "K=V…" [--trial] — 3x-ui и роутер, с откатом обеих сторон (panel.py xui-obfs)
+  python3 "$DD/web/panel.py" xui-obfs "$1" "$2" ${3:+"$3"} 2>&1 | sed 's/^/    │ /'; return "${PIPESTATUS[0]}"
 }
 apply_server(){  # apply_server ТУННЕЛЬ VPS "K=V…" — согласованно, с откатом внутри vps.sh
   local f; f=$(mktemp "$DD/.tune.XXXXXX")
@@ -120,19 +137,23 @@ case "$cmd" in
     [[ $T =~ ^awg[a-z0-9]{1,10}$ ]] || die "имя туннеля: например awgbackup"
     case " $MAIN $BACKUP $TUNNELS_EXTRA " in *" $T "*) ;; *) die "туннеля $T нет в наборе";; esac
     [[ $N =~ ^[0-9]+$ ]] && [ "$N" -ge 1 ] && [ "$N" -le 12 ] || die "число наборов: 1–12"
-    case "$MODE" in client|server) ;; *) die "режим: client или server";; esac
+    case "$MODE" in client|server|xui) ;; *) die "режим: client, server или xui";; esac
     [ -z "$ACT" ] || [ "$ACT" = --active ] || die "неизвестный ключ: $ACT"
     if is_active "$T" && [ -z "$ACT" ]; then die "$T сейчас активный канал: подбор прервёт рабочий трафик. Подбирайте на резервном или разрешите явно (--active)"; fi
     CF=$DD/$("$DD/up.sh" --conf-of "$T"); [ -f "$CF" ] || die "нет конфига туннеля $T"
     if [ "$MODE" = server ]; then
       KEYS="Jc Jmin Jmax S1 S2 H1 H2 H3 H4"
       for k in $KEYS; do v=$(conf_get "$CF" "$k" | tr -d ' \r'); [[ $v =~ ^[0-9]+$ ]] || die "в $CF нет числового $k (AWG 2.0/3.x с диапазонами H — режим server не подходит, используйте client)"; done
-      VID=$(vps_of "$T") || die "$T не обслуживает awg-server на вашем VPS: режим server только для своего сервера; для провайдера и 3x-ui — client"
+      VID=$(vps_of "$T") || die "$T не обслуживает awg-server на вашем VPS: режим server только для своего сервера; для 3x-ui — xui, для провайдера — client"
+    elif [ "$MODE" = xui ]; then
+      KEYS="Jc Jmin Jmax S1 S2 H1 H2 H3 H4"
+      out=$(python3 "$DD/web/panel.py" xui-obfs-check "$T" 2>&1) || die "${out#ОШИБКА: }"
     else KEYS="Jc Jmin Jmax"; fi
     exec 8>"${AWG_RUN:-/run}/awg-tune.lock"; command -v flock >/dev/null && { flock -n 8 || die "подбор уже идёт"; }
     BASE=$(cur_params "$CF" "$KEYS")
     printf '# %s\t%s\t%s\t%s\n' "$T" "$MODE" "$(date +%s)" "${VID:-}" > "$RES.new"
-    say "· подбор обфускации $T ($([ "$MODE" = server ] && echo "роутер и VPS $VID" || echo "только роутер, сервер не меняется")): текущий набор и ещё $N"
+    case "$MODE" in server) WHO="роутер и VPS $VID";; xui) WHO="роутер и сервер 3x-ui";; *) WHO="только роутер, сервер не меняется";; esac
+    say "· подбор обфускации $T ($WHO): текущий набор и ещё $N"
     event "подбор обфускации $T: начат ($MODE, наборов $N)"
     cp -p "$CF" "$CF.pre-tune"
     # прерванный подбор (остановка службы, срок задачи, Ctrl+C) не оставляет туннель на пробном наборе
@@ -141,24 +162,27 @@ case "$cmd" in
       [ -f "$CF.pre-tune" ] || return 0
       say "· подбор прерван: возвращаю исходный набор"
       if [ "$MODE" = server ]; then apply_server "$T" "$VID" "$BASE" >/dev/null 2>&1 || true
+      elif [ "$MODE" = xui ]; then apply_xui "$T" "$BASE" --trial >/dev/null 2>&1 || true
       else cat "$CF.pre-tune" > "$CF"; up_tun "$T"; fi
       rm -f "$CF.pre-tune" "$RES.new"; event "подбор обфускации $T: прерван, исходный набор возвращён"
     }
     trap 'restore_base; exit 1' INT TERM
     trap 'restore_base' EXIT
     say "· 0: текущий набор $BASE"
-    if [ "$MODE" = server ]; then measure "$T" "$(( $(date +%s) - 300 ))" base
+    if [ "$MODE" != client ]; then measure "$T" "$(( $(date +%s) - 300 ))" base
     else try_client "$BASE"; fi                      # как и остальные: пересоздать и мерить с нуля — сравнение честное
     row 0 "$BASE"
     say "    → $( [ "$M_OK" = 1 ] && echo "работает: потери $M_LOSS%, задержка $M_RTT мс, скорость $M_MBPS Мбит/с, оценка $M_SCORE" || echo "не работает")"
     for i in $(seq 1 "$N"); do
       # основной канал упал, и сторож перевёл трафик на этот туннель — подбор прекращаем, рабочий трафик не трогаем
       if [ -z "$ACT" ] && is_active "$T"; then say "▲ $T стал активным каналом: подбор прекращён"; break; fi
-      if [ "$MODE" = server ]; then P=$(gen_server); else P=$(gen_client "$i"); fi
+      case "$MODE" in server) P=$(gen_server);; xui) P=$(gen_xui);; *) P=$(gen_client "$i");; esac
       say "· $i: $P"
       t0=$(date +%s)
       if [ "$MODE" = server ]; then
         if apply_server "$T" "$VID" "$P"; then measure "$T" "$t0"; else M_OK=0; M_HS=-1; M_LOSS=100; M_RTT=0; M_MBPS=0; M_SCORE=0; fi
+      elif [ "$MODE" = xui ]; then
+        if apply_xui "$T" "$P" --trial; then measure "$T" "$t0"; else M_OK=0; M_HS=-1; M_LOSS=100; M_RTT=0; M_MBPS=0; M_SCORE=0; fi
       else
         try_client "$P"
       fi
@@ -167,6 +191,7 @@ case "$cmd" in
     done
     say "· возвращаю исходный набор"
     if [ "$MODE" = server ]; then apply_server "$T" "$VID" "$BASE" >/dev/null || say "▲ исходный набор на VPS не подтвердился: смотрите «Свой VPS → Журнал»"
+    elif [ "$MODE" = xui ]; then apply_xui "$T" "$BASE" --trial >/dev/null || say "▲ исходный набор в 3x-ui не подтвердился: проверьте подключение в 3x-ui («Туннели → 3x-ui → Обновить из 3x-ui»)"
     else cat "$CF.pre-tune" > "$CF"; up_tun "$T"; fi
     rm -f "$CF.pre-tune"; trap - EXIT INT TERM
     mv -f "$RES.new" "$RES"; chmod 600 "$RES"
@@ -188,6 +213,8 @@ case "$cmd" in
     say "· $T: ставлю набор $n: $P"
     if [ "$MODE" = server ]; then
       apply_server "$T" "$VID" "$P" || die "набор $n не заработал — обе стороны возвращены"
+    elif [ "$MODE" = xui ]; then
+      apply_xui "$T" "$P" || die "набор $n не заработал — обе стороны возвращены"
     else
       cp -p "$CF" "$CF.pre-tune"; set_params "$CF" "$P"; t0=$(date +%s); up_tun "$T"; TUNE_SPEED=no measure "$T" "$t0"
       if [ "$M_OK" != 1 ]; then cat "$CF.pre-tune" > "$CF"; rm -f "$CF.pre-tune"; up_tun "$T"; die "набор $n сейчас не заработал — возвращён прежний"; fi
@@ -196,5 +223,5 @@ case "$cmd" in
     event "обфускация $T: поставлен набор $n из подбора"
     say "✔ $T работает на наборе $n";;
   show) [ -s "$RES" ] && cat "$RES" || say "подбора ещё не было";;
-  *) sed -n '2,15p' "$0";;
+  *) sed -n '2,14p' "$0";;
 esac

@@ -18,7 +18,7 @@
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
 #   awgctl vps [--vps ID] [list|test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh); несколько VPS — #32
 #   awgctl routes [rails|list|add|set|remove|switch]   разные туннели для разных профилей PBR UniFi (routes.sh, #22)
-#   awgctl tune [run ТУННЕЛЬ [client|server] [N]|apply НОМЕР|show]   автоподбор параметров обфускации (obfs-tune.sh, #33)
+#   awgctl tune [run ТУННЕЛЬ [client|server|xui] [N]|apply НОМЕР|show]   автоподбор параметров обфускации (obfs-tune.sh, #33)
 #   awgctl lists [status|update|load]    списки заблокированного и GeoIP для устройств под PBR (lists.sh, #38)
 DD=${DD:-/data/awg}
 AWG=$DD/awg

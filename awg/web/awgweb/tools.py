@@ -90,6 +90,16 @@ def active_tunnels():
     return out
 
 
+def xui_map_safe():
+    """Туннели, связанные с 3x-ui (#37), — из xui.json без запросов к панели (модуль xui грузится позже)."""
+    try:
+        d = json.loads(read_file(os.path.join(DD, "xui.json")) or "{}")
+        t = d.get("tunnels") if isinstance(d, dict) else None
+        return t if isinstance(t, dict) else {}
+    except ValueError:
+        return {}
+
+
 def api_tune_get(h, q):
     head, rows, best = tune_results()
     act = active_tunnels()
@@ -98,7 +108,8 @@ def api_tune_get(h, q):
         vid = line.split("\t")[0]
         if VPS_ID_RE.match(vid):
             vt |= set(x for x in vps_sh(["tunnels"], 10, vid)[1].split() if NAME_RE.match(x))
-    tl = [{"name": t, "active": t in act, "server": t in vt} for t in tunnels(env())]
+    xm = xui_map_safe()
+    tl = [{"name": t, "active": t in act, "server": t in vt, "xui": t in xm} for t in tunnels(env())]
     return {"running": tune_running(), "log": read_file(TUNE_LOG)[-20000:], "head": head, "rows": rows, "best": best,
             "tunnels": tl, "auto": env().get("AUTO_TUNE") == "yes", "bot": svc_active("awg-bot")}
 
@@ -110,8 +121,8 @@ def api_tune_run(h, d):
     if t not in tunnels(env()):
         raise ValueError("выберите туннель")
     mode = str(d.get("mode", "client"))
-    if mode not in ("client", "server"):
-        raise ValueError("режим: client или server")
+    if mode not in ("client", "server", "xui"):
+        raise ValueError("режим: client, server или xui")
     n = str(d.get("count", "5")).strip()
     if not n.isdigit() or not 1 <= int(n) <= 12:
         raise ValueError("наборов: 1–12")
@@ -167,7 +178,8 @@ def tune_apply(h, n):
     if rc != 0:
         raise ValueError("не удалось запустить: " + out.strip()[:300])
     h.act("tune-apply", {"tunnel": t, "n": n})
-    return {"ok": True, "msg": "ставлю набор %d на VPS и роутере — смотрите журнал" % n, "job": True}
+    where = "в 3x-ui и на роутере" if head["mode"] == "xui" else "на VPS и роутере"
+    return {"ok": True, "msg": "ставлю набор %d %s — смотрите журнал" % (n, where), "job": True}
 
 
 # ======================================================================= списки и GeoIP (#38)

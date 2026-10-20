@@ -2589,7 +2589,8 @@
       const fillMode = () => {
         const t = r.tunnels.find((x) => x.name === sel.value) || {};
         replace(mode, el('option', { value: 'client' }, T('Только роутер (Jc, Jmin, Jmax) — любой туннель')),
-          t.server ? el('option', { value: 'server', selected: true }, T('Роутер и свой VPS (Jc…H4) — согласованно')) : null);
+          t.server ? el('option', { value: 'server', selected: true }, T('Роутер и свой VPS (Jc…H4) — согласованно')) : null,
+          t.xui ? el('option', { value: 'xui', selected: !t.server }, T('Роутер и сервер 3x-ui (Jc…H4) — если клиент в подключении один')) : null);
       };
       sel.addEventListener('change', fillMode); fillMode();
       const log = el('div', { class: 'out' + (r.log ? '' : ' hidden') });
@@ -2607,7 +2608,7 @@
         el('td', null, el('b', null, String(x.score)), x.n === r.best ? el('span', { class: 'badge ok' }, T('лучший')) : null),
         el('td', { class: 'mono small' }, x.params),
         el('td', { class: 'r' }, x.ok && x.n !== 0 ? el('button', { class: 'btn sm' + (x.n === r.best ? ' primary' : ''), disabled: r.running, onclick: async () => {
-          const pw = await promptPw(T('Поставить набор №') + x.n + T(' на ') + r.head.tunnel + '?', r.head.mode === 'server' ? T('Параметры поменяются на VPS и роутере одновременно; не заработает — обе стороны вернутся.') : T('Меняется только конфиг роутера (прежний — в «Истории» туннеля).'));
+          const pw = await promptPw(T('Поставить набор №') + x.n + T(' на ') + r.head.tunnel + '?', r.head.mode === 'server' ? T('Параметры поменяются на VPS и роутере одновременно; не заработает — обе стороны вернутся.') : r.head.mode === 'xui' ? T('Параметры поменяются в 3x-ui и на роутере одновременно; не заработает — обе стороны вернутся.') : T('Меняется только конфиг роутера (прежний — в «Истории» туннеля).'));
           if (pw == null) return;
           try { const y = await api('/api/tune/apply', { n: x.n, current: pw }); (y.ok ? ok : err)(TM(y.msg)); if (y.job) follow(); else load(); } catch (e) { err(e); }
         } }, T('Применить')) : null)));
@@ -2620,7 +2621,7 @@
         el('label', { class: 'row' }, act, T('Разрешить на активном канале (трафик устройств на время подбора пойдёт с перерывами)')),
         el('div', { class: 'row' }, go),
         autoRow(r),
-        r.rows.length ? el('div', null, el('div', { class: 'small muted' }, T('Последний подбор: ') + r.head.tunnel + ' · ' + (r.head.mode === 'server' ? T('роутер и VPS') : T('только роутер')) + ' · ' + fmtTime(r.head.ts, true)),
+        r.rows.length ? el('div', null, el('div', { class: 'small muted' }, T('Последний подбор: ') + r.head.tunnel + ' · ' + (r.head.mode === 'server' ? T('роутер и VPS') : r.head.mode === 'xui' ? T('роутер и 3x-ui') : T('только роутер')) + ' · ' + fmtTime(r.head.ts, true)),
           el('div', { class: 'tbl-wrap' }, el('table', { class: 'tbl' }, el('thead', null, el('tr', null, el('th', null, T('Набор')), el('th', null, T('Связь')),
             el('th', null, T('Потери · задержка · скорость')), el('th', null, T('Оценка')), el('th', null, T('Параметры')), el('th', null, ''))), el('tbody', null, rows)))) : null,
         log);

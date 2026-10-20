@@ -478,6 +478,21 @@ def cli():
         for k, v in sorted(db["tunnels"].items()):
             print("туннель %s: панель %s, подключение №%s, %s" % (k, v.get("panel"), v.get("inbound"), XUI_KINDS.get(v.get("kind"), v.get("kind"))))
         return
+    if cmd in ("xui-obfs", "xui-obfs-check") and len(a) > 1:   # для obfs-tune.sh, режим xui (#37)
+        try:
+            if cmd == "xui-obfs-check":
+                xui_tunable(a[1])
+                print("ok")
+                return
+            if len(a) < 3:
+                sys.exit("использование: panel.py xui-obfs ТУННЕЛЬ \"Jc=… H4=…\" [--trial]")
+            ok, msg = xui_obfs_set(a[1], a[2], trial="--trial" in a)
+        except ValueError as ex:
+            print("ОШИБКА: %s" % ex)
+            sys.exit(2)
+        audit("cli", "127.0.0.1", "xui-obfs", {"tunnel": a[1], "params": a[2], "ok": ok, "trial": "--trial" in a})
+        print(msg)
+        sys.exit(0 if ok else 1)
     if cmd == "check":
         c = conf()
         print("порт %s, адрес %s, TLS %s, пользователей %d" % (c["WEB_PORT"], c["WEB_BIND"], c["WEB_TLS"], len(load_users())))
