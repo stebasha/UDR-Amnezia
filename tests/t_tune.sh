@@ -95,6 +95,7 @@ ck "xui: общее подключение — отказ до подбора" '
 "$TN" run awgbackup xui 3 > $T/r5 2>&1; rc=$?
 ck "xui: подбор через 3x-ui (пробы --trial, H — диапазоны), в конце исходный набор" '[ $rc = 0 ] && grep -q "xui-obfs awgbackup .*H1=[0-9]*-[0-9]* .*--trial" $STUB/xui.log && head -n1 $DD/tune.tsv | grep -q "awgbackup	xui" && grep -q "^Jc = 4" $DD/backup.conf && grep -q "^H1 = 1111" $DD/backup.conf && tail -n1 $STUB/xui.log | grep -q "Jc=4 .*H4=4444 --trial"' || cat $T/r5
 n=$(awk -F'\t' '!/^#/ && $2==1 && $1>0 {print $1; exit}' $DD/tune.tsv)
-if [ -n "$n" ]; then "$TN" apply "$n" > $T/o 2>&1; ck "xui: apply — без --trial (с историей), набор на роутере" '[ $? = 0 ] && tail -n1 $STUB/xui.log | grep -vq -- "--trial" && ! grep -q "^Jc = 4$" $DD/backup.conf'; fi
+# набор на роутере — по H1: у новых наборов это диапазон, у исходного — число (Jc у нового может случайно совпасть с исходным)
+if [ -n "$n" ]; then "$TN" apply "$n" > $T/o 2>&1; arc=$?; ck "xui: apply — без --trial (с историей), набор на роутере" '[ $arc = 0 ] && tail -n1 $STUB/xui.log | grep -vq -- "--trial" && grep -q "^H1 = [0-9]*-[0-9]*$" $DD/backup.conf' || cat $T/o; fi
 echo "== tune: ошибок $fails"
 [ $fails = 0 ]
