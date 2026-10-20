@@ -31,6 +31,7 @@ echo "== t_ha (Home Assistant)"; rt t_ha python3 "$H/t_ha.py" || rc=1
 echo "== t_report (отчёт и учёт трафика)"; rt t_report python3 "$H/t_report.py" || rc=1
 echo "== t_autotune (автоподбор при деградации)"; rt t_autotune python3 "$H/t_autotune.py" || rc=1
 echo "== t_core (защитные функции панели)"; rt t_core python3 "$H/t_core.py" || rc=1
+echo "== t_vless (VLESS/Reality через Xray)"; rt t_vless python3 "$H/t_vless.py" || rc=1
 echo "== панель в браузере (если есть playwright)"
 out=$(AWG_UI_OPTIONAL=1 python3 "$H/t_ui.py" 2>&1); r=$?; echo "$out" | grep -E "^(FAIL|ui:)"; [ $r = 0 ] || rc=1
 echo "== перевод панели"; command -v node >/dev/null && { python3 "$ROOT/tools/i18n-check.py" | tail -1 || rc=1; }

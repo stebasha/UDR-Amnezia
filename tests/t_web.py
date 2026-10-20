@@ -125,7 +125,7 @@ class FakeXui:
     def __init__(self, token="xui-token-123456", existing=None):
         import http.server
         import threading
-        self.token, self.added, self.next_id, self.legacy = token, [], 50, False
+        self.token, self.added, self.next_id, self.legacy, self.updates = token, [], 50, False, []
         self.inbounds = [{"id": 1, "port": 2053, "protocol": "vless", "settings": {"clients": []}}] + (existing or [])
         fx = self
 
@@ -175,6 +175,15 @@ class FakeXui:
                     rec = dict(ib, id=fx.next_id, settings=st)
                     fx.inbounds.append(rec)
                     return self.reply(200, {"success": True, "msg": "ok", "obj": self.out(rec)})
+                m = re.match(r".*/update/(\d+)$", self.path)
+                if m:
+                    ib = json.loads(body)
+                    st = json.loads(ib["settings"]) if isinstance(ib["settings"], str) else ib["settings"]
+                    fx.updates.append(st.get("server", {}))
+                    for x in fx.inbounds:
+                        if x["id"] == int(m.group(1)):
+                            x["settings"] = st
+                    return self.reply(200, {"success": True, "msg": "ok", "obj": None})
                 m = re.match(r".*/del/(\d+)$", self.path)
                 if m:
                     fx.inbounds = [x for x in fx.inbounds if x["id"] != int(m.group(1))]
@@ -752,6 +761,29 @@ def main():
         open(os.path.join(LAB, "stub", "hs", "awgxui3"), "w").write("5")
         s, j = a.post("/api/xui/create", {"panel": "p1", "name": "awgxui3", "current": "Test-pass-123"})
         check("3x-ui 3.10: создание работает", s == 200 and j["ok"] and os.path.exists(os.path.join(dd, "awgxui3.conf")), j)
+        # подбор обфускации на сервере 3x-ui (#37): подключение только роутера — параметры меняются на обеих сторонах
+        pe = dict(os.environ, DD=dd, AWG_WEBD=os.path.join(dd, "web"), STUB=os.path.join(LAB, "stub"), XUI_OBFS_WAIT="3",
+                  PATH=os.path.join(LAB, "bin") + ":" + os.environ["PATH"])
+        xo = lambda *args: subprocess.run([sys.executable, os.path.join(dd, "web", "panel.py")] + list(args), capture_output=True, text=True, env=pe)
+        p_ = xo("xui-obfs-check", "awgxui3")
+        check("3x-ui подбор: подключение только роутера — можно", p_.returncode == 0 and p_.stdout.strip() == "ok", p_.stdout + p_.stderr)
+        open(os.path.join(LAB, "stub", "hs", "awgxui3"), "w").write("0")
+        P = "Jc=5 Jmin=41 Jmax=151 S1=31 S2=62 H1=1000-2000 H2=3000-4000 H3=5000-6000 H4=7000-8000"
+        p_ = xo("xui-obfs", "awgxui3", P, "--trial")
+        cx = open(os.path.join(dd, "awgxui3.conf")).read()
+        ibx = [x for x in fx.inbounds if str(x.get("remark", "")) == "UDR-Amnezia awgxui3"]
+        sx = ibx[0]["settings"]["server"] if ibx else {}
+        check("3x-ui подбор: набор в 3x-ui и на роутере (числа и диапазоны H), ключи и остальное как было",
+              p_.returncode == 0 and sx.get("jc") == 5 and sx.get("h1") == "1000-2000" and sx.get("s4") == 16 and sx.get("publicKey") == FakeXui.SRV["publicKey"]
+              and "Jc = 5" in cx and "H1 = 1000-2000" in cx and "S4 = 16" in cx and "I1 = <r 64>" in cx, (p_.stdout + p_.stderr, sx, cx))
+        open(os.path.join(LAB, "stub", "hs", "awgxui3"), "w").write("99999")
+        p_ = xo("xui-obfs", "awgxui3", "Jc=6 Jmin=42 Jmax=152 S1=32 S2=63 H1=11-22 H2=33-44 H3=55-66 H4=77-88", "--trial")
+        sx = ibx[0]["settings"]["server"] if ibx else {}
+        cx = open(os.path.join(dd, "awgxui3.conf")).read()
+        check("3x-ui подбор: без handshake — обе стороны возвращены на прежний набор", p_.returncode == 1 and "обе стороны возвращены" in p_.stdout
+              and sx.get("jc") == 5 and "Jc = 5" in cx, (p_.stdout + p_.stderr, sx))
+        p_ = xo("xui-obfs", "awgxui3", "Jc=6 PostUp=evil", "--trial")
+        check("3x-ui подбор: посторонние ключи отклоняются", p_.returncode == 2 and "неожиданный параметр" in p_.stdout, p_.stdout)
         a.post("/api/xui/remove", {"name": "awgxui3", "current": "Test-pass-123"})
         n0 = len(fx.inbounds)
         open(os.path.join(dd, "awgbad.conf"), "w").write("занято")
@@ -765,6 +797,9 @@ def main():
         bk0 = open(os.path.join(dd, "backup.conf")).read()
         s, j = a.post("/api/xui/link", {"panel": "p1", "inbound": 45, "name": "awgbackup"})
         db = json.load(open(os.path.join(dd, "xui.json")))
+        p_ = subprocess.run([sys.executable, os.path.join(dd, "web", "panel.py"), "xui-obfs-check", "awgbackup"], capture_output=True, text=True,
+                            env=dict(os.environ, DD=dd, AWG_WEBD=os.path.join(dd, "web"), STUB=os.path.join(LAB, "stub"), PATH=os.path.join(LAB, "bin") + ":" + os.environ["PATH"]))
+        check("3x-ui подбор: общее подключение (№45, клиентов 2) — менять сервер нельзя", p_.returncode == 2 and "не только роутер" in p_.stdout, p_.stdout + p_.stderr)
         check("3x-ui: awgbackup привязан к №45 (клиент home), конфиг не тронут", s == 200 and db["tunnels"]["awgbackup"]["kind"] == "linked"
               and db["tunnels"]["awgbackup"]["email"] == "home" and open(os.path.join(dd, "backup.conf")).read() == bk0, (j, db))
         # обновить из 3x-ui: в 3x-ui сменили обфускацию — роутер берёт новые значения, свой ключ и адрес оставляет

@@ -126,7 +126,7 @@ def api_tunnel_label(h, d):
 
 
 def api_tunnel_conf_get(h, q):
-    t = get_tunnel((q.get("name") or [""])[0])
+    t = wg_only(get_tunnel((q.get("name") or [""])[0]))
     return {"name": t, "text": mask_conf(read_file(conf_path(t))), "path": conf_path(t)}
 
 

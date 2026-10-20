@@ -853,15 +853,19 @@ grep -E -c '^(Address|Endpoint|Jc)' /data/awg/main.conf</code></pre></figure>
 <span class="c">#   up.sh awgmain    один туннель (интерфейс пересоздаётся; так применяют новый конфиг)</span>
 <span class="c">#   up.sh --conf-of ИМЯ   имя файла конфига туннеля (для сторожа)</span>
 <span class="c"># IPv6 (#23): при LEAK_V6=route IPv6-адрес из Address тоже назначается, AllowedIPs = 0.0.0.0/0, ::/0.</span>
+<span class="c"># VLESS/Reality (#42): туннели из XRAY_TUNNELS — процесс Xray (служба awg-xray-ИМЯ, вход tun), конфиг xray/ИМЯ.json.</span>
 <span class="c"># Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, &lt;имя&gt;.conf — дополнительные.</span>
 DD=${DD:-/data/awg}
 cd "$DD" || exit 1
 [ -r awg.env ] &amp;&amp; . ./awg.env
-MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}
+MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}
 umask 077
 
+is_xray(){ case " $XRAY_TUNNELS " in *" $1 "*) return 0;; esac; return 1; }
+
 conf_of(){
-  if [ "$1" = "$MAIN" ]; then echo main.conf
+  if is_xray "$1"; then case " $TUNNELS_EXTRA " in *" $1 "*) echo "xray/$1.json";; esac
+  elif [ "$1" = "$MAIN" ]; then echo main.conf
   elif [ -n "$BACKUP" ] &amp;&amp; [ "$1" = "$BACKUP" ]; then
     if [ -f backup.conf ] || [ ! -f client.conf ]; then echo backup.conf; else echo client.conf; fi
   else
@@ -891,9 +895,41 @@ resolve_endpoint(){  # resolve_endpoint ФАЙЛ ИНТЕРФЕЙС
   echo "Endpoint $host → $ip"
 }
 
+jval(){ sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$2" | head -1; }   # jval КЛЮЧ ФАЙЛ — простое поле из .info
+
+bring_up_xray(){  # туннель VLESS: Xray создаёт интерфейс TUN сам; адрес, MTU и rp_filter — как у AmneziaWG
+  local n=$1 cfg="$DD/xray/$1.json" info="$DD/xray/$1.info" addr mtu u="awg-xray-$1"
+  [ -x "$DD/xray/xray" ] || { echo "ОШИБКА: Xray не установлен ($DD/xray/xray): «Туннели → VLESS → Установить Xray»"; return 1; }
+  [ -f "$cfg" ] || { echo "ОШИБКА: нет файла $cfg"; return 1; }
+  addr=$(jval addr "$info"); mtu=$(jval mtu "$info")
+  [[ "$addr" =~ ^[0-9.]+/[0-9]+$ ]] || { echo "ОШИБКА: в $info нет адреса туннеля"; return 1; }
+  [[ "$mtu" =~ ^[0-9]+$ ]] || mtu=1400
+  "$DD/xray/xray" run -test -c "$cfg" &gt;/dev/null 2&gt;&amp;1 || { echo "ОШИБКА: Xray не принял конфиг $cfg:"; "$DD/xray/xray" run -test -c "$cfg" 2&gt;&amp;1 | tail -3; return 1; }
+  if command -v systemctl &gt;/dev/null 2&gt;&amp;1 &amp;&amp; [ -d /run/systemd/system ]; then
+    systemctl stop "$u" &gt;/dev/null 2&gt;&amp;1; systemctl reset-failed "$u" &gt;/dev/null 2&gt;&amp;1
+  else
+    pkill -f "xray run -c $cfg" 2&gt;/dev/null
+  fi
+  ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; ip link del "$n"
+<span class="c">  # отдельная служба с перезапуском при сбое: Xray не зависит от службы, которая поднимает туннель (как scope у amneziawg-go)</span>
+  if [ -z "${AWG_NO_SCOPE:-}" ] &amp;&amp; [ -d /run/systemd/system ] &amp;&amp; command -v systemd-run &gt;/dev/null 2&gt;&amp;1; then
+    systemd-run --unit="$u" --collect --quiet --description="Xray VLESS $n" -p Restart=on-failure -p RestartSec=5 \
+      -p MemoryMax=192M -p Nice=5 "$DD/xray/xray" run -c "$cfg" &gt;/dev/null 2&gt;&amp;1 || { echo "ОШИБКА: не запустилась служба $u"; return 1; }
+  else
+    setsid "$DD/xray/xray" run -c "$cfg" &gt;"${AWG_RUN:-/run}/$u.log" 2&gt;&amp;1 &lt; /dev/null &amp;
+  fi
+  for _ in $(seq 1 30); do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
+  ip link show "$n" &gt;/dev/null 2&gt;&amp;1 || { echo "ОШИБКА: Xray не создал интерфейс $n (журнал: journalctl -u $u)"; return 1; }
+  ip addr add "$addr" dev "$n" 2&gt;/dev/null
+  ip link set "$n" up mtu "$mtu"
+  sysctl -qw "net.ipv4.conf.$n.rp_filter=0" 2&gt;/dev/null
+  echo "$n поднят: VLESS через Xray, адрес $addr, MTU $mtu, конфиг xray/$n.json"
+}
+
 bring_up(){
   local n=$1 conf raw tmp addr addr6="" mtu allowed="0.0.0.0\/0"
   conf=$(conf_of "$n")
+  if [ -n "$conf" ] &amp;&amp; is_xray "$n"; then bring_up_xray "$n"; return $?; fi
   [ -z "$conf" ] &amp;&amp; { echo "ОШИБКА: $n не указан в awg.env (MAIN, BACKUP или TUNNELS_EXTRA)"; return 1; }
   [ -f "$conf" ] || { echo "ОШИБКА: нет файла $DD/$conf"; return 1; }
   raw=${AWG_RUN:-/run}/$n.raw; tmp=${AWG_RUN:-/run}/$n.awg.conf
@@ -947,7 +983,7 @@ for t in $TUNNELS_EXTRA; do bring_up "$t" || rc=1; done
 exit $rc
 EOF
 chmod 755 /data/awg/up.sh
-/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 102 строк">Показать целиком · 102 строк</button></figure>
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 138 строк">Показать целиком · 138 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
   </div></div>
 
@@ -1950,7 +1986,7 @@ rep(){ local s='' k; for ((k=0;k&lt;$2;k++)); do s+=$1; done; printf '%s' "$s"; 
 hdr(){ local t=" $1 "; echo "${D}$(rep "$LN" 2)${N}${B}${t}${N}${D}$(rep "$LN" $((W-${#t}-2)))${N}"; }
 hum(){ awk -v b="${1:-0}" 'BEGIN{split("B KiB MiB GiB TiB",u," ");i=1;while(b&gt;=1024&amp;&amp;i&lt;5){b/=1024;i++} if(i==1) printf("%d %s",b,u[i]); else printf("%.1f %s",b,u[i])}'; }
 mbit(){ awk -v b="${1:-0}" 'BEGIN{printf("%.2f",b*8/1000000)}'; }
-age_s(){ local ts; ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+age_s(){ local ts; case " ${XRAY_TUNNELS:-} " in *" $1 "*) ts=$(cat "${AWG_RUN:-/run}/awg-chk-$1" 2&gt;/dev/null); [[ $ts =~ ^[0-9]+$ ]] &amp;&amp; echo $(( $(date +%s) - ts )) || echo -1; return;; esac; ts=$($AWG show "$1" latest-handshakes 2&gt;/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 age_f(){ local s=$1; if [ "$s" -lt 0 ]; then echo never; elif [ "$s" -lt 120 ]; then echo "${s}s"; elif [ "$s" -lt 7200 ]; then echo "$((s/60))m$((s%60))s"; elif [ "$s" -lt 172800 ]; then echo "$((s/3600))h$(((s%3600)/60))m"; else echo "$((s/86400))d"; fi; }
 st_of(){ local a=$1; if [ "$a" -lt 0 ]; then echo DOWN; elif [ "$a" -lt 180 ]; then echo UP; elif [ "$a" -lt 900 ]; then echo IDLE; else echo STALE; fi; }
 col_of(){ case $1 in UP) printf '%s' "$G";; IDLE) printf '%s' "$Y";; *) printf '%s' "$R";; esac; }
@@ -2914,6 +2950,7 @@ awgctl lists update<span class="c">          # скачать сейчас (пр
     <tr><th>Режим</th><th>Что меняется</th><th>Для каких туннелей</th></tr>
     <tr><td>Только роутер</td><td><code>Jc</code>, <code>Jmin</code>, <code>Jmax</code> — мусорные пакеты перед handshake: принимающая сторона их отбрасывает и не сверяет</td><td>любые: провайдер VPN, 3x-ui, свой VPS</td></tr>
     <tr><td>Роутер и свой VPS</td><td>ещё <code>S1</code>, <code>S2</code>, <code>H1</code>–<code>H4</code> — согласованно на сервере и роутере, с откатом обеих сторон</td><td>туннель на <code>awg-server</code> вашего VPS (AWG 1.x с числовыми H)</td></tr>
+    <tr><td>Роутер и сервер 3x-ui (1.9)</td><td><code>Jc</code>…<code>H4</code> (H — непересекающимися диапазонами, как в AWG 3.1): через API 3x-ui на сервере и в конфиге роутера, с проверкой handshake и откатом обеих сторон</td><td>туннель, связанный с подключением 3x-ui, где клиент один — роутер (общее подключение с телефонами не трогается)</td></tr>
   </table></div>
   <p><b>Сам при деградации (1.7):</b> «Подбирать самому при деградации» (<code>AUTO_TUNE=yes</code>, нужен Telegram-бот). Если неактивный канал 15 минут без handshake или с потерями выше порога (обычно основной, после того как провайдер начал его резать и сторож ушёл на запасной), роутер сам запускает подбор «только роутер» — не чаще раза в сутки на канал — и присылает администраторам лучший набор с кнопкой «Применить». Активный канал не трогается; ставится только по кнопке, через историю конфигов с проверкой handshake и откатом.</p>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">подбор по SSH</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>awgctl tune run awgbackup client 5<span class="c">     # текущий набор и ещё 5 (только роутер)</span>
@@ -2932,6 +2969,19 @@ awgctl tune apply 1<span class="c">                    # поставить на
     <li><b>Подключить</b> — туннель к уже существующему клиенту, если его ключ хранит 3x-ui.</li>
   </ul>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">подключения 3x-ui (только чтение)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>python3 /data/awg/web/panel.py xui</code></pre></figure>
+
+  <h3>VLESS/Reality по подписке (1.9)</h3>
+  <p>Если провайдер VPN выдаёт подписку для Happ, v2rayN или Hiddify (VLESS с Reality или TLS), её можно подключить как обычный туннель цепочки: «<b>Туннели → VLESS</b>».</p>
+  <ol>
+    <li><b>Установить Xray</b> — последний официальный релиз <code>XTLS/Xray-core</code> с github.com, сверка SHA-256 из файла <code>.dgst</code> релиза; прежняя версия остаётся (<code>xray.sh rollback</code>). Около 30 МБ на диске, 30–60 МБ памяти, пока туннель работает.</li>
+    <li><b>Добавить подписку</b> — адрес https (тот же, что в приложении). Роутер скачивает список (напрямую, при неудаче — через активный туннель), берёт из него серверы VLESS, определяет страну по флагу или названию и меряет задержку TCP. Подписка обновляется раз в сутки.</li>
+    <li><b>Создать туннель</b> — имя (например <code>awgvless</code>), страна (самый быстрый сервер в ней) или конкретный сервер. Туннель становится дополнительным в цепочке переключения: на него ведут «Маршруты» или «Активировать». Если при обновлении подписки сервер туннеля пропал, туннель сам переходит на лучший сервер той же страны (кроме туннелей с заданным вручную сервером).</li>
+  </ol>
+  <p>Как работает: Xray запускается отдельной службой <code>awg-xray-ИМЯ</code> (перезапуск при сбое, лимит памяти 192 МБ) со входом TUN — появляется интерфейс <code>ИМЯ</code> с адресом <code>198.19.N.1</code>. Маршрут, kill switch, исключения, списки и GeoIP работают с ним так же, как с AmneziaWG. Соединения Xray привязаны к WAN, адрес сервера исключается из awg-self — петли через туннель нет. Handshake у VLESS нет: «живость» — последняя успешная проверка сторожем (HTTPS через интерфейс). ICMP через Xray не ходит, поэтому качество меряется по TCP, а проверка MTU в «Тесте канала» пропускается. UUID серверов и адрес подписки с токеном в браузер не уходят (файлы в <code>/data/awg/xray/</code>, права 600).</p>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">Xray и подписки VLESS</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/xray.sh version<span class="c">                        # установленная версия Xray</span>
+/data/awg/xray.sh latest<span class="c">                         # последняя версия в XTLS/Xray-core</span>
+python3 /data/awg/web/panel.py vless-refresh<span class="c">     # обновить подписки сейчас</span>
+journalctl -u awg-xray-awgvless -n 30<span class="c">            # журнал Xray туннеля awgvless</span></code></pre></figure>
 
   <h3>Свой VPS: защита и смена ключей</h3>
   <p>«Компоненты → Свой VPS»: автообновления безопасности, fail2ban для SSH, вход по ключам (с предупреждением, чтобы не потерять доступ; установщик может добавить на VPS свой ключ роутера и тогда входит без пароля) и смена ключей туннеля до VPS с автоматическим откатом при неудаче. ufw установщик не включает: включённый ufw с политикой FORWARD=DROP ломает NAT туннеля.</p>
@@ -3012,6 +3062,7 @@ for s in AWG_UI AWG_DOM AWG_DIRECT AWG_LIST AWG_GEO AWG_ACC_UP AWG_ACC_DN; do ip
 for s in $EXTRA_SUBNETS; do ipset del UBIOS4local_network "$s" 2&gt;/dev/null; done
 
 <span class="c"># 4. туннели</span>
+for u in $(systemctl list-units --plain --no-legend "awg-xray-*" 2&gt;/dev/null | awk '{print $1}'); do systemctl stop "$u" 2&gt;/dev/null &amp;&amp; echo "служба $u остановлена"; done   # VLESS (#42)
 for i in $(ip -br link 2&gt;/dev/null | awk '$1 ~ /^awg/ {sub(/@.*/,"",$1); print $1}'); do ip link del "$i" 2&gt;/dev/null &amp;&amp; echo "туннель $i удалён"; done
 pkill -x amneziawg-go 2&gt;/dev/null
 
@@ -3035,7 +3086,7 @@ rm -f /tmp/awg-sim-down /run/awg-force /run/awg-state /run/awg-*.lock /tmp/awg-s
 if [ "$1" = --purge ]; then rm -rf "$D"; echo "Удалено всё, включая $D"; else echo "Службы и правила убраны. Файлы остались в $D (полностью: $0 --purge)"; fi
 echo "Профиль VPN Client и правила Policy-Based Routes удалите в интерфейсе UniFi сами, если они больше не нужны."
 EOF
-chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 75 строк">Показать целиком · 75 строк</button></figure>
+chmod 755 /data/awg/awg-uninstall.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 76 строк">Показать целиком · 76 строк</button></figure>
   <p><code>/data/awg/awg-uninstall.sh</code> убирает службы, маршруты, правила iptables, интерфейсы и строки в <code>.bashrc</code>, возвращает баннер. С ключом <code>--purge</code> удаляет и <code>/data/awg</code> вместе с конфигами. Профиль-рельсу и правила PBR удалите в UniFi вручную, <b>сначала правила</b>: пока правило ссылается на рельсу без AWG-маршрута, его устройства остаются без интернета. На VPS: <code>systemctl disable --now awg-server; rm -rf /etc/amnezia /etc/systemd/system/awg-server.service /usr/local/bin/awg-up.sh</code>.</p>
 </section>
 
@@ -3139,6 +3190,7 @@ EOF</code></pre></figure>
       <tr><td><code>routes.sh</code>, <code>route.d/ID.env</code> 🔒, <code>awg-failover-ID.service</code>, <code>failover-ID.log</code></td><td>Дополнительные маршруты (1.6): профиль UniFi → своя цепочка туннелей и свой сторож</td><td>★</td></tr>
     <tr><td><code>obfs-tune.sh</code>, <code>tune.tsv</code>, <code>tune.log</code></td><td>Автоподбор параметров обфускации и его результаты (1.6)</td><td>★</td></tr>
     <tr><td><code>lists.sh</code>, <code>lists/</code>, <code>lists.log</code></td><td>Списки заблокированного и GeoIP: кэш и журнал обновления (1.7)</td><td>★</td></tr>
+    <tr><td><code>xray.sh</code>, <code>xray/</code> 🔒</td><td>Xray для туннелей VLESS: бинарник, подписки (<code>vless.json</code>), конфиги туннелей (1.9)</td><td>★</td></tr>
     <tr><td><code>autotune.json</code></td><td>Автоподбор при деградации: когда и какой туннель подбирался, предложенный набор (1.7)</td><td></td></tr>
     <tr><td><code>web/traffic.json</code> 🔒</td><td>Трафик через туннели по устройствам за 62 дня, если включён учёт (1.7)</td><td></td></tr>
     <tr><td><code>vps.sh</code>, <code>vps.env</code>, <code>vps.d/ID.env</code>, <code>ssh/</code> 🔒, <code>vps-job.log</code></td><td>Свой VPS из панели: мастер, несколько серверов, сборка бинарников роутера (1.6)</td><td>★</td></tr>
@@ -3172,6 +3224,7 @@ EOF</code></pre></figure>
     <tr><td><code>AUTO_TUNE</code></td><td><code>no</code></td><td>Автоподбор обфускации неактивного канала при деградации, итог — в Telegram с кнопкой (1.7); <code>AUTO_TUNE_AFTER</code> (900 с), <code>AUTO_TUNE_EVERY</code> (86400 с)</td></tr>
     <tr><td><code>TRAFFIC_ACCT</code></td><td><code>no</code></td><td>Учёт трафика через туннели по устройствам для отчёта (1.7)</td></tr>
     <tr><td><code>DNS_INTERCEPT</code>, <code>DNS_CLIENTS</code>, <code>DNS_BLOCK_DOT</code></td><td><code>no</code>, пусто, <code>no</code></td><td>Перехват DNS устройств на роутер (1.7); вместе с <code>DNS_ALL_TUNNEL=yes</code> — через туннель</td></tr>
+    <tr><td><code>XRAY_TUNNELS</code></td><td>пусто</td><td>Туннели VLESS (1.9): поднимаются через Xray, а не amneziawg-go; задаётся панелью</td></tr>
     <tr><td><code>LISTS_MODE</code>, <code>GEO_COUNTRIES</code>, <code>LIST_URLS</code></td><td><code>off</code>, пусто, antifilter.download</td><td>Списки и GeoIP (1.7): <code>blocked</code> — через туннель только заблокированное, <code>geoip</code> — всё, кроме стран</td></tr>
     <tr><td><code>ROUTE_ONLY</code></td><td><code>""</code></td><td>Туннели только для дополнительных маршрутов: основной их не использует (1.6)</td></tr>
     <tr><td><code>UI_FIX</code>, <code>UI_DOMAINS</code>, <code>UI_DNS</code>, <code>DNS_ALL_TUNNEL</code></td><td><code>yes</code>, <code>"ui.com"</code>, <code>9.9.9.9</code>, <code>no</code></td><td>awg-self: unifi.ui.com через туннель; весь DNS роутера через туннель (эксперимент)</td></tr>

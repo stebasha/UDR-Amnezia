@@ -18,7 +18,7 @@
 #   awgctl web [passwd ИМЯ|users|totp-off ИМЯ|cert|url]   веб-панель
 #   awgctl vps [--vps ID] [list|test|status|versions|update|rotate-keys|obfs]   свой VPS (vps.sh); несколько VPS — #32
 #   awgctl routes [rails|list|add|set|remove|switch]   разные туннели для разных профилей PBR UniFi (routes.sh, #22)
-#   awgctl tune [run ТУННЕЛЬ [client|server] [N]|apply НОМЕР|show]   автоподбор параметров обфускации (obfs-tune.sh, #33)
+#   awgctl tune [run ТУННЕЛЬ [client|server|xui] [N]|apply НОМЕР|show]   автоподбор параметров обфускации (obfs-tune.sh, #33)
 #   awgctl lists [status|update|load]    списки заблокированного и GeoIP для устройств под PBR (lists.sh, #38)
 DD=${DD:-/data/awg}
 AWG=$DD/awg
@@ -29,7 +29,7 @@ EVF=$DD/events.log
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TABLE=${TABLE:-0}
 TUNS="$MAIN${BACKUP:+ $BACKUP}${TUNNELS_EXTRA:+ $TUNNELS_EXTRA}"
 
-hs_age(){ local ts; ts=$($AWG show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+hs_age(){ local ts; case " ${XRAY_TUNNELS:-} " in *" $1 "*) ts=$(cat "${AWG_RUN:-/run}/awg-chk-$1" 2>/dev/null); [[ $ts =~ ^[0-9]+$ ]] && echo $(( $(date +%s) - ts )) || echo -1; return;; esac; ts=$($AWG show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 fa(){ local a=$1; if [ "$a" -lt 0 ]; then echo "нет"; elif [ "$a" -lt 120 ]; then echo "${a}с"; elif [ "$a" -lt 7200 ]; then echo "$((a/60))м"; else echo "$((a/3600))ч"; fi; }
 fd(){ local s=$1; if [ "$s" -ge 86400 ]; then printf '%dд %02dч' $((s/86400)) $((s%86400/3600)); elif [ "$s" -ge 3600 ]; then printf '%dч %02dм' $((s/3600)) $((s%3600/60)); else printf '%dм %02dс' $((s/60)) $((s%60)); fi; }
 resolve_name(){ case "$1" in main|основной) echo "$MAIN";; backup|запасной) echo "$BACKUP";; *) echo "$1";; esac; }

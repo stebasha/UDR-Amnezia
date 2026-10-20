@@ -23,7 +23,7 @@ wa(){ echo "  ${Y}▲${N} $1"; [ -n "$2" ] && echo "      ${D}$2${N}"; }
 inf(){ echo "  ${D}· $*${N}"; }
 sec(){ echo; echo "${B}$*${N}"; }
 dev_of(){ awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'; }
-hs_age(){ local ts; ts=$("$AWG" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
+hs_age(){ local ts; case " ${XRAY_TUNNELS:-} " in *" $1 "*) ts=$(cat "${AWG_RUN:-/run}/awg-chk-$1" 2>/dev/null); [[ $ts =~ ^[0-9]+$ ]] && echo $(( $(date +%s) - ts )) || echo -1; return;; esac; ts=$("$AWG" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 conf_of(){ case "$1" in "$MAIN") echo main.conf;; "$BACKUP") [ -f "$DD/backup.conf" ] && echo backup.conf || echo client.conf;; *) echo "$1.conf";; esac; }
 https_ok(){  # https_ok [интерфейс] → печатает число ответивших узлов из TARGETS
   local n=0 t c
@@ -67,10 +67,20 @@ DIRECT_IP=$(extip "$WAN"); [ -n "$DIRECT_IP" ] && inf "внешний адрес
 # ---------------------------------------------------------------- 2. туннели
 for t in $TUNS; do
   sec "2. Туннель $t"
+  xr=""; case " ${XRAY_TUNNELS:-} " in *" $t "*) xr=1;; esac
+  if [ -n "$xr" ]; then      # VLESS (#42): сервер — из xray/ИМЯ.info, живость — проверка сторожа (у Xray нет handshake)
+    cf=$DD/xray/$t.info
+    [ -x "$DD/xray/xray" ] || { no "$t: Xray не установлен" "панель → Туннели → VLESS → Установить Xray"; continue; }
+    if [ ! -f "$cf" ]; then no "$t: нет $cf" "панель → Туннели → VLESS: выберите сервер заново"; continue; fi
+    host=$(sed -n 's/.*"host": *"\([^"]*\)".*/\1/p' "$cf"); port=$(sed -n 's/.*"port": *\([0-9]*\).*/\1/p' "$cf")
+    epip=$(sed -n 's/.*"ip": *"\([^"]*\)".*/\1/p' "$cf")
+    systemctl is-active --quiet "awg-xray-$t" 2>/dev/null && ok "служба awg-xray-$t работает" || no "$t: служба awg-xray-$t не работает" "journalctl -u awg-xray-$t -n 30; $DD/up.sh $t"
+  else
   cf=$DD/$(conf_of "$t")
   if [ ! -f "$cf" ]; then no "$t: нет конфига $cf" "$DD/install.sh → Компоненты → Туннели"; continue; fi
   ep=$(awk -F'=' 'tolower($1) ~ /^[ \t]*endpoint[ \t]*$/ {gsub(/[ \t\r]/,"",$2); print $2; exit}' "$cf"); host=${ep%:*}; port=${ep##*:}
   epip=$("$AWG" show "$t" endpoints 2>/dev/null | awk 'NR==1{print $2}' | sed -E 's/:[0-9]+$//')
+  fi
   if [ -z "$epip" ]; then
     case "$host" in *[!0-9.]*) epip=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}');; *) epip=$host;; esac
   fi
@@ -84,7 +94,10 @@ for t in $TUNS; do
     *)    ok "к серверу пакеты идут через $via";;
   esac
   hs=$(hs_age "$t")
-  if [ "$hs" -lt 0 ]; then
+  if [ -n "$xr" ]; then
+    if [ "$hs" -ge 0 ] && [ "$hs" -le 180 ]; then ok "последняя успешная проверка сторожем — $hs с назад"
+    else no "$t: сторож давно не видел ответа через туннель (${hs})" "сервер VLESS недоступен или подписка истекла: панель → Туннели → VLESS → Обновить; journalctl -u awg-xray-$t -n 30"; fi
+  elif [ "$hs" -lt 0 ]; then
     if [ "${WAN_OK:-0}" = 0 ]; then no "$t: handshake не было — но и WAN не работает (см. раздел 1)" "сначала интернет у провайдера"
     else no "$t: handshake ни разу не прошёл — сервер не отвечает" "порт закрыт у хостера, неверный ключ или параметры обфускации, DPI. Подробно: $DD/install.sh → Диагностика → tcpdump на WAN"; fi
     continue

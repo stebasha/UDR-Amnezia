@@ -553,3 +553,106 @@ def api_xui_remove(h, d):
         xui_db_save(db)
     h.act("xui-remove", name)
     return {"ok": True, "msg": "; ".join(msg)}
+
+
+# ======================================================================= подбор обфускации на сервере 3x-ui (#37)
+XUI_OBFS_KEYS = ("Jc", "Jmin", "Jmax", "S1", "S2", "H1", "H2", "H3", "H4")
+
+
+def xui_tunable(name):
+    """Подключение 3x-ui, которое обслуживает только роутер: параметры сервера можно менять, не задев других клиентов.
+    → (запись, панель, подключение, settings, клиент, поля конфига роутера); иначе ValueError с причиной."""
+    rec = xui_map().get(name)
+    if not rec:
+        raise ValueError("туннель %s не связан с 3x-ui: режим 3x-ui — только для туннелей из «Туннели → 3x-ui»" % name)
+    _, p = xui_panel(rec.get("panel"))
+    ib = ib_get(p, rec.get("inbound") or 0)
+    if ib.get("protocol") != "amneziawg":
+        raise ValueError("подключение №%s в 3x-ui — не AmneziaWG" % ib.get("id"))
+    st = ib_settings(ib)
+    clients = [c for c in st.get("clients", []) if isinstance(c, dict)]
+    f = conf_fields(read_file(conf_path(name)), masked=False)["fields"]
+    pub = awg_pub(f["Interface"].get("PrivateKey", "")) if f["Interface"].get("PrivateKey") else ""
+    if len(clients) != 1 or not pub or clients[0].get("publicKey") != pub:
+        raise ValueError("подключение №%s в 3x-ui обслуживает не только роутер (клиентов: %d): параметры сервера менять нельзя — "
+                         "другие клиенты потеряют связь. Подбирайте режимом «только роутер»" % (ib.get("id"), len(clients)))
+    server = st.get("server") or {}
+    for k in XUI_OBFS_KEYS:
+        if not _obfs_val_ok(k, str(server.get(k.lower(), "")).strip()):
+            raise ValueError("в подключении №%s неожиданное значение %s (%s): подбор его не меняет" % (ib.get("id"), k, server.get(k.lower())))
+    return rec, p, ib, st, clients[0], f
+
+
+def _obfs_val_ok(k, v):
+    """Jc…S2 — числа; H1–H4 — число или диапазон «от-до» (так их задаёт AmneziaWG 2.0/3.1 в 3x-ui)."""
+    if re.match(r"^\d{1,10}$", v):
+        return True
+    m = re.match(r"^(\d{1,10})-(\d{1,10})$", v) if k.startswith("H") else None
+    return bool(m) and int(m.group(1)) < int(m.group(2))
+
+
+def _xui_push(p, ib, st, server):
+    """Записать в 3x-ui подключение с новыми параметрами сервера; остальное — как было (в том же виде: строка или объект)."""
+    st2 = dict(st, server=server)
+    body = {k: v for k, v in ib.items() if k not in ("clientStats",)}
+    body["settings"] = json.dumps(st2) if isinstance(ib.get("settings"), str) else st2
+    xui_req("POST", "/panel/api/inbounds/update/%d" % int(ib["id"]), p=p, body=body)
+
+
+def _xui_router_text(name, ib, p, cl, f, server):
+    host = f["Peer"].get("Endpoint", "").rsplit(":", 1)[0] or ib_host(ib, p)
+    return awg31_conf(server, f["Interface"].get("PrivateKey", ""), f["Interface"].get("Address", "") or client_v4(cl), host,
+                      int(ib.get("port") or 0), str(cl.get("preSharedKey") or ""))
+
+
+def xui_obfs_set(name, params, trial=False, wait=None):
+    """Поставить Jc…H4 согласованно: на сервере 3x-ui и на роутере; без handshake — вернуть обе стороны. → (ok, сообщение).
+    trial — проба при подборе: без записи в историю конфигов."""
+    kv = {}
+    for x in str(params).split():
+        k, _, v = x.partition("=")
+        if k not in XUI_OBFS_KEYS or not _obfs_val_ok(k, v):
+            raise ValueError("неожиданный параметр: %s" % x)
+        kv[k] = int(v) if v.isdigit() else v
+    if not kv:
+        raise ValueError("нет параметров")
+    wait = int(wait or os.environ.get("XUI_OBFS_WAIT") or 45)
+    rec, p, ib, st, cl, f = xui_tunable(name)
+    old_srv = dict(st.get("server") or {})
+    new_srv = dict(old_srv, **{k.lower(): v for k, v in kv.items()})
+    cp = conf_path(name)
+    old_text = read_file(cp)
+    new_text = _xui_router_text(name, ib, p, cl, f, new_srv)
+    errs = conf_validate(new_text)
+    if errs:
+        raise ValueError("конфиг не принят: " + "; ".join(errs))
+
+    def router(text):
+        with LOCK:
+            write_secure(cp, text)
+            return up_tunnel(name)
+
+    _xui_push(p, ib, st, new_srv)
+    t0 = time.time()
+    rc, out = router(new_text)
+    hs = -1
+    while rc == 0 and time.time() - t0 < wait:
+        time.sleep(2)
+        hs = hs_age(name)
+        if 0 <= hs <= time.time() - t0 + 1:
+            break
+        hs = -1
+    if rc != 0 or hs < 0:
+        why = "туннель не поднялся: " + out.strip()[:200] if rc != 0 else "handshake нет за %d с" % wait
+        try:
+            _xui_push(p, ib, st, old_srv)
+            back = "обе стороны возвращены"
+        except ValueError as ex:
+            back = "на роутере возвращено, в 3x-ui вернуть не удалось (%s) — проверьте подключение №%s" % (ex, ib.get("id"))
+        router(old_text)
+        return False, "%s: %s" % (why, back)
+    if not trial:
+        rev_save(name, old_text, "до: обфускация 3x-ui")
+        rev_save(name, new_text, "обфускация 3x-ui: " + params)
+    remember(name, dict(rec, synced=now()))
+    return True, "3x-ui и роутер: %s — handshake есть" % params
