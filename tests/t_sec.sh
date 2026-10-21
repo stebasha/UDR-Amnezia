@@ -50,6 +50,19 @@ ck "страны: свежие (неделя) — не скачиваются с
 printf 'SEC_GEO_ALLOW="zz"\n' >> "$DD/awg.env"
 "$X" apply > $T/o 2>&1
 ck "страна без адресов: правило по странам не ставится (иначе отбросились бы все)" 'grep -q "▲ адресов разрешённых стран нет" $T/o && ! cf | grep -q AWG_SEC_GEO && ! ci | grep -q AWG_SEC_GEO' || cat $T/o
+# не скачалось при включении — сверка повторяет сама (не чаще раза в 10 минут), причина — в apply.log
+mv "$T/srv/ru.cidr" "$T/srv/ru.off"; rm -f "$DD/lists/geo-ru.cidr" "$DD/sec/geo.cidr" "$DD/sec/geo.ts"; ipset destroy AWG_SEC_GEO
+printf 'SEC_GEO_ALLOW="ru"\n' >> "$DD/awg.env"
+"$X" ensure
+ck "страны не скачались: правила нет, причина в журнале" '! cf | grep -q AWG_SEC_GEO && grep -q "✘ RU" "$DD/sec/apply.log"' || cat "$DD/sec/apply.log"
+mv "$T/srv/ru.off" "$T/srv/ru.cidr"
+"$X" ensure
+ck "повтор не раньше чем через 10 минут" '! cf | grep -q AWG_SEC_GEO'
+echo $(( $(date +%s) - 700 )) > "$DD/sec/geo.try"
+"$X" ensure
+ck "через 10 минут — скачано, правило поставлено" 'cf | grep -q ctorigdstport && [ "$(grep -c . "$STUB/ipset-AWG_SEC_GEO")" = 6 ]' || cat "$DD/sec/apply.log"
+rm -f "$DD/sec/geo.ts"; "$X" geo > $T/o 2>&1
+ck "sec.sh geo: скачать сейчас и поставить" 'grep -q "только из RU" $T/o' || cat $T/o
 printf 'SEC_GEO_ALLOW="ru"\nSEC_RATE=0\nSEC_TRAP=no\n' >> "$DD/awg.env"
 "$X" apply > /dev/null 2>&1
 ck "ловушки и частота выключаются по отдельности" '! ci | grep -q AWG_SEC_TRAP && ! cf | grep -q hashlimit && cf | grep -q ctorigdstport'

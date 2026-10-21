@@ -3068,11 +3068,16 @@
         if (sug.SEC_GEO_PORTS) { vals.SEC_GEO_PORTS = sug.SEC_GEO_PORTS; vals.SEC_GEO_ALLOW = cc; }
         try { ok((await api('/api/settings', { values: vals })).msg); setTimeout(() => load(true), 3000); } catch (e) { err(e); }
       });
+      const needGeo = pr.on && pr.geo_allow && pr.geo_ports && !pr.geo_set;
+      const geoBtn = needGeo ? el('button', { class: 'btn primary' }, icon('download', 'sm'), T('Скачать адреса стран')) : null;
+      if (geoBtn) geoBtn.addEventListener('click', () => busy(geoBtn, async () => {
+        try { const x = await api('/api/security/geo', {}); (x.ok ? ok : err)(x.msg); load(true); } catch (e) { err(e); }
+      }));
       const form = settingsForm(T('Защита входящих'), 'lock', ['SEC_PROTECT', 'SEC_GEO_ALLOW', 'SEC_GEO_PORTS', 'SEC_TRAP', 'SEC_RATE', 'SEC_BAN_HOURS', 'SEC_ALLOW_IPS', 'SEC_TRAP_PORTS'], s,
         el('div', null, el('div', { class: 'alert info' }, icon('info'), el('div', null,
           pr.on ? [el('b', null, T('Включена. ')), T('Заблокировано сейчас: ') + (pr.trap_n + pr.rate_n) + T(' (сканеры ') + pr.trap_n + T(', подбор ') + pr.rate_n + T('); отброшено пакетов: по странам ') + pr.geo_drop + T(', заблокированных ') + pr.ban_drop + '.']
             : T('Выключена. Рекомендуемое: порты управления и входа по паролю — только из вашей страны, блокировка сканеров и подбора паролей.'))),
-        el('div', { class: 'row wrap' }, fill)));
+        el('div', { class: 'row wrap' }, fill, geoBtn)));
       const banRows = pr.banned.map((b) => {
         const un = el('button', { class: 'btn sm' }, T('Снять'));
         un.addEventListener('click', () => busy(un, async () => { try { ok((await api('/api/security/unban', { ip: b.ip })).msg); load(true); } catch (e) { err(e); } }));

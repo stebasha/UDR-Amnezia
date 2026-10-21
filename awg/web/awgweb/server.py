@@ -284,6 +284,7 @@ ROUTES = {
     ("POST", "/api/xui/sync"): api_xui_sync,
     ("GET", "/api/security"): api_security,
     ("POST", "/api/security/unban"): api_security_unban,
+    ("POST", "/api/security/geo"): api_security_geo,
     ("GET", "/api/vless"): api_vless_get,
     ("POST", "/api/vless/sub"): api_vless_sub_set,
     ("POST", "/api/vless/sub/refresh"): api_vless_sub_refresh,

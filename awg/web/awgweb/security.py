@@ -240,6 +240,7 @@ def sec_protect(e):
             elif r["target"] == "DROP" and "AWG_SEC_BAN" in r["x"]:
                 st["ban_drop"] += r["pkts"]
     st["geo_set"] = _set_count("AWG_SEC_GEO")
+    st["log"] = read_file(os.path.join(DD, "sec", "apply.log"))[-1500:]
     ban = []
     for s, why in (("AWG_SEC_TRAP", "trap"), ("AWG_SEC_RATE", "rate")):
         m = _set_members(s)
@@ -368,7 +369,10 @@ def sec_findings(d):
     else:
         add("ok", "Защита входящих включена", "Сейчас заблокировано адресов: %d (сканеры %d, подбор %d); за сутки — %d." % (pr["trap_n"] + pr["rate_n"], pr["trap_n"], pr["rate_n"], pr.get("day", 0)), "", "")
         if pr["geo_ports"] and pr["geo_allow"] and pr["geo_set"] == 0:
-            add("warn", "Ограничение по странам не действует", "Адреса стран не загружены (не скачались) — правило не поставлено, чтобы не отбросить всех.", "Проверьте доступ к github.com с роутера и коды стран.", "")
+            last = [l for l in pr.get("log", "").splitlines() if l.startswith(("✘", "▲"))][-2:]
+            add("warn", "Ограничение по странам не действует",
+                "Адреса стран не загружены — правило не поставлено, чтобы не отбросить всех." + (" Последняя попытка: " + " ".join(last) if last else " Скачивание ещё не запускалось (первая сверка — в течение минуты после включения)."),
+                "Нажмите «Скачать адреса стран» ниже. Не помогает — проверьте коды стран (две буквы: ru) и доступ роутера к raw.githubusercontent.com. Повтор — сам, раз в 10 минут.", "")
     if d["cgnat"]:
         add("info", "Внешний адрес — частный (%s)" % d["wanip"], "Провайдер раздаёт адрес через NAT: из интернета к вам напрямую не подключиться, проброс портов не работает.", "", "")
     order = {"crit": 0, "warn": 1, "info": 2, "ok": 3}
@@ -396,6 +400,15 @@ def api_security(h, q):
         f, score = sec_findings(d)
         _SEC_CACHE.update(t=now(), v={"data": d, "findings": f, "score": score, "suggest": sec_suggest(d)})
     return _SEC_CACHE["v"]
+
+
+def api_security_geo(h, d):
+    """Скачать адреса разрешённых стран сейчас и поставить правила (обычно это делает сверка awg-guard)."""
+    rc, out = run([os.path.join(DD, "sec.sh"), "geo"], timeout=180)
+    h.act("sec-geo")
+    _SEC_CACHE["t"] = 0
+    ok = rc == 0 and "только из" in out
+    return {"ok": ok, "msg": out.strip()[-800:] or "нет ответа"}
 
 
 def api_security_unban(h, d):

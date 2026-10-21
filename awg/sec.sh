@@ -57,6 +57,7 @@ geo_update(){
   local want; want=$(ccs | tr '\n' ' ')
   [ -n "$want" ] || return 0
   mkdir -p "$SD"; chmod 700 "$SD"
+  date +%s > "$SD/geo.try"
   # shellcheck disable=SC2046
   if bash "$DD/lists.sh" geo-file "$SD/geo.new" $(ccs) && [ "$(wc -l < "$SD/geo.new")" -ge "$GEO_MIN" ]; then
     mv -f "$SD/geo.new" "$SD/geo.cidr"; date +%s > "$SD/geo.ts"; echo "$want" > "$SD/geo.src"
@@ -199,6 +200,13 @@ bans_log(){  # новые блокировки — в журнал $SD/bans.log 
   if [ "$new" -gt 0 ] && [ "$(wc -l < "$SD/bans.log")" -gt 2000 ]; then tail -n 1500 "$SD/bans.log" > "$SD/bans.t" && mv -f "$SD/bans.t" "$SD/bans.log"; fi
   return 0
 }
+geo_retry(){  # страны нужны, а набора нет (не скачались) — повторить, но не чаще раза в 10 минут
+  local t n
+  [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] || return 1
+  n=$(count $S_GEO); [ "${n:-0}" -gt 0 ] && return 1
+  t=$(cat "$SD/geo.try" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || return 0
+  [ $(( $(date +%s) - t )) -ge "${SEC_GEO_RETRY:-600}" ]
+}
 ensure(){  # awg-guard, раз в минуту: правила на месте и настройки те же — только журнал новых блокировок
   local h b c w miss=0
   if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -n 7 || return 0; fi
@@ -207,7 +215,7 @@ ensure(){  # awg-guard, раз в минуту: правила на месте �
     read -r b c <<< "$h"
     for w in $(wans); do iptables -C "$b" -i "$w" -j "$c" 2>/dev/null || { miss=1; break 2; }; done
   done
-  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] || apply >/dev/null
+  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] && ! geo_retry || apply > "$SD/apply.log" 2>&1
   bans_log
 }
 count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
@@ -223,7 +231,7 @@ case "${1:-status}" in
   apply)  apply;;
   ensure) ensure;;
   remove) remove;;
-  geo)    geo_update && on && apply >/dev/null;;
+  geo)    rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; geo_update;;
   status) status;;
   unban)  [[ ${2:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { say "использование: sec.sh unban IP"; exit 2; }
           ipset del $S_TRAP "$2" 2>/dev/null; ipset del $S_RATE "$2" 2>/dev/null; event "блокировка снята: $2"; say "$2: блокировка снята";;

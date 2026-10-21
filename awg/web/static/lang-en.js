@@ -1179,7 +1179,8 @@ window.AWG_EN = {
  "Порты-ловушки": "Trap ports",
  "Блокировать подбор паролей: новых соединений в минуту больше": "Block password guessing: new connections per minute above",
  "Блокировка на, ч": "Block for, h",
- "Адреса, которые не блокируются никогда": "Addresses never blocked"
+ "Адреса, которые не блокируются никогда": "Addresses never blocked",
+ "Скачать адреса стран": "Download country addresses"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
