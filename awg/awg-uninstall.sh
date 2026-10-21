@@ -29,7 +29,7 @@ systemctl daemon-reload 2>/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2>/dev/null
 
 # 2. модули со своими правилами (цепочки AWG_*, ip rule подсетей, файл dnsmasq), маршруты и blackhole в таблице PBR
-for s in guard self subnets; do [ -x "$D/$s.sh" ] && "$D/$s.sh" remove >/dev/null 2>&1; done
+for s in guard sec self subnets; do [ -x "$D/$s.sh" ] && "$D/$s.sh" remove >/dev/null 2>&1; done
 [ -x "$D/failover.sh" ] && "$D/failover.sh" cleanup all >/dev/null 2>&1
 
 # 3. все правила iptables, где участвует интерфейс awg* (NAT, MSS, FORWARD), все копии

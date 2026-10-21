@@ -11,6 +11,8 @@ case "$1" in
              case "$c" in create) grep -qx "$n" $S/ipsets || echo "$n" >> $S/ipsets; : > "$S/ipset-$n";; add) echo "$a" >> "$S/ipset-$n";; esac
            done;;
   swap) mv "$S/ipset-$2" "$S/ipset-$2.t"; mv "$S/ipset-$3" "$S/ipset-$2"; mv "$S/ipset-$2.t" "$S/ipset-$3";;
-  add) echo "$3" >> "$S/ipset-$2";;
+  add) grep -qx "$3" "$S/ipset-$2" 2>/dev/null || echo "$3" >> "$S/ipset-$2";;
+  del) sed -i "/^$3\$/d" "$S/ipset-$2" 2>/dev/null;;
+  flush) : > "$S/ipset-$2";;
 esac
 exit 0

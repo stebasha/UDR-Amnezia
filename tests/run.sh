@@ -18,7 +18,7 @@ rt(){
 }
 echo "== синтаксис"; bash -n "$INST" && echo "  install.sh: ok" || rc=1
 for f in "$ROOT"/awg/*.sh "$ROOT"/server/*.sh "$H"/*.sh; do bash -n "$f" || { echo "  синтаксическая ошибка: $f"; rc=1; }; done
-for t in t_failover t_guard t_fw t_misc t_backup t_notify t_vps t_routes t_tune t_lists t_subnets; do echo "== $t"; rt "$t" bash "$H/$t.sh" "$ROOT/awg" || rc=1; done
+for t in t_failover t_guard t_fw t_misc t_backup t_notify t_vps t_routes t_tune t_lists t_sec t_subnets; do echo "== $t"; rt "$t" bash "$H/$t.sh" "$ROOT/awg" || rc=1; done
 echo "== t_installer"; rt t_installer bash "$H/t_installer.sh" "$INST" || rc=1
 echo "== t_web (веб-панель)"
 python3 "$ROOT/tools/check-modules.py" | sed 's/^/  /' || rc=1
@@ -32,6 +32,7 @@ echo "== t_report (отчёт и учёт трафика)"; rt t_report python3 
 echo "== t_autotune (автоподбор при деградации)"; rt t_autotune python3 "$H/t_autotune.py" || rc=1
 echo "== t_core (защитные функции панели)"; rt t_core python3 "$H/t_core.py" || rc=1
 echo "== t_vless (VLESS/Reality через Xray)"; rt t_vless python3 "$H/t_vless.py" || rc=1
+echo "== t_security (анализ безопасности)"; rt t_security python3 "$H/t_security.py" || rc=1
 echo "== панель в браузере (если есть playwright)"
 out=$(AWG_UI_OPTIONAL=1 python3 "$H/t_ui.py" 2>&1); r=$?; echo "$out" | grep -E "^(FAIL|ui:)"; [ $r = 0 ] || rc=1
 echo "== перевод панели"; command -v node >/dev/null && { python3 "$ROOT/tools/i18n-check.py" | tail -1 || rc=1; }

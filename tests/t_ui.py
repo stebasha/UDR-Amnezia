@@ -74,7 +74,7 @@ def main():
             step("вход", login)
 
             def pages():
-                for h in ("#/overview", "#/tunnels", "#/routing", "#/tools", "#/system", "#/logs/events"):
+                for h in ("#/overview", "#/tunnels", "#/routing", "#/security", "#/tools", "#/system", "#/logs/events"):
                     page.goto(URL + h)
                     page.wait_for_timeout(700)
                     check("страница %s открывается" % h, page.locator("#app main, #app .main, main").count() > 0 and not errors, errors[-3:])
@@ -144,6 +144,14 @@ def main():
                 page.wait_for_timeout(300)
                 check("VLESS: окно закрывается", page.locator(".modal-bg").count() == 0)
             step("VLESS", vless)
+
+            def security():
+                page.goto(URL + "#/security")
+                expect(page.get_by_text("Что найдено и что делать", exact=True)).to_be_visible(timeout=30000)
+                txt = page.locator(".main").inner_text()
+                check("безопасность: итог, находки, проброс, защита входящих", all(k in txt for k in ("Итог", "Проброс портов", "Защита входящих", "SEC_GEO_PORTS")), txt[:300])
+                check("безопасность: в меню", page.locator('a.nav[data-page="security"]').count() == 1)
+            step("безопасность", security)
 
             def reboot():
                 page.goto(URL + "#/overview")

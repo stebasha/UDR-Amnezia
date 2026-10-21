@@ -12,6 +12,7 @@
 #   lists.sh json               то же для панели
 #   lists.sh due                код 0, если пора обновлять (служба awg-guard проверяет раз в час)
 #   lists.sh full               сколько маршрутов PBR UniFi ведут в туннель весь трафик устройств (-1 — не видно)
+#   lists.sh geo-file ФАЙЛ cc…  адреса стран одним файлом (для защиты входящих, sec.sh): скачать, проверить, кэш общий
 # Источники (можно заменить в awg.env): LIST_URLS — списки заблокированного (CIDR IPv4 по строке),
 # GEO_URL — адреса страны, %s — код страны в нижнем регистре.
 export LC_ALL=C.UTF-8
@@ -145,8 +146,26 @@ due(){  # пора: кэша нет, он старше LIST_MAX_AGE или со�
   a=$(age $k); [ "$a" -lt 0 ] || [ "$a" -ge "$LIST_MAX_AGE" ] || [ "$(cat "$LD/$k.src" 2>/dev/null)" != "$(src $k)" ]
 }
 
+geo_file(){  # geo_file ФАЙЛ cc… — страны одним файлом; не скачалась — из кэша; код 1, если для какой-то нет ни того ни другого
+  local out=$1 c n ok=0 tmp; shift
+  mkdir -p "$LD"; chmod 700 "$LD"; tmp=$(mktemp -d "$DD/.lists.XXXXXX")
+  : > "$tmp/all"
+  for c in "$@"; do
+    valid_cc "$c" || continue
+    # shellcheck disable=SC2059
+    if fetch "$(printf "$GEO_URL" "$c")" "$tmp/$c.raw"; then
+      clean "$tmp/$c.raw" > "$tmp/$c"; n=$(wc -l < "$tmp/$c")
+      [ "$n" -ge "$MIN_GEO" ] && mv -f "$tmp/$c" "$LD/geo-$c.cidr"
+    fi
+    if [ -s "$LD/geo-$c.cidr" ]; then cat "$LD/geo-$c.cidr" >> "$tmp/all"; else ok=1; say "✘ ${c^^}: адресов нет (не скачались)"; fi
+  done
+  sort -u "$tmp/all" > "$out"; rm -rf "$tmp"
+  return $ok
+}
+
 case "${1:-status}" in
   update) update "${2:-}";;
+  geo-file) shift; geo_file "$@";;
   load)   load;;
   due)    due;;
   full)   full_routes;;
@@ -170,5 +189,5 @@ case "${1:-status}" in
     if [ "$LISTS_MODE" != off ] && [ "$(full_routes)" = 0 ]; then
       say "▲ в UniFi нет маршрута PBR «весь интернет» в туннель: режим ни на что не влияет (через туннель идут только домены и адреса из маршрутов UniFi)"
     fi;;
-  *) sed -n '2,16p' "$0";;
+  *) sed -n '2,17p' "$0";;
 esac
