@@ -229,6 +229,7 @@ def sec_protect(e):
     on = e.get("SEC_PROTECT", "no") == "yes"
     st = {"on": on, "geo_allow": e.get("SEC_GEO_ALLOW", ""), "geo_ports": e.get("SEC_GEO_PORTS", ""),
           "trap": e.get("SEC_TRAP", DEFAULTS["SEC_TRAP"]), "rate": e.get("SEC_RATE", DEFAULTS["SEC_RATE"]),
+          "ban": e.get("SEC_BAN_HOURS", DEFAULTS["SEC_BAN_HOURS"]),
           "rules": 0, "geo_set": 0, "geo_drop": 0, "trap_n": 0, "rate_n": 0, "ban_drop": 0, "banned": [], "recent": []}
     if not on:
         return st
@@ -368,6 +369,17 @@ def sec_findings(d):
         add("info", "Своя защита входящих выключена", "Можно включить ниже: только из разрешённых стран на выбранные порты, блокировка сканеров и подбора паролей. Правила UniFi не меняются.", "", "")
     else:
         add("ok", "Защита входящих включена", "Сейчас заблокировано адресов: %d (сканеры %d, подбор %d); за сутки — %d." % (pr["trap_n"] + pr["rate_n"], pr["trap_n"], pr["rate_n"], pr.get("day", 0)), "", "")
+        bad = [l for l in pr.get("log", "").splitlines() if "не принято" in l or "Couldn't load" in l][:3]
+        if bad:
+            add("warn", "Часть правил защиты не поставилась", " ".join(bad)[:400], "Обновите набор (install.sh --update); не помогает — пришлите этот текст.", "")
+        try:
+            rate = int(pr["rate"] or 0)
+        except ValueError:
+            rate = 0
+        if 0 < rate < 10:
+            add("warn", "Порог подбора паролей очень низкий: %d соединений в минуту" % rate,
+                "Браузер, открывая страницу NAS, и почтовая программа сами открывают по несколько соединений: так можно заблокировать себя на %s ч." % pr.get("ban", "?"),
+                "Поставьте 20 (больше xt_recent не умеет) или добавьте свои адреса в «Не блокируются никогда».", "")
         if pr["geo_ports"] and pr["geo_allow"] and pr["geo_set"] == 0:
             last = [l for l in pr.get("log", "").splitlines() if l.startswith(("✘", "▲"))][-2:]
             add("warn", "Ограничение по странам не действует",
@@ -390,7 +402,7 @@ def sec_suggest(d):
     for a in (d["local"] or {}).get("accept", []):
         if a["kind"] == "console":
             ports += [p for p in a["dports"] if p not in ports]
-    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes", "SEC_RATE": "30"}
+    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes", "SEC_RATE": "20"}
 
 
 def api_security(h, q):

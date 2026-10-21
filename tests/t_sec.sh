@@ -36,7 +36,7 @@ printf 'SEC_PROTECT=yes\n' >> "$DD/awg.env"
 "$X" apply > $T/o 2>&1
 ck "включено: переход первым в INPUT и FORWARD только с WAN" '[ "$(iptables -S INPUT | sed -n 2p)" = "-A INPUT -i eth3 -j AWG_SEC_IN" ] && [ "$(iptables -S FORWARD | sed -n 2p)" = "-A FORWARD -i eth3 -j AWG_SEC_FWD" ]' || { iptables -S INPUT; cat $T/o; }
 ck "свои адреса не блокируются: частные сети и VPS" 'grep -qx 192.168.0.0/16 "$STUB/ipset-AWG_SEC_OK" && grep -qx 203.0.113.5 "$STUB/ipset-AWG_SEC_OK"'
-ck "по умолчанию: ловушки (без проброшенного 3389, консоли 443 и WireGuard), частота 30/мин" 'ci | grep -q -- "--dports 23,135,139,445,1433,2323,3306,5432,5900,6379,7547,8291,9200,27017 -j SET --add-set AWG_SEC_TRAP src" && ! ci | grep -- "--dports" | grep -qE "(,|\s)3389(,|\s)" && cf | grep -q -- "--hashlimit-above 30/min" && cf | grep -q -- "--match-set AWG_SEC_RATE src -j DROP"' || ci
+ck "по умолчанию: ловушки (без проброшенного 3389, консоли 443 и WireGuard), частота 20/мин (xt_recent)" 'ci | grep -q -- "--dports 23,135,139,445,1433,2323,3306,5432,5900,6379,7547,8291,9200,27017 -j SET --add-set AWG_SEC_TRAP src" && ! ci | grep -- "--dports" | grep -qE "(,|\s)3389(,|\s)" && cf | grep -q -- "-m recent --name awgsec --set --rsource" && cf | grep -q -- "--rcheck --seconds 60 --hitcount 20 --rsource -j SET --add-set AWG_SEC_RATE src" && cf | grep -q -- "--match-set AWG_SEC_RATE src -j DROP"' || ci
 ck "сначала уже установленные соединения и свои адреса, потом блокировки" '[ "$(ci | sed -n 2p)" = "-A AWG_SEC_IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ] && ci | sed -n 3p | grep -q AWG_SEC_OK && ci | sed -n 4p | grep -q "AWG_SEC_BAN src -j DROP"'
 ck "наборы блокировок с ловушек и за частоту — одна проверка" 'grep -qx AWG_SEC_TRAP "$STUB/ipset-AWG_SEC_BAN" && grep -qx AWG_SEC_RATE "$STUB/ipset-AWG_SEC_BAN"'
 ck "без стран — правил «только из стран» нет" '! ci | grep -q AWG_SEC_GEO && ! cf | grep -q AWG_SEC_GEO'
@@ -65,7 +65,7 @@ rm -f "$DD/sec/geo.ts"; "$X" geo > $T/o 2>&1
 ck "sec.sh geo: скачать сейчас и поставить" 'grep -q "только из RU" $T/o' || cat $T/o
 printf 'SEC_GEO_ALLOW="ru"\nSEC_RATE=0\nSEC_TRAP=no\n' >> "$DD/awg.env"
 "$X" apply > /dev/null 2>&1
-ck "ловушки и частота выключаются по отдельности" '! ci | grep -q AWG_SEC_TRAP && ! cf | grep -q hashlimit && cf | grep -q ctorigdstport'
+ck "ловушки и частота выключаются по отдельности" '! ci | grep -q AWG_SEC_TRAP && ! cf | grep -q "recent --name" && cf | grep -q ctorigdstport'
 printf 'SEC_TRAP=yes\nSEC_RATE=20\n' >> "$DD/awg.env"
 "$X" apply > /dev/null 2>&1
 r0=$(ci; cf)
@@ -84,6 +84,9 @@ ck "журнал блокировок: новые адреса — по одно
 ck "снять блокировку" '! grep -qx 45.1.1.1 "$STUB/ipset-AWG_SEC_TRAP"'
 ck "снять блокировку: только IPv4" '! "$X" unban "1.2.3.4;id" >/dev/null'
 "$X" status > $T/o
+printf 'SEC_RATE=50\n' >> "$DD/awg.env"; "$X" apply > /dev/null 2>&1
+ck "частота больше 20 — до 20 (предел xt_recent)" 'cf | grep -q -- "--hitcount 20 "'
+printf 'SEC_RATE=20\n' >> "$DD/awg.env"; "$X" apply > /dev/null 2>&1
 ck "состояние" 'grep -q "по странам: порты 443 8123 — только RU" $T/o && grep -q "частота: больше 20" $T/o' || cat $T/o
 sed -i 's/^SEC_PROTECT=yes/SEC_PROTECT=no/' "$DD/awg.env"
 "$X" ensure

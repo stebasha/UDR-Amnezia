@@ -12,8 +12,8 @@
 #                        этих стран; остальные отбрасываются. Порт 25 (почта) и 80 (Let's Encrypt) так не ограничивайте.
 #   SEC_TRAP=yes         кто стучится на порты-ловушки роутера (SEC_TRAP_PORTS: 23, 3389, 445…; открытые и проброшенные
 #                        исключаются сами) — сканер: его адрес блокируется на SEC_BAN_HOURS часов
-#   SEC_RATE=30          больше 30 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
-#                        блокировка на SEC_BAN_HOURS (0 — выключено)
+#   SEC_RATE=20          больше 20 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
+#                        блокировка на SEC_BAN_HOURS (0 — выключено; 2–20: счёт ведёт xt_recent, hashlimit в ядре UDR7 нет)
 #   SEC_ALLOW_IPS="…"    адреса и подсети, которые не блокируются никогда (частные сети — всегда)
 export LC_ALL=C.UTF-8
 iptables(){ command iptables -w 10 "$@"; }
@@ -21,7 +21,7 @@ DD=${DD:-/data/awg}
 SD=$DD/sec
 RUNF=${AWG_RUN:-/run}/awg-sec.hash
 umask 077
-SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=30; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
+SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=20; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
 SEC_TRAP_PORTS="23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -127,7 +127,11 @@ rules_fwd(){  # FORWARD: проброшенные порты (адрес наз�
     done
   fi
   if [[ $r =~ ^[0-9]+$ ]] && [ "$r" -gt 0 ]; then
-    echo "-m conntrack --ctstate DNAT -m hashlimit --hashlimit-above $r/min --hashlimit-burst $r --hashlimit-mode srcip --hashlimit-name awgsec -j SET --add-set $S_RATE src --exist"
+    [ "$r" -lt 2 ] && r=2; [ "$r" -gt 20 ] && r=20   # xt_recent помнит не больше 20 пакетов на адрес
+    # сюда доходят только новые соединения (установленные вернулись первым правилом): запомнить адрес и,
+    # если за минуту их r и больше, — в набор блокировки
+    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --set --rsource"
+    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --rcheck --seconds 60 --hitcount $r --rsource -j SET --add-set $S_RATE src --exist"
     echo "-m set --match-set $S_RATE src -j DROP"
   fi
   echo "-j RETURN"
