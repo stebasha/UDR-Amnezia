@@ -142,6 +142,10 @@ check("защита: заблокированные — по пакетам, о�
 check("защита: журнал блокировок (новые сверху), за сутки — 1", pr["recent"][0]["ip"] == "45.3.3.3" and len(pr["recent"]) == 2 and pr["day"] == 1, pr["recent"])
 check("защита: DSM и HA под ограничением стран — не «исправить»", not t("crit", "Synology DSM") and not t("crit", "Home Assistant"))
 check("защита: порт 25 по странам — предупреждение", t("warn", "Порт 25 ограничен"))
+check("защита: 25 и 80 исключены из подсчёта по умолчанию — без предупреждения", not t("warn", "Подбор паролей считается"))
+open(os.path.join(T, "awg.env"), "a").write('SEC_RATE_SKIP=""\n')
+F2, _ = X.sec_findings(X.sec_collect())
+check("защита: 25 и 80 в подсчёте — предупреждение", any(x["sev"] == "warn" and "порт 25, 80" in x["title"] for x in F2), [x["title"] for x in F2])
 check("защита: включена — хорошо", t("ok", "Защита входящих включена"))
 
 

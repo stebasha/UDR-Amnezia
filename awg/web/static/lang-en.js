@@ -1180,7 +1180,9 @@ window.AWG_EN = {
  "Блокировать подбор паролей: новых соединений в минуту больше": "Block password guessing: new connections per minute above",
  "Блокировка на, ч": "Block for, h",
  "Адреса, которые не блокируются никогда": "Addresses never blocked",
- "Скачать адреса стран": "Download country addresses"
+ "Скачать адреса стран": "Download country addresses",
+ "На эти порты соединения не считаются: почтовые серверы (25) и Let's Encrypt (80) открывают их пачками и попали бы в блокировку. Подбор паролей идёт на порты входа: 465, 587, 993, NAS, Home Assistant.": "Connections to these ports are not counted: mail servers (25) and Let's Encrypt (80) open them in bursts and would get blocked. Password guessing targets login ports: 465, 587, 993, NAS, Home Assistant.",
+ "Порты, где подбор паролей не считается": "Ports excluded from password-guessing count"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],
