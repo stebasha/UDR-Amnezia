@@ -14,6 +14,7 @@
 #                        исключаются сами) — сканер: его адрес блокируется на SEC_BAN_HOURS часов
 #   SEC_RATE=20          больше 20 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
 #                        блокировка на SEC_BAN_HOURS (0 — выключено; 2–20: счёт ведёт xt_recent, hashlimit в ядре UDR7 нет)
+#   SEC_RATE_SKIP="25 80" на эти порты соединения не считаются (почтовые серверы и Let's Encrypt открывают их пачками)
 #   SEC_ALLOW_IPS="…"    адреса и подсети, которые не блокируются никогда (частные сети — всегда)
 export LC_ALL=C.UTF-8
 iptables(){ command iptables -w 10 "$@"; }
@@ -21,7 +22,7 @@ DD=${DD:-/data/awg}
 SD=$DD/sec
 RUNF=${AWG_RUN:-/run}/awg-sec.hash
 umask 077
-SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=20; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
+SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=20; SEC_RATE_SKIP="25 80"; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
 SEC_TRAP_PORTS="23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -130,6 +131,7 @@ rules_fwd(){  # FORWARD: проброшенные порты (адрес наз�
     [ "$r" -lt 2 ] && r=2; [ "$r" -gt 20 ] && r=20   # xt_recent помнит не больше 20 пакетов на адрес
     # сюда доходят только новые соединения (установленные вернулись первым правилом): запомнить адрес и,
     # если за минуту их r и больше, — в набор блокировки
+    for p in $(nums "$SEC_RATE_SKIP"); do echo "-m conntrack --ctstate DNAT --ctorigdstport $p -j RETURN"; done
     echo "-m conntrack --ctstate DNAT -m recent --name awgsec --set --rsource"
     echo "-m conntrack --ctstate DNAT -m recent --name awgsec --rcheck --seconds 60 --hitcount $r --rsource -j SET --add-set $S_RATE src --exist"
     echo "-m set --match-set $S_RATE src -j DROP"
@@ -163,7 +165,7 @@ hook_on(){
     done
   done
 }
-fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
+fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_RATE_SKIP" "$SEC_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
 
 apply(){
   local a

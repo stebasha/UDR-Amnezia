@@ -7,6 +7,7 @@
     SEC_TRAP: { t: 'bool', hint: T('Кто стучится на порты-ловушки (Telnet, RDP, SMB, базы данных…) — сканер: его адрес блокируется целиком, и на проброшенные порты тоже. Открытые и проброшенные порты ловушками не бывают.') },
     SEC_TRAP_PORTS: { t: 'text', hint: T('До 15 портов. Открытые на роутере и проброшенные исключаются сами.') },
     SEC_RATE: { t: 'num', unit: T('в минуту'), hint: T('Больше стольких новых соединений за минуту с одного адреса на проброшенные порты — подбор паролей: адрес блокируется. 2–20 (больше ядро роутера не считает), рекомендуется 20: браузер и почтовая программа сами открывают по несколько соединений. 0 — выключено.') },
+    SEC_RATE_SKIP: { t: 'text', ph: '25 80', hint: T('На эти порты соединения не считаются: почтовые серверы (25) и Let\'s Encrypt (80) открывают их пачками и попали бы в блокировку. Подбор паролей идёт на порты входа: 465, 587, 993, NAS, Home Assistant.') },
     SEC_BAN_HOURS: { t: 'num', unit: T('ч'), hint: T('На сколько блокировать адрес.') },
     SEC_ALLOW_IPS: { t: 'list', ph: '203.0.113.10\n198.51.100.0/24', hint: T('Не блокируются никогда (например, рабочий адрес). Частные сети, адрес VPS и серверы туннелей — всегда.') },
   });
@@ -87,7 +88,7 @@
       if (geoBtn) geoBtn.addEventListener('click', () => busy(geoBtn, async () => {
         try { const x = await api('/api/security/geo', {}); (x.ok ? ok : err)(x.msg); load(true); } catch (e) { err(e); }
       }));
-      const form = settingsForm(T('Защита входящих'), 'lock', ['SEC_PROTECT', 'SEC_GEO_ALLOW', 'SEC_GEO_PORTS', 'SEC_TRAP', 'SEC_RATE', 'SEC_BAN_HOURS', 'SEC_ALLOW_IPS', 'SEC_TRAP_PORTS'], s,
+      const form = settingsForm(T('Защита входящих'), 'lock', ['SEC_PROTECT', 'SEC_GEO_ALLOW', 'SEC_GEO_PORTS', 'SEC_TRAP', 'SEC_RATE', 'SEC_RATE_SKIP', 'SEC_BAN_HOURS', 'SEC_ALLOW_IPS', 'SEC_TRAP_PORTS'], s,
         el('div', null, el('div', { class: 'alert info' }, icon('info'), el('div', null,
           pr.on ? [el('b', null, T('Включена. ')), T('Заблокировано сейчас: ') + (pr.trap_n + pr.rate_n) + T(' (сканеры ') + pr.trap_n + T(', подбор ') + pr.rate_n + T('); отброшено пакетов: по странам ') + pr.geo_drop + T(', заблокированных ') + pr.ban_drop + '.']
             : T('Выключена. Рекомендуемое: порты управления и входа по паролю — только из вашей страны, блокировка сканеров и подбора паролей.'))),

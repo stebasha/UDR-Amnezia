@@ -84,6 +84,9 @@ ck "журнал блокировок: новые адреса — по одно
 ck "снять блокировку" '! grep -qx 45.1.1.1 "$STUB/ipset-AWG_SEC_TRAP"'
 ck "снять блокировку: только IPv4" '! "$X" unban "1.2.3.4;id" >/dev/null'
 "$X" status > $T/o
+ck "частота: порты 25 и 80 не считаются (по умолчанию), до подсчёта" 'cf | grep -n -- "--ctorigdstport 25 -j RETURN" | cut -d: -f1 | { read a; b=$(cf | grep -n -- "recent --name awgsec --set" | cut -d: -f1); [ -n "$a" ] && [ "$a" -lt "$b" ]; } && cf | grep -q -- "--ctorigdstport 80 -j RETURN"'
+printf 'SEC_RATE_SKIP=""\n' >> "$DD/awg.env"; "$X" ensure
+ck "частота: пустой список — считаются все порты" '! cf | grep -q -- "--ctorigdstport 25 -j RETURN"'
 printf 'SEC_RATE=50\n' >> "$DD/awg.env"; "$X" apply > /dev/null 2>&1
 ck "частота больше 20 — до 20 (предел xt_recent)" 'cf | grep -q -- "--hitcount 20 "'
 printf 'SEC_RATE=20\n' >> "$DD/awg.env"; "$X" apply > /dev/null 2>&1

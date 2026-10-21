@@ -230,6 +230,7 @@ def sec_protect(e):
     st = {"on": on, "geo_allow": e.get("SEC_GEO_ALLOW", ""), "geo_ports": e.get("SEC_GEO_PORTS", ""),
           "trap": e.get("SEC_TRAP", DEFAULTS["SEC_TRAP"]), "rate": e.get("SEC_RATE", DEFAULTS["SEC_RATE"]),
           "ban": e.get("SEC_BAN_HOURS", DEFAULTS["SEC_BAN_HOURS"]),
+          "rate_skip": e.get("SEC_RATE_SKIP", DEFAULTS["SEC_RATE_SKIP"]),
           "rules": 0, "geo_set": 0, "geo_drop": 0, "trap_n": 0, "rate_n": 0, "ban_drop": 0, "banned": [], "recent": []}
     if not on:
         return st
@@ -376,6 +377,12 @@ def sec_findings(d):
             rate = int(pr["rate"] or 0)
         except ValueError:
             rate = 0
+        fwd_ports = {f["port"] for f in d["forwards"]}
+        miss = [p for p in (25, 80) if p in fwd_ports and str(p) not in pr.get("rate_skip", "").split()]
+        if rate > 0 and miss:
+            add("warn", "Подбор паролей считается и на порт %s" % ", ".join(map(str, miss)),
+                "Почтовые серверы (25) и Let's Encrypt (80) открывают соединения пачками: их адреса попадут в блокировку — почта и продление сертификата перестанут работать.",
+                "Добавьте %s в «Порты, где подбор паролей не считается»." % " ".join(map(str, miss)), "")
         if 0 < rate < 10:
             add("warn", "Порог подбора паролей очень низкий: %d соединений в минуту" % rate,
                 "Браузер, открывая страницу NAS, и почтовая программа сами открывают по несколько соединений: так можно заблокировать себя на %s ч." % pr.get("ban", "?"),
