@@ -421,3 +421,7 @@ details.fgroup[open] > summary { margin-bottom: 12px; }
   .side .nav { flex: 0 0 auto; min-width: 68px; }
 }
 .blist { margin: 6px 0; padding-left: 18px; }
+
+/* ---------- безопасность (1.10) */
+.score { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.score.ok { color: var(--ok); } .score.warn { color: var(--warn); } .score.crit { color: var(--crit); }

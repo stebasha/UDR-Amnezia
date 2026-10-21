@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """HTTP-сервер: обработчик запросов, таблица маршрутов API, запуск и командная строка."""
-from .vless import *  # noqa: F401,F403  (всё из предыдущих модулей)
+from .security import *  # noqa: F401,F403  (всё из предыдущих модулей)
 from .data import _OV  # noqa: F401
 
 STATIC_FILES = {"/": ("index.html", "text/html; charset=utf-8"), "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -282,6 +282,8 @@ ROUTES = {
     ("POST", "/api/xui/import"): api_xui_import,
     ("POST", "/api/xui/link"): api_xui_link,
     ("POST", "/api/xui/sync"): api_xui_sync,
+    ("GET", "/api/security"): api_security,
+    ("POST", "/api/security/unban"): api_security_unban,
     ("GET", "/api/vless"): api_vless_get,
     ("POST", "/api/vless/sub"): api_vless_sub_set,
     ("POST", "/api/vless/sub/refresh"): api_vless_sub_refresh,

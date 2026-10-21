@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -545,6 +545,16 @@ def v_countries(v):
     return " ".join(out)
 
 
+def v_ports(v):
+    out = []
+    for x in str(v).replace(",", " ").split():
+        if not re.match(r"^\d{1,5}$", x) or not 1 <= int(x) <= 65535:
+            raise ValueError("«%s» — не порт (1–65535)" % x[:20])
+        if x not in out:
+            out.append(x)
+    return " ".join(out)
+
+
 def v_https_urls(v):
     out = []
     for x in str(v).split():
@@ -588,11 +598,21 @@ SETTINGS = {
     "UI_DNS": (v_ipv4, ["awg-self"], "DNS для доменов UniFi"),
     "DNS_ALL_TUNNEL": (v_choice("yes", "no"), ["awg-self"], "Весь DNS роутера через туннель"),
     "METRICS_PORT": (v_int(1024, 65535, True), ["awg-metrics"], "Порт метрик Prometheus"),
+    "SEC_PROTECT": (v_choice("yes", "no"), ["awg-guard"], "Защита входящих из интернета"),
+    "SEC_GEO_ALLOW": (v_countries, ["awg-guard"], "Разрешённые страны"),
+    "SEC_GEO_PORTS": (v_ports, ["awg-guard"], "Порты только из разрешённых стран"),
+    "SEC_TRAP": (v_choice("yes", "no"), ["awg-guard"], "Блокировать сканеры (порты-ловушки)"),
+    "SEC_TRAP_PORTS": (v_ports, ["awg-guard"], "Порты-ловушки"),
+    "SEC_RATE": (v_int(0, 6000), ["awg-guard"], "Блокировать подбор паролей: новых соединений в минуту больше"),
+    "SEC_BAN_HOURS": (v_int(1, 720), ["awg-guard"], "Блокировка на, ч"),
+    "SEC_ALLOW_IPS": (v_hosts, ["awg-guard"], "Адреса, которые не блокируются никогда"),
 }
 DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALITY_RTT": "0", "MIN_DWELL": "120",
             "CHECK_RX_MIN": "65536", "CHECK_MAX_AGE": "60", "RECHECK_AFTER": "120", "RECHECK_SLOW": "30", "RECHECK_MAX": "60",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
-            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no"}
+            "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no",
+            "SEC_PROTECT": "no", "SEC_TRAP": "yes", "SEC_RATE": "30", "SEC_BAN_HOURS": "24",
+            "SEC_TRAP_PORTS": "23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"}
 
 
 # ======================================================================= службы
@@ -643,7 +663,7 @@ def apply_services(services, e):
                     or e.get("DNS_ALL_TUNNEL") == "yes",
         "awg-guard": e.get("LEAK_GUARD") == "yes" or bool((e.get("TUN_DOMAINS", "") + e.get("DIRECT_DOMAINS", "")
                                                           + e.get("DIRECT_SUBNETS", "")).strip())
-                     or e.get("LISTS_MODE", "off") != "off" or e.get("DNS_INTERCEPT") == "yes",
+                     or e.get("LISTS_MODE", "off") != "off" or e.get("DNS_INTERCEPT") == "yes" or e.get("SEC_PROTECT") == "yes",
         "awg-metrics": svc_installed("awg-metrics") or bool(e.get("METRICS_PORT")),
     }
     for u in services:

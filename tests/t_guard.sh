@@ -80,7 +80,8 @@ for c in date grep sed awk cat cut tr head tail sort wc mv rm mkdir stat sleep i
     "$c" "$CNT" "$SH" "$c" "$c" > $SH/$c
 done
 chmod +x $SH/*
-PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
+# WANS_TTL — пересмотр WAN раз в 30 с (не каждый проход) в окно замера не попадает: меряется обычный проход
+WANS_TTL=3600 PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
 GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
 ck "guard: обычный проход — не больше 5 внешних команд (проходов $np, команд $ng; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ]'
 $G remove

@@ -75,7 +75,7 @@ wans_cached(){  # → W (WAN через пробел) и SUBIF (интерфей
   { read -r ts < "$WANF.ts"; } 2>/dev/null
   if [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt "$WANS_TTL" ] && [ -f "$WANF" ]; then
     W=""; while IFS= read -r l; do [ -n "$l" ] && W+="$l "; done < "$WANF"
-    SUBIF=""; { read -r SUBIF < "$WANF.sub"; } 2>/dev/null
+    SUBIF=""; { IFS= read -r SUBIF < "$WANF.sub"; } 2>/dev/null   # IFS= — с тем же пробелом в конце, что при пересчёте: иначе отпечаток другой и цепочки пересобирались каждые 30 с
     return 0
   fi
   W=$(wans | tr '\n' ' ')
@@ -303,7 +303,7 @@ apply_body(){
   printf -v h 'g11|%s|%s|%s%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' "$DNS_INTERCEPT $DNS_BLOCK_DOT $DNS_CLIENTS" "$LISTS_MODE" \
     "$hl" "$hg" "$MARK" "$ROUTE_MARKS" "$W" "$LEAK_GUARD" "$LEAK_V6" \
     "$TUN_DOMAINS" "$TUN_CLIENTS" "$DIRECT_DOMAINS" "$DIRECT_SUBNETS" "$EXTRA_SUBNETS" "$SUBIF"
-  { read -r old < "$HASHF"; } 2>/dev/null
+  { IFS= read -r old < "$HASHF"; } 2>/dev/null   # IFS= — отпечаток может кончаться пробелом (интерфейсы подсетей): без него «изменился» каждый проход
   # по одному снимку родительских цепочек на проход; не прочитался (блокировка xtables) — в следующий проход
   mpre=$(iptables -t mangle -S PREROUTING 2>/dev/null) || return 0
   if [ "$LEAK_GUARD" = yes ] || [ "$DNS_BLOCK_DOT" = yes ]; then fwd=$(iptables -S FORWARD 2>/dev/null) || return 0; fi
@@ -356,6 +356,7 @@ remove(){
   ipset destroy $DOMSET 2>/dev/null; ipset destroy ${DOMSET}6 2>/dev/null; ipset destroy $DIRSET 2>/dev/null; rm -f "$WANF"
   ipset destroy $LISTSET 2>/dev/null; ipset destroy $GEOSET 2>/dev/null; ipset destroy $KEEPSET 2>/dev/null; rm -f "$KEEPF" "$KEEPF.ts"
   rm_chain iptables nat PREROUTING $CN; rm_chain iptables filter FORWARD $CQ; rm_chain ip6tables filter FORWARD $CQ
+  [ -x "$DD/sec.sh" ] && "$DD/sec.sh" remove >/dev/null 2>&1   # защита входящих живёт, пока её сверяет сторож
   rm -f $HASHF
 }
 
@@ -427,6 +428,8 @@ case "${1:-run}" in
             apply
             # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
             if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
+            # защита входящих (1.10): раз в минуту (первый раз — через 10 с после старта) сверить правила и записать новые блокировки — в фоне
+            if [ $((k % 12)) = 2 ] && [ -x "$DD/sec.sh" ] && { [ "${SEC_PROTECT:-no}" = yes ] || [ -e "${AWG_RUN:-/run}/awg-sec.hash" ]; }; then setsid "$DD/sec.sh" ensure > /dev/null 2>&1 < /dev/null & fi
             # подписки VLESS (#42): раз в час — те, что старше суток (сдвиг на полчаса от списков)
             if [ $((k % 720)) = 360 ] && [ -s "$DD/xray/vless.json" ]; then setsid python3 "$DD/web/panel.py" vless-refresh --due >> "$DD/xray/vless.log" 2>&1 < /dev/null & fi
             k=$((k + 1)); [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null

@@ -234,6 +234,8 @@ def api_settings_set(h, d):
     m = dict(e, **upd)
     if m.get("LISTS_MODE") == "geoip" and not m.get("GEO_COUNTRIES", "").strip():
         raise ValueError("для GeoIP укажите страны, которые идут напрямую (например: ru cn by kz)")
+    if m.get("SEC_GEO_PORTS", "").strip() and not m.get("SEC_GEO_ALLOW", "").strip():
+        raise ValueError("для портов «только из разрешённых стран» укажите страны (например: ru)")
     changed = {k: v for k, v in upd.items() if e.get(k, DEFAULTS.get(k, "")) != v}
     if not changed:
         return {"ok": True, "msg": "изменений нет"}

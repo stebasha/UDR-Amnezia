@@ -2983,6 +2983,26 @@ awgctl tune apply 1<span class="c">                    # поставить на
 python3 /data/awg/web/panel.py vless-refresh<span class="c">     # обновить подписки сейчас</span>
 journalctl -u awg-xray-awgvless -n 30<span class="c">            # журнал Xray туннеля awgvless</span></code></pre></figure>
 
+  <h3>Безопасность: разбор и защита входящих (1.10)</h3>
+  <p>«<b>Безопасность</b>» в панели — проверка того, что роутер открыл в интернет и кто туда стучится, с оценкой и понятным списком: что не так, почему это опасно, что сделать и где это в UniFi. Только чтение: настройки UniFi панель не меняет.</p>
+  <ul>
+    <li><b>Проброс портов</b> — что за служба (по порту в сети: 44300 → 5001 — это Synology DSM), сколько пакетов пришло, ограничен ли источник. Вход в управление (NAS, Home Assistant, RDP, SSH) для всех — «исправить»; почта и вход по паролю — «стоит поправить»; неиспользуемый проброс — «к сведению».</li>
+    <li><b>Сам роутер</b> — консоль UniFi на WAN, WireGuard-сервер, правила пользователя (в том числе по порту-источнику — так ходят сканеры), сколько непрошеных пакетов отброшено.</li>
+    <li><b>SSH, UPnP, IPS и honeypot UniFi</b>, попытки входа по SSH из интернета, кто подключён снаружи прямо сейчас. События IPS разбираются, если UniFi хранит их на роутере.</li>
+  </ul>
+  <p><b>Защита входящих</b> — по желанию («Подставить рекомендуемое» или вручную). Свои правила роутера для пакетов с WAN, первыми в INPUT и FORWARD; правила UniFi не меняются.</p>
+  <div class="tw"><table>
+    <tr><th>Часть</th><th>Что делает</th><th>Настройка</th></tr>
+    <tr><td>Только из своих стран</td><td>На выбранные порты (проброс и службы роутера, например консоль 443) — только из разрешённых стран. Адреса стран — те же, что у GeoIP, обновляются раз в неделю; не скачались — ограничение не ставится, чтобы не отбросить всех.</td><td><code>SEC_GEO_ALLOW</code>, <code>SEC_GEO_PORTS</code></td></tr>
+    <tr><td>Ловушки для сканеров</td><td>Кто стучится на Telnet, RDP, SMB, базы данных и т. п., блокируется на сутки целиком. Открытые и проброшенные порты ловушками не бывают.</td><td><code>SEC_TRAP</code>, <code>SEC_TRAP_PORTS</code></td></tr>
+    <tr><td>Подбор паролей</td><td>Больше 30 новых соединений в минуту с одного адреса на проброшенные порты — блокировка.</td><td><code>SEC_RATE</code>, <code>SEC_BAN_HOURS</code></td></tr>
+    <tr><td>Свои адреса</td><td>Частные сети, VPS и серверы туннелей не блокируются никогда; плюс свой список.</td><td><code>SEC_ALLOW_IPS</code></td></tr>
+  </table></div>
+  <div class="note n-warn"><b>Что не ограничивать по странам</b><p>Порт 25 (приём почты) — письма приходят с серверов по всему миру. Порт 80 — Let's Encrypt проверяет домен с серверов в разных странах, сертификат перестанет обновляться. Если сами уезжаете за границу — добавьте страну заранее или заходите через VPN-сервер роутера (его порт по странам не ограничивайте). Панель предупреждает о 25 и 80.</p></div>
+<figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">защита входящих</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>/data/awg/sec.sh status<span class="c">              # что включено, сколько адресов заблокировано</span>
+/data/awg/sec.sh unban 203.0.113.7<span class="c">   # снять блокировку</span>
+tail /data/awg/sec/bans.log<span class="c">          # журнал блокировок: время|за что|адрес</span></code></pre></figure>
+
   <h3>Свой VPS: защита и смена ключей</h3>
   <p>«Компоненты → Свой VPS»: автообновления безопасности, fail2ban для SSH, вход по ключам (с предупреждением, чтобы не потерять доступ; установщик может добавить на VPS свой ключ роутера и тогда входит без пароля) и смена ключей туннеля до VPS с автоматическим откатом при неудаче. ufw установщик не включает: включённый ufw с политикой FORWARD=DROP ломает NAT туннеля.</p>
 
@@ -3043,7 +3063,7 @@ systemctl daemon-reload 2&gt;/dev/null
 pkill -f "$D/(failover|self|guard|subnets|bot|metrics|awg-notify)[.]sh" 2&gt;/dev/null
 
 <span class="c"># 2. модули со своими правилами (цепочки AWG_*, ip rule подсетей, файл dnsmasq), маршруты и blackhole в таблице PBR</span>
-for s in guard self subnets; do [ -x "$D/$s.sh" ] &amp;&amp; "$D/$s.sh" remove &gt;/dev/null 2&gt;&amp;1; done
+for s in guard sec self subnets; do [ -x "$D/$s.sh" ] &amp;&amp; "$D/$s.sh" remove &gt;/dev/null 2&gt;&amp;1; done
 [ -x "$D/failover.sh" ] &amp;&amp; "$D/failover.sh" cleanup all &gt;/dev/null 2&gt;&amp;1
 
 <span class="c"># 3. все правила iptables, где участвует интерфейс awg* (NAT, MSS, FORWARD), все копии</span>
@@ -3190,6 +3210,7 @@ EOF</code></pre></figure>
       <tr><td><code>routes.sh</code>, <code>route.d/ID.env</code> 🔒, <code>awg-failover-ID.service</code>, <code>failover-ID.log</code></td><td>Дополнительные маршруты (1.6): профиль UniFi → своя цепочка туннелей и свой сторож</td><td>★</td></tr>
     <tr><td><code>obfs-tune.sh</code>, <code>tune.tsv</code>, <code>tune.log</code></td><td>Автоподбор параметров обфускации и его результаты (1.6)</td><td>★</td></tr>
     <tr><td><code>lists.sh</code>, <code>lists/</code>, <code>lists.log</code></td><td>Списки заблокированного и GeoIP: кэш и журнал обновления (1.7)</td><td>★</td></tr>
+    <tr><td><code>sec.sh</code>, <code>sec/</code></td><td>Защита входящих: адреса разрешённых стран, журнал блокировок (1.10)</td><td>★</td></tr>
     <tr><td><code>xray.sh</code>, <code>xray/</code> 🔒</td><td>Xray для туннелей VLESS: бинарник, подписки (<code>vless.json</code>), конфиги туннелей (1.9)</td><td>★</td></tr>
     <tr><td><code>autotune.json</code></td><td>Автоподбор при деградации: когда и какой туннель подбирался, предложенный набор (1.7)</td><td></td></tr>
     <tr><td><code>web/traffic.json</code> 🔒</td><td>Трафик через туннели по устройствам за 62 дня, если включён учёт (1.7)</td><td></td></tr>
@@ -3224,6 +3245,7 @@ EOF</code></pre></figure>
     <tr><td><code>AUTO_TUNE</code></td><td><code>no</code></td><td>Автоподбор обфускации неактивного канала при деградации, итог — в Telegram с кнопкой (1.7); <code>AUTO_TUNE_AFTER</code> (900 с), <code>AUTO_TUNE_EVERY</code> (86400 с)</td></tr>
     <tr><td><code>TRAFFIC_ACCT</code></td><td><code>no</code></td><td>Учёт трафика через туннели по устройствам для отчёта (1.7)</td></tr>
     <tr><td><code>DNS_INTERCEPT</code>, <code>DNS_CLIENTS</code>, <code>DNS_BLOCK_DOT</code></td><td><code>no</code>, пусто, <code>no</code></td><td>Перехват DNS устройств на роутер (1.7); вместе с <code>DNS_ALL_TUNNEL=yes</code> — через туннель</td></tr>
+    <tr><td><code>SEC_PROTECT</code>, <code>SEC_GEO_ALLOW</code>, <code>SEC_GEO_PORTS</code>, <code>SEC_TRAP</code>, <code>SEC_RATE</code>, <code>SEC_BAN_HOURS</code>, <code>SEC_ALLOW_IPS</code></td><td><code>no</code>, пусто, пусто, <code>yes</code>, <code>30</code>, <code>24</code>, пусто</td><td>Защита входящих (1.10): страны для выбранных портов, ловушки, блокировка подбора</td></tr>
     <tr><td><code>XRAY_TUNNELS</code></td><td>пусто</td><td>Туннели VLESS (1.9): поднимаются через Xray, а не amneziawg-go; задаётся панелью</td></tr>
     <tr><td><code>LISTS_MODE</code>, <code>GEO_COUNTRIES</code>, <code>LIST_URLS</code></td><td><code>off</code>, пусто, antifilter.download</td><td>Списки и GeoIP (1.7): <code>blocked</code> — через туннель только заблокированное, <code>geoip</code> — всё, кроме стран</td></tr>
     <tr><td><code>ROUTE_ONLY</code></td><td><code>""</code></td><td>Туннели только для дополнительных маршрутов: основной их не использует (1.6)</td></tr>

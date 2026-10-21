@@ -184,6 +184,7 @@
     ['clients', T('Клиенты'), 'users'],
     ['system', T('Роутер'), 'router'],
     ['routing', T('Маршрутизация'), 'route'],
+    ['security', T('Безопасность'), 'shield'],
     ['tools', T('Инструменты'), 'tools'],
     ['logs', T('Журналы'), 'logs'],
     ['settings', T('Настройки'), 'settings'],
