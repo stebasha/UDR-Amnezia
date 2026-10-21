@@ -84,6 +84,12 @@ chmod +x $SH/*
 WANS_TTL=3600 PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
 GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
 ck "guard: обычный проход — не больше 5 внешних команд (проходов $np, команд $ng; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ]'
+# защита входящих (1.10.1): сторож сам запускает сверку sec.sh, когда SEC_PROTECT=yes (раньше не видел настройку)
+printf '#!/bin/bash\necho "$1" >> "%s/sec.calls"\n' "$T" > "$DD/sec.sh"; chmod +x "$DD/sec.sh"
+printf 'SEC_PROTECT=yes\n' >> $DD/awg.env
+bash "$COMP/guard.sh" run > /dev/null 2>&1 & GP=$!; sleep 13; kill -TERM $GP; wait $GP 2>/dev/null
+ck "защита входящих: сторож запускает сверку sec.sh (SEC_PROTECT=yes)" 'grep -qx ensure "$T/sec.calls"'
+rm -f "$DD/sec.sh"
 $G remove
 ck "remove: цепочек нет" '! iptables -S FORWARD | grep -q AWG_GUARD && ! iptables -t mangle -S PREROUTING | grep -q AWG_ && ! ip6tables -S FORWARD | grep -q AWG_GUARD && ! iptables -t nat -S PREROUTING | grep -q AWG_ && ! iptables -S FORWARD | grep -q AWG_DNS'
 echo "guard: провалов $fails"; rm -rf $T; exit $fails

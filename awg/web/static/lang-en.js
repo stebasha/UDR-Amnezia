@@ -1104,7 +1104,7 @@ window.AWG_EN = {
  "Кто стучится на порты-ловушки (Telnet, RDP, SMB, базы данных…) — сканер: его адрес блокируется целиком, и на проброшенные порты тоже. Открытые и проброшенные порты ловушками не бывают.": "Whoever knocks on trap ports (Telnet, RDP, SMB, databases…) is a scanner: its address is blocked entirely, including forwarded ports. Open and forwarded ports are never traps.",
  "До 15 портов. Открытые на роутере и проброшенные исключаются сами.": "Up to 15 ports. Ports open on the router and forwarded ones are excluded automatically.",
  "в минуту": "per minute",
- "Больше стольких новых соединений с одного адреса на проброшенные порты — подбор паролей: адрес блокируется. 0 — выключено.": "More new connections than this from one address to forwarded ports means password guessing: the address is blocked. 0 — off.",
+ "Больше стольких новых соединений за минуту с одного адреса на проброшенные порты — подбор паролей: адрес блокируется. 2–20 (больше ядро роутера не считает), рекомендуется 20: браузер и почтовая программа сами открывают по несколько соединений. 0 — выключено.": "More new connections per minute than this from one address to forwarded ports means password guessing: the address is blocked. 2–20 (the router kernel counts no more); 20 is recommended — a browser or mail app opens several connections itself. 0 — off.",
  "ч": "h",
  "На сколько блокировать адрес.": "How long to block an address.",
  "Не блокируются никогда (например, рабочий адрес). Частные сети, адрес VPS и серверы туннелей — всегда.": "Never blocked (e.g. your work address). Private networks, the VPS and tunnel servers — always allowed.",
@@ -1155,7 +1155,7 @@ window.AWG_EN = {
  "Подставить рекомендуемое": "Apply recommended",
  "Включить защиту входящих?": "Enable inbound protection?",
  "Порты только из стран ": "Ports only from countries ",
- "; блокировка сканеров и подбора паролей (больше 30 соединений в минуту). Если сами бываете за границей — добавьте страну или заходите через VPN-сервер роутера.": "; blocking of scanners and password guessing (more than 30 connections per minute). If you travel abroad — add the country or connect through the router's VPN server.",
+ "; блокировка сканеров и подбора паролей (больше 20 соединений в минуту). Если сами бываете за границей — добавьте страну или заходите через VPN-сервер роутера.": "; blocking of scanners and password guessing (more than 20 connections per minute). If you travel abroad — add the country or connect through the router's VPN server.",
  "Защита входящих": "Inbound protection",
  "Включена. ": "On. ",
  "Заблокировано сейчас: ": "Blocked now: ",
@@ -1179,7 +1179,8 @@ window.AWG_EN = {
  "Порты-ловушки": "Trap ports",
  "Блокировать подбор паролей: новых соединений в минуту больше": "Block password guessing: new connections per minute above",
  "Блокировка на, ч": "Block for, h",
- "Адреса, которые не блокируются никогда": "Addresses never blocked"
+ "Адреса, которые не блокируются никогда": "Addresses never blocked",
+ "Скачать адреса стран": "Download country addresses"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],

@@ -12,8 +12,8 @@
 #                        этих стран; остальные отбрасываются. Порт 25 (почта) и 80 (Let's Encrypt) так не ограничивайте.
 #   SEC_TRAP=yes         кто стучится на порты-ловушки роутера (SEC_TRAP_PORTS: 23, 3389, 445…; открытые и проброшенные
 #                        исключаются сами) — сканер: его адрес блокируется на SEC_BAN_HOURS часов
-#   SEC_RATE=30          больше 30 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
-#                        блокировка на SEC_BAN_HOURS (0 — выключено)
+#   SEC_RATE=20          больше 20 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
+#                        блокировка на SEC_BAN_HOURS (0 — выключено; 2–20: счёт ведёт xt_recent, hashlimit в ядре UDR7 нет)
 #   SEC_ALLOW_IPS="…"    адреса и подсети, которые не блокируются никогда (частные сети — всегда)
 export LC_ALL=C.UTF-8
 iptables(){ command iptables -w 10 "$@"; }
@@ -21,7 +21,7 @@ DD=${DD:-/data/awg}
 SD=$DD/sec
 RUNF=${AWG_RUN:-/run}/awg-sec.hash
 umask 077
-SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=30; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
+SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=20; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
 SEC_TRAP_PORTS="23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -57,6 +57,7 @@ geo_update(){
   local want; want=$(ccs | tr '\n' ' ')
   [ -n "$want" ] || return 0
   mkdir -p "$SD"; chmod 700 "$SD"
+  date +%s > "$SD/geo.try"
   # shellcheck disable=SC2046
   if bash "$DD/lists.sh" geo-file "$SD/geo.new" $(ccs) && [ "$(wc -l < "$SD/geo.new")" -ge "$GEO_MIN" ]; then
     mv -f "$SD/geo.new" "$SD/geo.cidr"; date +%s > "$SD/geo.ts"; echo "$want" > "$SD/geo.src"
@@ -126,7 +127,11 @@ rules_fwd(){  # FORWARD: проброшенные порты (адрес наз�
     done
   fi
   if [[ $r =~ ^[0-9]+$ ]] && [ "$r" -gt 0 ]; then
-    echo "-m conntrack --ctstate DNAT -m hashlimit --hashlimit-above $r/min --hashlimit-burst $r --hashlimit-mode srcip --hashlimit-name awgsec -j SET --add-set $S_RATE src --exist"
+    [ "$r" -lt 2 ] && r=2; [ "$r" -gt 20 ] && r=20   # xt_recent помнит не больше 20 пакетов на адрес
+    # сюда доходят только новые соединения (установленные вернулись первым правилом): запомнить адрес и,
+    # если за минуту их r и больше, — в набор блокировки
+    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --set --rsource"
+    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --rcheck --seconds 60 --hitcount $r --rsource -j SET --add-set $S_RATE src --exist"
     echo "-m set --match-set $S_RATE src -j DROP"
   fi
   echo "-j RETURN"
@@ -199,6 +204,13 @@ bans_log(){  # новые блокировки — в журнал $SD/bans.log 
   if [ "$new" -gt 0 ] && [ "$(wc -l < "$SD/bans.log")" -gt 2000 ]; then tail -n 1500 "$SD/bans.log" > "$SD/bans.t" && mv -f "$SD/bans.t" "$SD/bans.log"; fi
   return 0
 }
+geo_retry(){  # страны нужны, а набора нет (не скачались) — повторить, но не чаще раза в 10 минут
+  local t n
+  [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] || return 1
+  n=$(count $S_GEO); [ "${n:-0}" -gt 0 ] && return 1
+  t=$(cat "$SD/geo.try" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || return 0
+  [ $(( $(date +%s) - t )) -ge "${SEC_GEO_RETRY:-600}" ]
+}
 ensure(){  # awg-guard, раз в минуту: правила на месте и настройки те же — только журнал новых блокировок
   local h b c w miss=0
   if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -n 7 || return 0; fi
@@ -207,7 +219,7 @@ ensure(){  # awg-guard, раз в минуту: правила на месте �
     read -r b c <<< "$h"
     for w in $(wans); do iptables -C "$b" -i "$w" -j "$c" 2>/dev/null || { miss=1; break 2; }; done
   done
-  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] || apply >/dev/null
+  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] && ! geo_retry || apply > "$SD/apply.log" 2>&1
   bans_log
 }
 count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
@@ -223,7 +235,7 @@ case "${1:-status}" in
   apply)  apply;;
   ensure) ensure;;
   remove) remove;;
-  geo)    geo_update && on && apply >/dev/null;;
+  geo)    rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; geo_update;;
   status) status;;
   unban)  [[ ${2:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { say "использование: sec.sh unban IP"; exit 2; }
           ipset del $S_TRAP "$2" 2>/dev/null; ipset del $S_RATE "$2" 2>/dev/null; event "блокировка снята: $2"; say "$2: блокировка снята";;

@@ -229,6 +229,7 @@ def sec_protect(e):
     on = e.get("SEC_PROTECT", "no") == "yes"
     st = {"on": on, "geo_allow": e.get("SEC_GEO_ALLOW", ""), "geo_ports": e.get("SEC_GEO_PORTS", ""),
           "trap": e.get("SEC_TRAP", DEFAULTS["SEC_TRAP"]), "rate": e.get("SEC_RATE", DEFAULTS["SEC_RATE"]),
+          "ban": e.get("SEC_BAN_HOURS", DEFAULTS["SEC_BAN_HOURS"]),
           "rules": 0, "geo_set": 0, "geo_drop": 0, "trap_n": 0, "rate_n": 0, "ban_drop": 0, "banned": [], "recent": []}
     if not on:
         return st
@@ -240,6 +241,7 @@ def sec_protect(e):
             elif r["target"] == "DROP" and "AWG_SEC_BAN" in r["x"]:
                 st["ban_drop"] += r["pkts"]
     st["geo_set"] = _set_count("AWG_SEC_GEO")
+    st["log"] = read_file(os.path.join(DD, "sec", "apply.log"))[-1500:]
     ban = []
     for s, why in (("AWG_SEC_TRAP", "trap"), ("AWG_SEC_RATE", "rate")):
         m = _set_members(s)
@@ -367,8 +369,22 @@ def sec_findings(d):
         add("info", "Своя защита входящих выключена", "Можно включить ниже: только из разрешённых стран на выбранные порты, блокировка сканеров и подбора паролей. Правила UniFi не меняются.", "", "")
     else:
         add("ok", "Защита входящих включена", "Сейчас заблокировано адресов: %d (сканеры %d, подбор %d); за сутки — %d." % (pr["trap_n"] + pr["rate_n"], pr["trap_n"], pr["rate_n"], pr.get("day", 0)), "", "")
+        bad = [l for l in pr.get("log", "").splitlines() if "не принято" in l or "Couldn't load" in l][:3]
+        if bad:
+            add("warn", "Часть правил защиты не поставилась", " ".join(bad)[:400], "Обновите набор (install.sh --update); не помогает — пришлите этот текст.", "")
+        try:
+            rate = int(pr["rate"] or 0)
+        except ValueError:
+            rate = 0
+        if 0 < rate < 10:
+            add("warn", "Порог подбора паролей очень низкий: %d соединений в минуту" % rate,
+                "Браузер, открывая страницу NAS, и почтовая программа сами открывают по несколько соединений: так можно заблокировать себя на %s ч." % pr.get("ban", "?"),
+                "Поставьте 20 (больше xt_recent не умеет) или добавьте свои адреса в «Не блокируются никогда».", "")
         if pr["geo_ports"] and pr["geo_allow"] and pr["geo_set"] == 0:
-            add("warn", "Ограничение по странам не действует", "Адреса стран не загружены (не скачались) — правило не поставлено, чтобы не отбросить всех.", "Проверьте доступ к github.com с роутера и коды стран.", "")
+            last = [l for l in pr.get("log", "").splitlines() if l.startswith(("✘", "▲"))][-2:]
+            add("warn", "Ограничение по странам не действует",
+                "Адреса стран не загружены — правило не поставлено, чтобы не отбросить всех." + (" Последняя попытка: " + " ".join(last) if last else " Скачивание ещё не запускалось (первая сверка — в течение минуты после включения)."),
+                "Нажмите «Скачать адреса стран» ниже. Не помогает — проверьте коды стран (две буквы: ru) и доступ роутера к raw.githubusercontent.com. Повтор — сам, раз в 10 минут.", "")
     if d["cgnat"]:
         add("info", "Внешний адрес — частный (%s)" % d["wanip"], "Провайдер раздаёт адрес через NAT: из интернета к вам напрямую не подключиться, проброс портов не работает.", "", "")
     order = {"crit": 0, "warn": 1, "info": 2, "ok": 3}
@@ -386,7 +402,7 @@ def sec_suggest(d):
     for a in (d["local"] or {}).get("accept", []):
         if a["kind"] == "console":
             ports += [p for p in a["dports"] if p not in ports]
-    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes", "SEC_RATE": "30"}
+    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes", "SEC_RATE": "20"}
 
 
 def api_security(h, q):
@@ -396,6 +412,15 @@ def api_security(h, q):
         f, score = sec_findings(d)
         _SEC_CACHE.update(t=now(), v={"data": d, "findings": f, "score": score, "suggest": sec_suggest(d)})
     return _SEC_CACHE["v"]
+
+
+def api_security_geo(h, d):
+    """Скачать адреса разрешённых стран сейчас и поставить правила (обычно это делает сверка awg-guard)."""
+    rc, out = run([os.path.join(DD, "sec.sh"), "geo"], timeout=180)
+    h.act("sec-geo")
+    _SEC_CACHE["t"] = 0
+    ok = rc == 0 and "только из" in out
+    return {"ok": ok, "msg": out.strip()[-800:] or "нет ответа"}
 
 
 def api_security_unban(h, d):
