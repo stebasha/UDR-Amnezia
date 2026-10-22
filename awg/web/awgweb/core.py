@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.3"
+VERSION = "1.10.4"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")

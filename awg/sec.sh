@@ -147,12 +147,15 @@ rules_fwd(){  # FORWARD: проброшенные порты (адрес наз�
   echo "-j RETURN"
 }
 fill(){  # fill ЦЕПОЧКА ФУНКЦИЯ — цепочку заново на месте: переходы в неё из INPUT/FORWARD не трогаются
-  local c=$1 f=$2 r
+  local c=$1 f=$2 r rules
+  # сначала собрать правила целиком (они читают таблицы: проброс, наборы), потом ставить — не одновременно
+  rules=$("$f")
   iptables -N "$c" 2>/dev/null || iptables -F "$c"
   while IFS= read -r r; do
+    [ -n "$r" ] || continue
     # shellcheck disable=SC2086
     iptables -A "$c" $r || say "✘ правило не принято: $r"
-  done < <("$f")
+  done <<< "$rules"
 }
 HOOKS=("INPUT $CI" "FORWARD $CF")
 hook_off(){  # убрать переходы в цепочку из INPUT/FORWARD (все копии)
@@ -232,14 +235,15 @@ peers(){  # адреса, с которых сейчас подключены к
     ip=${ip%:*}; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
     ipset add $S_PEER "$ip" -exist 2>/dev/null
     ipset del $S_TRAP "$ip" 2>/dev/null; ipset del $S_RATE "$ip" 2>/dev/null
-  done < <(join_hs)
+  done <<< "$(join_hs)"
 }
-join_hs(){  # «интерфейс адрес время-handshake» по пирам VPN-сервера
-  paste <(wg show all endpoints 2>/dev/null) <(wg show all latest-handshakes 2>/dev/null) | awk '$1==$4 && $2==$5 {print $1, $3, $6}'
+join_hs(){  # «интерфейс адрес время-handshake» по пирам VPN-сервера (без <( ): такие процессы не ждут и они держат замок)
+  { wg show all endpoints 2>/dev/null | sed 's/^/E\t/'; wg show all latest-handshakes 2>/dev/null | sed 's/^/H\t/'; } \
+    | awk -F'\t' '$1=="E" {ep[$2" "$3]=$4} $1=="H" && ($2" "$3) in ep {print $2, ep[$2" "$3], $4}'
 }
 ensure(){  # awg-guard, раз в минуту: правила на месте и настройки те же — только журнал новых блокировок
   local h b c w miss=0
-  if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -n 7 || return 0; fi
+  if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -w 20 7 || return 0; fi   # ждать, а не пропускать: прошлая сверка могла ещё не отпустить замок
   if ! on; then iptables -S $CI >/dev/null 2>&1 && remove quiet; return 0; fi
   for h in "${HOOKS[@]}"; do
     read -r b c <<< "$h"
