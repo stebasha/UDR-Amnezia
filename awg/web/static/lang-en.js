@@ -1182,7 +1182,14 @@ window.AWG_EN = {
  "Адреса, которые не блокируются никогда": "Addresses never blocked",
  "Скачать адреса стран": "Download country addresses",
  "На эти порты соединения не считаются: почтовые серверы (25) и Let's Encrypt (80) открывают их пачками и попали бы в блокировку. Подбор паролей идёт на порты входа: 465, 587, 993, NAS, Home Assistant.": "Connections to these ports are not counted: mail servers (25) and Let's Encrypt (80) open them in bursts and would get blocked. Password guessing targets login ports: 465, 587, 993, NAS, Home Assistant.",
- "Порты, где подбор паролей не считается": "Ports excluded from password-guessing count"
+ "Порты, где подбор паролей не считается": "Ports excluded from password-guessing count",
+ "Больше стольких новых соединений за минуту с одного адреса на проброшенные порты — подбор паролей: для адреса закрываются проброшенные порты. По умолчанию выключено (0): за мобильным адресом оператора сидит много людей, а приложения NAS и Home Assistant сами открывают много соединений — так блокируются свои. Включайте (2–20), только если в журналах NAS видите подбор паролей.": "More new connections per minute than this from one address to forwarded ports means password guessing: forwarded ports are closed for that address. Off by default (0): many people share one mobile carrier address, and NAS and Home Assistant apps open many connections themselves — so your own devices get blocked. Turn on (2–20) only if NAS logs show password guessing.",
+ "На сколько блокировать сканер (адрес закрывается целиком). Адреса, с которых подключены ваши клиенты VPN-сервера роутера, не блокируются.": "How long to block a scanner (the address is closed entirely). Addresses your router VPN-server clients connect from are never blocked.",
+ "На сколько закрывать проброшенные порты для адреса, превысившего частоту. Роутер и VPN-сервер для него остаются доступны.": "How long to close forwarded ports for an address that exceeded the rate. The router and VPN server stay reachable for it.",
+ "; блокировка сканеров. Если сами бываете за границей — добавьте страну или заходите через VPN-сервер роутера.": "; scanner blocking. If you travel abroad — add the country or connect through the router's VPN server.",
+ "Выключена. Рекомендуемое: порты управления и входа по паролю — только из вашей страны, блокировка сканеров.": "Off. Recommended: management and password-login ports only from your country, scanner blocking.",
+ "Блокировка сканеров на, ч": "Block scanners for, h",
+ "Блокировка за подбор паролей на, ч": "Block password guessing for, h"
 },
   re: [
     [/^Туннель (\S+): нет handshake$/, "Tunnel $1: no handshake"],

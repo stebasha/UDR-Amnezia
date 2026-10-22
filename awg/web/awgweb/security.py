@@ -231,6 +231,7 @@ def sec_protect(e):
           "trap": e.get("SEC_TRAP", DEFAULTS["SEC_TRAP"]), "rate": e.get("SEC_RATE", DEFAULTS["SEC_RATE"]),
           "ban": e.get("SEC_BAN_HOURS", DEFAULTS["SEC_BAN_HOURS"]),
           "rate_skip": e.get("SEC_RATE_SKIP", DEFAULTS["SEC_RATE_SKIP"]),
+          "rate_ban": e.get("SEC_RATE_BAN_HOURS", DEFAULTS["SEC_RATE_BAN_HOURS"]),
           "rules": 0, "geo_set": 0, "geo_drop": 0, "trap_n": 0, "rate_n": 0, "ban_drop": 0, "banned": [], "recent": []}
     if not on:
         return st
@@ -383,6 +384,10 @@ def sec_findings(d):
             add("warn", "Подбор паролей считается и на порт %s" % ", ".join(map(str, miss)),
                 "Почтовые серверы (25) и Let's Encrypt (80) открывают соединения пачками: их адреса попадут в блокировку — почта и продление сертификата перестанут работать.",
                 "Добавьте %s в «Порты, где подбор паролей не считается»." % " ".join(map(str, miss)), "")
+        if rate > 0:
+            add("info", "Включена блокировка подбора паролей (%d соединений в минуту)" % rate,
+                "За мобильным адресом оператора сидит много людей, а приложения NAS и Home Assistant сами открывают много соединений: так можно закрыть проброшенные порты себе (на %s ч; VPN-сервер роутера остаётся доступен)." % pr.get("rate_ban", "1"),
+                "Если в журналах NAS нет подбора паролей — выключите (0).", "")
         if 0 < rate < 10:
             add("warn", "Порог подбора паролей очень низкий: %d соединений в минуту" % rate,
                 "Браузер, открывая страницу NAS, и почтовая программа сами открывают по несколько соединений: так можно заблокировать себя на %s ч." % pr.get("ban", "?"),
@@ -409,7 +414,7 @@ def sec_suggest(d):
     for a in (d["local"] or {}).get("accept", []):
         if a["kind"] == "console":
             ports += [p for p in a["dports"] if p not in ports]
-    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes", "SEC_RATE": "20"}
+    return {"SEC_GEO_PORTS": " ".join(ports), "SEC_TRAP": "yes"}
 
 
 def api_security(h, q):

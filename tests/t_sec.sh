@@ -36,8 +36,9 @@ printf 'SEC_PROTECT=yes\n' >> "$DD/awg.env"
 "$X" apply > $T/o 2>&1
 ck "включено: переход первым в INPUT и FORWARD только с WAN" '[ "$(iptables -S INPUT | sed -n 2p)" = "-A INPUT -i eth3 -j AWG_SEC_IN" ] && [ "$(iptables -S FORWARD | sed -n 2p)" = "-A FORWARD -i eth3 -j AWG_SEC_FWD" ]' || { iptables -S INPUT; cat $T/o; }
 ck "свои адреса не блокируются: частные сети и VPS" 'grep -qx 192.168.0.0/16 "$STUB/ipset-AWG_SEC_OK" && grep -qx 203.0.113.5 "$STUB/ipset-AWG_SEC_OK"'
-ck "по умолчанию: ловушки (без проброшенного 3389, консоли 443 и WireGuard), частота 20/мин (xt_recent)" 'ci | grep -q -- "--dports 23,135,139,445,1433,2323,3306,5432,5900,6379,7547,8291,9200,27017 -j SET --add-set AWG_SEC_TRAP src" && ! ci | grep -- "--dports" | grep -qE "(,|\s)3389(,|\s)" && cf | grep -q -- "-m recent --name awgsec --set --rsource" && cf | grep -q -- "--rcheck --seconds 60 --hitcount 20 --rsource -j SET --add-set AWG_SEC_RATE src" && cf | grep -q -- "--match-set AWG_SEC_RATE src -j DROP"' || ci
-ck "сначала уже установленные соединения и свои адреса, потом блокировки" '[ "$(ci | sed -n 2p)" = "-A AWG_SEC_IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ] && ci | sed -n 3p | grep -q AWG_SEC_OK && ci | sed -n 4p | grep -q "AWG_SEC_BAN src -j DROP"'
+ck "по умолчанию: ловушки (без проброшенного 3389, консоли 443 и WireGuard), подбор паролей выключен" 'ci | grep -q -- "--dports 23,135,139,445,1433,2323,3306,5432,5900,6379,7547,8291,9200,27017 -j SET --add-set AWG_SEC_TRAP src" && ! ci | grep -- "--dports" | grep -qE "(,|\s)3389(,|\s)" && ! cf | grep -q "recent --name"' || ci
+ck "сначала уже установленные соединения и свои адреса, потом блокировки" '[ "$(ci | sed -n 2p)" = "-A AWG_SEC_IN -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN" ] && ci | sed -n 3p | grep -q AWG_SEC_OK && ci | sed -n 4p | grep -q "AWG_SEC_PEER src -j RETURN" && ci | sed -n 5p | grep -q "AWG_SEC_TRAP src -j DROP"'
+ck "роутер (VPN-сервер) закрывается только для сканеров, не за частоту" '! ci | grep -q AWG_SEC_BAN && ! ci | grep -q AWG_SEC_RATE && cf | grep -q "AWG_SEC_BAN src -j DROP"'
 ck "наборы блокировок с ловушек и за частоту — одна проверка" 'grep -qx AWG_SEC_TRAP "$STUB/ipset-AWG_SEC_BAN" && grep -qx AWG_SEC_RATE "$STUB/ipset-AWG_SEC_BAN"'
 ck "без стран — правил «только из стран» нет" '! ci | grep -q AWG_SEC_GEO && ! cf | grep -q AWG_SEC_GEO'
 printf 'SEC_GEO_ALLOW="RU"\nSEC_GEO_PORTS="8123 443"\n' >> "$DD/awg.env"
@@ -65,8 +66,9 @@ rm -f "$DD/sec/geo.ts"; "$X" geo > $T/o 2>&1
 ck "sec.sh geo: скачать сейчас и поставить" 'grep -q "только из RU" $T/o' || cat $T/o
 printf 'SEC_GEO_ALLOW="ru"\nSEC_RATE=0\nSEC_TRAP=no\n' >> "$DD/awg.env"
 "$X" apply > /dev/null 2>&1
-ck "ловушки и частота выключаются по отдельности" '! ci | grep -q AWG_SEC_TRAP && ! cf | grep -q "recent --name" && cf | grep -q ctorigdstport'
-printf 'SEC_TRAP=yes\nSEC_RATE=20\n' >> "$DD/awg.env"
+ck "ловушки и частота выключаются по отдельности" '! ci | grep -q "add-set AWG_SEC_TRAP" && ! cf | grep -q "recent --name" && cf | grep -q ctorigdstport'
+printf 'SEC_TRAP=yes\nSEC_RATE=20\n' >> "$DD/awg.env"; "$X" apply > /dev/null 2>&1
+ck "подбор паролей включён: xt_recent, блокировка на 1 ч (только проброс)" 'cf | grep -q -- "-m recent --name awgsec --set --rsource" && cf | grep -q -- "--rcheck --seconds 60 --hitcount 20 --rsource -j SET --add-set AWG_SEC_RATE src --exist --timeout 3600" && cf | grep -q -- "--match-set AWG_SEC_RATE src -j DROP"' || cf
 "$X" apply > /dev/null 2>&1
 r0=$(ci; cf)
 "$X" ensure
@@ -78,7 +80,19 @@ iptables -t nat -A UBIOS_PREROUTING_USER_HOOK -d 188.113.154.234/32 -p tcp -m tc
 "$X" ensure
 ck "сверка: новый проброс 5900 — он больше не ловушка" '! ci | grep -- "--dports" | grep -qE "(,|\s)5900(,|\s)"' || ci
 ipset add AWG_SEC_TRAP 45.1.1.1; ipset add AWG_SEC_RATE 45.2.2.2
+# клиент VPN-сервера роутера подключён с 80.83.225.5 (handshake только что) — свой: снимается блокировка, не блокируется
+ipset add AWG_SEC_RATE 80.83.225.5; ipset add AWG_SEC_TRAP 94.243.30.96
+cat > "$T/bin/wg" <<S
+#!/bin/bash
+case "\$3" in
+  endpoints) printf 'wgsrv1\tPK1=\t80.83.225.5:49666\nwgsrv1\tPK2=\t94.243.30.96:51328\nwgsrv1\tPK3=\t(none)\nawgmain\tPK4=\t203.0.113.9:443\n';;
+  latest-handshakes) printf 'wgsrv1\tPK1=\t%s\nwgsrv1\tPK2=\t%s\nwgsrv1\tPK3=\t0\nawgmain\tPK4=\t%s\n' \$(date +%s) \$((\$(date +%s) - 900)) \$(date +%s);;
+esac
+S
+chmod +x "$T/bin/wg"
 "$X" ensure; "$X" ensure
+ck "свой клиент VPN-сервера (свежий handshake): блокировка снята, в списке своих" '! grep -qx 80.83.225.5 "$STUB/ipset-AWG_SEC_RATE" && grep -qx 80.83.225.5 "$STUB/ipset-AWG_SEC_PEER"'
+ck "клиент без свежего handshake и туннели роутера — не трогаются" 'grep -qx 94.243.30.96 "$STUB/ipset-AWG_SEC_TRAP" && ! grep -qx 203.0.113.9 "$STUB/ipset-AWG_SEC_PEER"'
 ck "журнал блокировок: новые адреса — по одному разу, за что" '[ "$(grep -c "|trap|45.1.1.1" "$DD/sec/bans.log")" = 1 ] && grep -q "|rate|45.2.2.2" "$DD/sec/bans.log"'
 "$X" unban 45.1.1.1 > /dev/null
 ck "снять блокировку" '! grep -qx 45.1.1.1 "$STUB/ipset-AWG_SEC_TRAP"'

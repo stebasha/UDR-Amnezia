@@ -12,22 +12,25 @@
 #                        этих стран; остальные отбрасываются. Порт 25 (почта) и 80 (Let's Encrypt) так не ограничивайте.
 #   SEC_TRAP=yes         кто стучится на порты-ловушки роутера (SEC_TRAP_PORTS: 23, 3389, 445…; открытые и проброшенные
 #                        исключаются сами) — сканер: его адрес блокируется на SEC_BAN_HOURS часов
-#   SEC_RATE=20          больше 20 новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
-#                        блокировка на SEC_BAN_HOURS (0 — выключено; 2–20: счёт ведёт xt_recent, hashlimit в ядре UDR7 нет)
+#   SEC_RATE=0           больше N новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
+#                        блокировка только проброшенных портов на SEC_RATE_BAN_HOURS (по умолчанию 1 ч); 0 — выключено
+#                        (по умолчанию: за мобильным адресом оператора — много людей, приложения открывают много соединений;
+#                        2–20: счёт ведёт xt_recent, hashlimit в ядре UDR7 нет)
 #   SEC_RATE_SKIP="25 80" на эти порты соединения не считаются (почтовые серверы и Let's Encrypt открывают их пачками)
-#   SEC_ALLOW_IPS="…"    адреса и подсети, которые не блокируются никогда (частные сети — всегда)
+#   SEC_ALLOW_IPS="…"    адреса и подсети, которые не блокируются никогда (частные сети — всегда; адреса, с которых сейчас
+#                        подключены клиенты VPN-сервера роутера, — тоже: это ваши устройства)
 export LC_ALL=C.UTF-8
 iptables(){ command iptables -w 10 "$@"; }
 DD=${DD:-/data/awg}
 SD=$DD/sec
 RUNF=${AWG_RUN:-/run}/awg-sec.hash
 umask 077
-SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=20; SEC_RATE_SKIP="25 80"; SEC_BAN_HOURS=24; SEC_ALLOW_IPS=""; WANIF=""
+SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=0; SEC_RATE_SKIP="25 80"; SEC_BAN_HOURS=24; SEC_RATE_BAN_HOURS=1; SEC_ALLOW_IPS=""; WANIF=""
 SEC_TRAP_PORTS="23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
 CI=AWG_SEC_IN; CF=AWG_SEC_FWD
-S_OK=AWG_SEC_OK; S_GEO=AWG_SEC_GEO; S_TRAP=AWG_SEC_TRAP; S_RATE=AWG_SEC_RATE; S_BAN=AWG_SEC_BAN
+S_OK=AWG_SEC_OK; S_PEER=AWG_SEC_PEER; S_GEO=AWG_SEC_GEO; S_TRAP=AWG_SEC_TRAP; S_RATE=AWG_SEC_RATE; S_BAN=AWG_SEC_BAN
 GEO_MAX_AGE=${SEC_GEO_MAX_AGE:-604800}
 GEO_MIN=${SEC_GEO_MIN:-50}           # меньше сетей — не похоже на страну: правило «только из стран» не ставим вовсе
 
@@ -94,6 +97,7 @@ sets(){
   # с ловушек и за частоту — разные наборы (видно, за что), проверка — одна (list:set); counters — сколько пакетов отброшено
   ipset create $S_TRAP hash:ip family inet timeout "$t" counters maxelem 65536 -exist 2>/dev/null
   ipset create $S_RATE hash:ip family inet timeout "$t" counters maxelem 65536 -exist 2>/dev/null
+  ipset create $S_PEER hash:ip family inet timeout 86400 -exist 2>/dev/null
   ipset create $S_BAN list:set -exist 2>/dev/null
   ipset add $S_BAN $S_TRAP -exist 2>/dev/null; ipset add $S_BAN $S_RATE -exist 2>/dev/null
 }
@@ -101,7 +105,9 @@ rules_in(){  # правила цепочки INPUT (служба роутера 
   local tp p
   echo "-m conntrack --ctstate RELATED,ESTABLISHED -j RETURN"
   echo "-m set --match-set $S_OK src -j RETURN"
-  echo "-m set --match-set $S_BAN src -j DROP"
+  echo "-m set --match-set $S_PEER src -j RETURN"
+  # роутер (VPN-сервер, консоль) закрывается только для сканеров; за частоту — только проброшенные порты (FORWARD)
+  echo "-m set --match-set $S_TRAP src -j DROP"
   if [ "$SEC_TRAP" = yes ]; then
     tp=$(traps | paste -sd, -)
     if [ -n "$tp" ]; then
@@ -118,9 +124,11 @@ rules_in(){  # правила цепочки INPUT (служба роутера 
   echo "-j RETURN"
 }
 rules_fwd(){  # FORWARD: проброшенные порты (адрес назначения уже заменён — порт WAN берём из conntrack)
-  local p r=${SEC_RATE:-0}
+  local p r=${SEC_RATE:-0} rt=$(( ${SEC_RATE_BAN_HOURS:-1} * 3600 ))
+  [ "$rt" -ge 600 ] && [ "$rt" -le 604800 ] || rt=3600
   echo "-m conntrack --ctstate RELATED,ESTABLISHED -j RETURN"
   echo "-m set --match-set $S_OK src -j RETURN"
+  echo "-m set --match-set $S_PEER src -j RETURN"
   echo "-m set --match-set $S_BAN src -j DROP"
   if [ "$GEO_OK" = 1 ]; then
     for p in $(nums "$SEC_GEO_PORTS"); do
@@ -133,7 +141,7 @@ rules_fwd(){  # FORWARD: проброшенные порты (адрес наз�
     # если за минуту их r и больше, — в набор блокировки
     for p in $(nums "$SEC_RATE_SKIP"); do echo "-m conntrack --ctstate DNAT --ctorigdstport $p -j RETURN"; done
     echo "-m conntrack --ctstate DNAT -m recent --name awgsec --set --rsource"
-    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --rcheck --seconds 60 --hitcount $r --rsource -j SET --add-set $S_RATE src --exist"
+    echo "-m conntrack --ctstate DNAT -m recent --name awgsec --rcheck --seconds 60 --hitcount $r --rsource -j SET --add-set $S_RATE src --exist --timeout $rt"
     echo "-m set --match-set $S_RATE src -j DROP"
   fi
   echo "-j RETURN"
@@ -165,7 +173,7 @@ hook_on(){
     done
   done
 }
-fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_RATE_SKIP" "$SEC_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
+fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_RATE_SKIP" "$SEC_BAN_HOURS" "$SEC_RATE_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
 
 apply(){
   local a
@@ -189,7 +197,7 @@ apply(){
 remove(){
   local c
   for c in $CI $CF; do hook_off "$c"; iptables -F "$c" 2>/dev/null; iptables -X "$c" 2>/dev/null; done
-  for c in $S_BAN $S_TRAP $S_RATE $S_GEO $S_OK; do ipset destroy "$c" 2>/dev/null; done
+  for c in $S_BAN $S_TRAP $S_RATE $S_GEO $S_OK $S_PEER; do ipset destroy "$c" 2>/dev/null; done
   rm -f "$RUNF"
   [ "${1:-}" = quiet ] || say "правила защиты входящих убраны"
 }
@@ -213,6 +221,22 @@ geo_retry(){  # страны нужны, а набора нет (не скача
   t=$(cat "$SD/geo.try" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || return 0
   [ $(( $(date +%s) - t )) -ge "${SEC_GEO_RETRY:-600}" ]
 }
+peers(){  # адреса, с которых сейчас подключены клиенты VPN-сервера роутера (handshake за 3 минуты), — свои: снять с них блокировку
+  local n ip ts now
+  command -v wg >/dev/null || return 0
+  ipset list -n 2>/dev/null | grep -qx $S_PEER || return 0
+  printf -v now '%(%s)T' -1
+  while read -r n ip ts; do
+    case "$n" in wgsrv*) ;; *) continue;; esac
+    [[ $ts =~ ^[0-9]+$ ]] && [ $((now - ts)) -lt 180 ] || continue
+    ip=${ip%:*}; [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    ipset add $S_PEER "$ip" -exist 2>/dev/null
+    ipset del $S_TRAP "$ip" 2>/dev/null; ipset del $S_RATE "$ip" 2>/dev/null
+  done < <(join_hs)
+}
+join_hs(){  # «интерфейс адрес время-handshake» по пирам VPN-сервера
+  paste <(wg show all endpoints 2>/dev/null) <(wg show all latest-handshakes 2>/dev/null) | awk '$1==$4 && $2==$5 {print $1, $3, $6}'
+}
 ensure(){  # awg-guard, раз в минуту: правила на месте и настройки те же — только журнал новых блокировок
   local h b c w miss=0
   if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -n 7 || return 0; fi
@@ -222,6 +246,7 @@ ensure(){  # awg-guard, раз в минуту: правила на месте �
     for w in $(wans); do iptables -C "$b" -i "$w" -j "$c" 2>/dev/null || { miss=1; break 2; }; done
   done
   [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] && ! geo_retry || apply > "$SD/apply.log" 2>&1
+  peers
   bans_log
 }
 count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
