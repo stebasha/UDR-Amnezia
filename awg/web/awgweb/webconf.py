@@ -120,7 +120,7 @@ def api_web_get(h, q):
     c = conf()
     info = h.server.cert_info or {}
     return {"port": c["WEB_PORT"], "bind": c["WEB_BIND"], "tls": c["WEB_TLS"], "allow": c["WEB_ALLOW"], "hosts": c.get("WEB_HOSTS", ""),
-            "cert_mode": c.get("WEB_CERT", "auto"), "cert": info, "cert_used": h.server.cert_mode, "cert_warn": h.server.cert_warn,
+            "login_limit": c.get("WEB_LOGIN_LIMIT") == "yes", "cert_mode": c.get("WEB_CERT", "auto"), "cert": info, "cert_used": h.server.cert_mode, "cert_warn": h.server.cert_warn,
             "unifi_certs": [dict(cert_info(cr) or {}, key=k) for cr, k in unifi_cert_candidates()[:5]], "lan": lan_ip()}
 
 
@@ -158,6 +158,7 @@ def api_web_set(h, d):
     if not allow:
         raise ValueError("нужна хотя бы одна сеть")
     upd["WEB_ALLOW"] = " ".join(allow)
+    upd["WEB_LOGIN_LIMIT"] = "yes" if d.get("login_limit", c.get("WEB_LOGIN_LIMIT") == "yes") else "no"
     with LOCK:
         lines = read_file(CONF_F).splitlines()
         done = set()

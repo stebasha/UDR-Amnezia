@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.6"
+VERSION = "1.10.7"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -936,18 +936,22 @@ TOKEN_DENY = {"/api/tokens", "/api/token/create", "/api/token/revoke", "/api/pas
 
 
 class Throttle:
-    """5 неудачных входов за 10 минут с одного адреса → блокировка на 15 минут."""
+    """5 неудачных входов за 10 минут с одного адреса → блокировка на 15 минут.
+    Только с WEB_LOGIN_LIMIT=yes в web.conf, читается при запуске панели: по умолчанию выключено, панель открыта только в локальной сети."""
 
     def __init__(self):
+        self.on = parse_env_text(read_file(CONF_F)).get("WEB_LOGIN_LIMIT") == "yes"
         self.fails = collections.defaultdict(collections.deque)
         self.block = {}
         self.lock = threading.Lock()
 
     def blocked(self, ip):
         with self.lock:
-            return self.block.get(ip, 0) > now()
+            return self.on and self.block.get(ip, 0) > now()
 
     def fail(self, ip):
+        if not self.on:
+            return False
         with self.lock:
             q = self.fails[ip]
             q.append(now())

@@ -1076,6 +1076,16 @@ def main():
         check("выход закрывает сессию", s == 401, s)
 
         t = C()
+        for _ in range(6):
+            t.login(pw="bad-bad-bad")
+        s, j = t.login()
+        check("лимит попыток по умолчанию выключен: после 6 неудач вход проходит", s == 200, j)
+        s, j = t.get("/api/web")
+        check("лимит попыток: в настройках выключен", s == 200 and j["login_limit"] is False, j)
+        s, j = t.post("/api/web", {"port": str(PORT), "login_limit": True})
+        check("лимит попыток: включается в настройках", s == 200 and "WEB_LOGIN_LIMIT=yes" in open(os.path.join(dd, "web", "web.conf")).read(), j)
+        pid = restart_panel(pid)
+        t = C()
         for _ in range(5):
             t.login(pw="bad-bad-bad")
         s, j = t.login()
