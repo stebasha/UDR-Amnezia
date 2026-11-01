@@ -911,6 +911,8 @@ window.AWG_EN = {
  "Только частные сети через пробел. Для доступа извне используйте VPN-сервер роутера.": "Private networks only, space-separated. For remote access use the router's VPN server.",
  "Имена для входа (кроме IP)": "Hostnames for sign-in (besides IP)",
  "Имена из сертификата добавляются сами.": "Names from the certificate are added automatically.",
+ "Ограничение попыток входа": "Login attempt limit",
+ "После 5 неудачных входов за 10 минут адрес блокируется на 15 минут. Панель открыта только в локальной сети, поэтому по умолчанию выключено.": "After 5 failed logins in 10 minutes the address is blocked for 15 minutes. The panel is only reachable on the local network, so this is off by default.",
  "Сертификат HTTPS": "HTTPS certificate",
  "Сертификат UniFi обновляется роутером; панель перечитывает его сама в течение минуты, перезапуск не нужен.": "The UniFi certificate is renewed by the router; the panel re-reads it within a minute, no restart needed.",
  "этот": "this",

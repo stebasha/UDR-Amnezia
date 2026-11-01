@@ -117,6 +117,7 @@
     const port = el('input', { class: 'input mono', value: r.port, inputmode: 'numeric' });
     const allow = el('input', { class: 'input mono', value: r.allow });
     const hosts = el('input', { class: 'input mono', value: r.hosts, placeholder: 'udr.example.com' });
+    const limit = el('input', { type: 'checkbox', checked: r.login_limit });
     const cm = el('select', { class: 'input' }, [['auto', T('Автоматически: сертификат UniFi, если он настоящий, иначе свой')], ['unifi', T('Сертификат UniFi (как у веб-интерфейса роутера)')], ['self', T('Свой самоподписанный')]]
       .map(([v, t]) => el('option', { value: v, selected: r.cert_mode === v }, t)));
     const ci = r.cert || {};
@@ -132,7 +133,7 @@
     const save = el('button', { class: 'btn primary' }, icon('check', 'sm'), T('Сохранить и перезапустить панель'));
     save.addEventListener('click', () => busy(save, async () => {
       try {
-        const x = await api('/api/web', { port: port.value.trim(), allow: allow.value.trim(), hosts: hosts.value.trim(), cert_mode: cm.value });
+        const x = await api('/api/web', { port: port.value.trim(), allow: allow.value.trim(), hosts: hosts.value.trim(), login_limit: limit.checked, cert_mode: cm.value });
         ok(x.msg);
         setTimeout(() => { location.href = x.url; }, 5000);
       } catch (e) { err(e); }
@@ -142,7 +143,9 @@
         card(T('Доступ'), el('div', null,
           el('div', { class: 'field' }, el('label', null, T('Порт')), port, el('span', { class: 'hint' }, T('Сейчас панель на ') + r.lan + ':' + r.port + T('. Порты UniFi (443, 8443, 8080…) заняты.'))),
           el('div', { class: 'field' }, el('label', null, T('Разрешённые сети')), allow, el('span', { class: 'hint' }, T('Только частные сети через пробел. Для доступа извне используйте VPN-сервер роутера.'))),
-          el('div', { class: 'field' }, el('label', null, T('Имена для входа (кроме IP)')), hosts, el('span', { class: 'hint' }, T('Имена из сертификата добавляются сами.')))), { icon: 'lock' }),
+          el('div', { class: 'field' }, el('label', null, T('Имена для входа (кроме IP)')), hosts, el('span', { class: 'hint' }, T('Имена из сертификата добавляются сами.'))),
+          el('div', { class: 'setting' }, el('div', { class: 'txt' }, el('b', null, T('Ограничение попыток входа')), el('span', null, T('После 5 неудачных входов за 10 минут адрес блокируется на 15 минут. Панель открыта только в локальной сети, поэтому по умолчанию выключено.'))),
+            el('div', { class: 'ctl auto' }, el('label', { class: 'switch' }, limit, el('span', { class: 'knob' }))))), { icon: 'lock' }),
         card(T('Сертификат HTTPS'), el('div', null,
           el('div', { class: 'field' }, el('label', null, T('Источник')), cm, el('span', { class: 'hint' }, T('Сертификат UniFi обновляется роутером; панель перечитывает его сама в течение минуты, перезапуск не нужен.'))),
           r.cert_warn ? el('div', { class: 'alert warn' }, icon('alert'), el('div', null, r.cert_warn)) : null,
