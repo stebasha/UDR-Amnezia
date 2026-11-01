@@ -306,7 +306,7 @@ status(){
   if ! on; then say "защита входящих выключена (SEC_PROTECT=yes — включить)"; return 0; fi
   tun_refresh
   [ -z "$TUN_NOW" ] || say "туннели: $(tr '\n' ';' <<< "$TUN_NOW")"
-  say "по странам:$( [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] && echo "порты $(nums "$SEC_GEO_PORTS" | tr '\n' ' ')— только $(ccs | tr 'a-z\n' 'A-Z '), сетей в наборе $(count $S_GEO)" || echo выключено)"
+  say "по странам: $( [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] && echo "порты $(nums "$SEC_GEO_PORTS" | tr '\n' ' ')— только $(ccs | tr 'a-z\n' 'A-Z '), сетей в наборе $(count $S_GEO)" || echo выключено)"
   say "ловушки: $( [ "$SEC_TRAP" = yes ] && echo "$(traps | tr '\n' ' ')— заблокировано адресов $(count $S_TRAP)" || echo выключены)"
   say "частота: $( [ "${SEC_RATE:-0}" -gt 0 ] 2>/dev/null && echo "больше $SEC_RATE новых соединений в минуту — заблокировано $(count $S_RATE)" || echo выключено)"
   say "правил на месте: $(iptables -S $CI 2>/dev/null | grep -c '^-A') + $(iptables -S $CF 2>/dev/null | grep -c '^-A')"
