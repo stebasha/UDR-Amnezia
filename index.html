@@ -1163,7 +1163,7 @@ SNAPF=$RUNDIR/awg-fw.snap               # общий снимок цепочек
 CHECK_RX_MIN=${CHECK_RX_MIN:-65536}      # байт из туннеля за проход: трафик идёт — канал жив без отдельной проверки HTTPS
 CHECK_MAX_AGE=${CHECK_MAX_AGE:-60}       # но настоящая проверка — не реже раза в столько секунд
 <span class="c"># Проход сторожа повторяется каждые 5 с (и у каждого маршрута свой сторож), поэтому в цикле — только встроенные</span>
-<span class="c"># средства bash там, где можно: время — printf %(%s)T, интерфейс — /sys/class/net, сравнения — шаблоны, пауза — read -t.</span>
+<span class="c"># средства bash там, где можно: время — printf %(%s)T, интерфейс — /sys/class/net, сравнения — шаблоны.</span>
 epoch(){ printf -v "$1" '%(%s)T' -1; }
 link_up(){ [ -e "$SYSNET/$1" ]; }
 
@@ -1472,10 +1472,11 @@ switch_to(){  # switch_to индекс тип сообщение
   ev "$2" "$3"
 }
 
-exec {SLEEPFD}&lt;&gt; &lt;(:)     # канал, в который никто не пишет: read -t на нём — просто пауза
+<span class="c"># Пауза — sleep &amp; wait, а не read -t на пустом канале: read -t в bash 5.1 может пропустить свой таймер и ждать вечно</span>
+<span class="c"># (awg-guard так простоял 4,5 дня: служба active, цикл стоит). Цена — один процесс на проход; TERM прерывает wait сразу.</span>
 <span class="c"># сторож дополнительного маршрута сдвинут на полпаузы от основного: иначе (оба стартуют вместе) они читают цепочки</span>
 <span class="c"># одновременно и не пользуются общим снимком друг друга</span>
-[ -n "$ROUTE" ] &amp;&amp; read -r -t "$((INTERVAL / 2)).5" -u "$SLEEPFD" _ 2&gt;/dev/null
+[ -n "$ROUTE" ] &amp;&amp; { sleep "$((INTERVAL / 2)).5" &amp; wait $!; }
 while true; do
   [ -n "$STOP" ] &amp;&amp; stop_now
   ensure_tunnels
@@ -1590,10 +1591,10 @@ while true; do
   fi
   write_state
   [ -n "$STOP" ] &amp;&amp; stop_now
-  read -r -t "$INTERVAL" -u "$SLEEPFD" _ 2&gt;/dev/null   # пауза без внешнего sleep; сигнал TERM прерывает её сразу
+  sleep "$INTERVAL" &amp; wait $!
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 573 строк">Показать целиком · 573 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 574 строк">Показать целиком · 574 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -1912,8 +1913,8 @@ check(){
   return $rc
 }
 case "${1:-run}" in
-  run)    STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}&lt;&gt; &lt;(:)       # сигнал — флажок (см. failover.sh)
-          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] &amp;&amp; read -r -t 5 -u "$SLEEPFD" _ 2&gt;/dev/null; done; exit 0;;
+  run)    STOP=""; trap 'STOP=1' TERM INT       # сигнал — флажок (см. failover.sh)
+          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] &amp;&amp; { sleep 5 &amp; wait $!; }; done; exit 0;;
   apply)  apply;;
   remove) load; EXTRA_SUBNETS=""; cleanup;;
   check)  check;;

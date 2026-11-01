@@ -423,8 +423,8 @@ check(){
 }
 
 case "${1:-run}" in
-  run)    STOP=""; trap 'STOP=1' TERM INT; k=0; exec {SLEEPFD}<> <(:)   # пауза — read -t на канале, в который никто не пишет
-          while [ -z "$STOP" ]; do      # сигнал — флажок: выход из обработчика посреди read -t bash может оборвать
+  run)    STOP=""; trap 'STOP=1' TERM INT; k=0
+          while [ -z "$STOP" ]; do      # сигнал — флажок (см. failover.sh)
             apply
             # списки (#38): раз в час проверить возраст, раз в сутки обновить — в фоне, цепочки не ждут
             if [ $((k % 720)) = 0 ] && [ -x "$DD/lists.sh" ] && "$DD/lists.sh" due; then setsid "$DD/lists.sh" update > "$DD/lists.log" 2>&1 < /dev/null & fi
@@ -433,7 +433,7 @@ case "${1:-run}" in
             if [ $((k % 12)) = 2 ] && [ -x "$DD/sec.sh" ] && { [ -e "${AWG_RUN:-/run}/awg-sec.hash" ] || grep -qsE '^SEC_PROTECT="?yes' "$DD/awg.env"; }; then setsid "$DD/sec.sh" ensure > /dev/null 2>&1 < /dev/null & fi
             # подписки VLESS (#42): раз в час — те, что старше суток (сдвиг на полчаса от списков)
             if [ $((k % 720)) = 360 ] && [ -s "$DD/xray/vless.json" ]; then setsid python3 "$DD/web/panel.py" vless-refresh --due >> "$DD/xray/vless.log" 2>&1 < /dev/null & fi
-            k=$((k + 1)); [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null
+            k=$((k + 1)); [ -z "$STOP" ] && { sleep 5 & wait $!; }
           done; exit 0;;
   apply)  rm -f "$HASHF"; apply;;      # ручной запуск всегда пересобирает цепочки
   remove) remove;;

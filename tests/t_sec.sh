@@ -123,6 +123,8 @@ chmod +x "$T/bin/wg"
 ck "свой клиент VPN-сервера (свежий handshake): блокировка снята, в списке своих" '! grep -qx 80.83.225.5 "$STUB/ipset-AWG_SEC_RATE" && grep -qx 80.83.225.5 "$STUB/ipset-AWG_SEC_PEER"'
 ck "клиент без свежего handshake и туннели роутера — не трогаются" 'grep -qx 94.243.30.96 "$STUB/ipset-AWG_SEC_TRAP" && ! grep -qx 203.0.113.9 "$STUB/ipset-AWG_SEC_PEER"'
 ck "журнал блокировок: новые адреса — по одному разу, за что" '[ "$(grep -c "|trap|45.1.1.1" "$DD/sec/bans.log")" = 1 ] && grep -q "|rate|45.2.2.2" "$DD/sec/bans.log"'
+ck "журнал блокировок: без процесса на каждый адрес" '! sed -n "/^bans_log()/,/^}/p" "$X" | grep -qE "grep -qx|date \+%s"'
+ck "циклы служб: пауза не на read -t (bash 5.1 мог ждать вечно)" '! grep -l "read -r -t" "$SRC"/failover.sh "$SRC"/guard.sh "$SRC"/self.sh "$SRC"/subnets.sh'
 "$X" unban 45.1.1.1 > /dev/null
 ck "снять блокировку" '! grep -qx 45.1.1.1 "$STUB/ipset-AWG_SEC_TRAP"'
 ck "снять блокировку: только IPv4" '! "$X" unban "1.2.3.4;id" >/dev/null'
