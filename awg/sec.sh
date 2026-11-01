@@ -10,6 +10,8 @@
 # Что делает (каждая часть включается отдельно):
 #   SEC_GEO_ALLOW="ru" + SEC_GEO_PORTS="8123 44300"  на эти порты WAN (проброс в LAN и службы роутера) — только из
 #                        этих стран; остальные отбрасываются. Порт 25 (почта) и 80 (Let's Encrypt) так не ограничивайте.
+#   SEC_GEO_TUNNELS=yes  к этим странам добавить страны выхода туннелей, а адреса выхода — в свои; сверка видит смену
+#                        адреса сама. База адресов стран и база расположения расходятся, поэтому адрес — отдельно от страны
 #   SEC_TRAP=yes         кто стучится на порты-ловушки роутера (SEC_TRAP_PORTS: 23, 3389, 445…; открытые и проброшенные
 #                        исключаются сами) — сканер: его адрес блокируется на SEC_BAN_HOURS часов
 #   SEC_RATE=0           больше N новых соединений в минуту с одного адреса на проброшенные порты — подбор паролей:
@@ -25,7 +27,7 @@ DD=${DD:-/data/awg}
 SD=$DD/sec
 RUNF=${AWG_RUN:-/run}/awg-sec.hash
 umask 077
-SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_TRAP=yes; SEC_RATE=0; SEC_RATE_SKIP="25 80"; SEC_BAN_HOURS=24; SEC_RATE_BAN_HOURS=1; SEC_ALLOW_IPS=""; WANIF=""
+SEC_PROTECT=no; SEC_GEO_ALLOW=""; SEC_GEO_PORTS=""; SEC_GEO_TUNNELS=no; SEC_TRAP=yes; SEC_RATE=0; SEC_RATE_SKIP="25 80"; SEC_BAN_HOURS=24; SEC_RATE_BAN_HOURS=1; SEC_ALLOW_IPS=""; WANIF=""
 SEC_TRAP_PORTS="23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"
 # shellcheck disable=SC1091
 [ -r "$DD/awg.env" ] && . "$DD/awg.env"
@@ -33,12 +35,16 @@ CI=AWG_SEC_IN; CF=AWG_SEC_FWD
 S_OK=AWG_SEC_OK; S_PEER=AWG_SEC_PEER; S_GEO=AWG_SEC_GEO; S_TRAP=AWG_SEC_TRAP; S_RATE=AWG_SEC_RATE; S_BAN=AWG_SEC_BAN
 GEO_MAX_AGE=${SEC_GEO_MAX_AGE:-604800}
 GEO_MIN=${SEC_GEO_MIN:-50}           # меньше сетей — не похоже на страну: правило «только из стран» не ставим вовсе
+AWG=${AWG:-$DD/awg}
+TUN_CC_URL=${TUN_CC_URL:-"https://stat.ripe.net/data/maxmind-geo-lite/data.json?resource="}
+TUN_CC_AGE=${TUN_CC_AGE:-2592000}    # страну адреса перепроверять раз в 30 дней
+TUN_NOW=""; TUN_CCS=""               # сверка туннелей: «имя адрес страна» и коды стран; заполняет tun_refresh
 
 say(){ printf '%s\n' "$*"; }
 event(){ echo "$(date +%s)|sec|$1" >> "$DD/events.log"; }
 on(){ [ "$SEC_PROTECT" = yes ]; }
 nums(){ local x; for x in $1; do [[ $x =~ ^[0-9]{1,5}$ ]] && [ "$x" -ge 1 ] && [ "$x" -le 65535 ] && echo "$x"; done | sort -un; }
-ccs(){ local x; for x in $(echo "$SEC_GEO_ALLOW" | tr 'A-Z,' 'a-z '); do [[ $x =~ ^[a-z]{2}$ ]] && echo "$x"; done | sort -u; }
+ccs(){ local x; for x in $(echo "$SEC_GEO_ALLOW" | tr 'A-Z,' 'a-z ') $TUN_CCS; do [[ $x =~ ^[a-z]{2}$ ]] && echo "$x"; done | sort -u; }
 wans(){
   { cat "${AWG_RUN:-/run}/awg-guard.wans" 2>/dev/null; echo "$WANIF"
     ip -4 route show table all 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}'; } \
@@ -53,6 +59,43 @@ open_ports(){  # порты, которые WAN уже принимает: пр�
 traps(){  # SEC_TRAP_PORTS без открытых: роутер не должен блокировать тех, кто идёт на настоящую службу
   local o p; o=" $(open_ports | tr '\n' ' ') "
   for p in $(nums "$SEC_TRAP_PORTS"); do [[ $o == *" $p "* ]] || echo "$p"; done | head -n 15   # multiport — до 15 портов
+}
+
+# ------------------------------------------------------------------ страны туннелей
+tun_ips(){  # «имя адрес» серверов туннелей: работающие, затем из настроек (остановленный туннель страну не теряет)
+  { "$AWG" show all endpoints 2>/dev/null | awk '$1 !~ /^(wgsrv|wgclt)/ {sub(/:[0-9]+$/, "", $3); print $1, $3}'
+    grep -H '' "$DD"/.endpoint-* 2>/dev/null | sed -E 's#^.*/\.endpoint-([^:]+):[^ ]* #\1 #'
+    grep -HiE '^Endpoint *=' "$DD"/main.conf "$DD"/backup.conf "$DD"/awg*.conf 2>/dev/null \
+      | sed -E 's#^.*/([^/:]+)\.conf:[^=]*= *([^:]+):.*#\1 \2#'
+    grep -H '' "$DD"/xray/*.server 2>/dev/null | sed -E 's#^.*/([^/:]+)\.server:#\1 #'
+  } | awk '$2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !s[$2]++ {print $1, $2}'
+}
+tun_lookup(){ curl -fsS -m 8 "$TUN_CC_URL$1" 2>/dev/null | grep -oE '"country": *"[A-Z]{2}"' | head -n 1 | grep -oE '[A-Z]{2}' | tr A-Z a-z; }
+tun_refresh(){  # страны адресов — из кэша $SD/tun.cc («адрес страна время»); в сеть только за новым или устаревшим, при сбое — раз в 10 минут
+  local now n ip l cc t list="" fail=0
+  [ "$SEC_GEO_TUNNELS" = yes ] || { TUN_NOW=""; TUN_CCS=""; rm -f "$SD/tun.now"; return 0; }
+  mkdir -p "$SD"; chmod 700 "$SD"
+  printf -v now '%(%s)T' -1
+  t=$(cat "$SD/tun.try" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || t=0
+  while read -r n ip; do
+    [ -n "$ip" ] || continue
+    l=$(awk -v i="$ip" '$1==i {print $2, $3}' "$SD/tun.cc" 2>/dev/null); cc=${l% *}; l=${l#* }
+    if [ -z "$cc" ] || ! [[ $l =~ ^[0-9]+$ ]] || [ $((now - l)) -ge "$TUN_CC_AGE" ]; then
+      if [ $((now - t)) -ge "${SEC_GEO_RETRY:-600}" ]; then
+        l=$(tun_lookup "$ip")
+        if [[ $l =~ ^[a-z]{2}$ ]]; then
+          cc=$l
+          { awk -v i="$ip" '$1!=i' "$SD/tun.cc" 2>/dev/null; echo "$ip $cc $now"; } > "$SD/tun.cc.new" && mv -f "$SD/tun.cc.new" "$SD/tun.cc"
+        else fail=1; fi
+      fi
+    fi
+    list+="$n $ip ${cc:--}"$'\n'
+  done <<< "$(tun_ips)"
+  [ "$fail" = 1 ] && echo "$now" > "$SD/tun.try"
+  TUN_NOW=${list%$'\n'}
+  TUN_CCS=$(awk '$3 ~ /^[a-z][a-z]$/ {print $3}' <<< "$TUN_NOW" | sort -u | tr '\n' ' ')
+  # обновляем только при изменении: файл читает панель, а минутная сверка не должна писать на диск без дела
+  [ "$TUN_NOW" = "$(cat "$SD/tun.now" 2>/dev/null)" ] || { echo "$TUN_NOW" > "$SD/tun.now"; event "туннели: $(tr '\n' ';' <<< "$TUN_NOW")"; }
 }
 
 # ------------------------------------------------------------------ адреса стран
@@ -72,8 +115,10 @@ geo_update(){
   fi
 }
 geo_load(){  # → 0, если набор стран загружен и в нём достаточно сетей
-  [ -s "$SD/geo.cidr" ] && [ "$(cat "$SD/geo.src" 2>/dev/null)" = "$(ccs | tr '\n' ' ')" ] || return 1
+  [ -s "$SD/geo.cidr" ] || return 1
   [ "$(wc -l < "$SD/geo.cidr")" -ge "$GEO_MIN" ] || return 1
+  # страны сменились, а новые адреса не скачались: прежний список лучше, чем порты открытые всем (geo_due повторит)
+  [ "$(cat "$SD/geo.src" 2>/dev/null)" = "$(ccs | tr '\n' ' ')" ] || say "▲ действует прежний список стран: $(tr a-z A-Z < "$SD/geo.src" 2>/dev/null)"
   ipset create $S_GEO hash:net family inet maxelem 262144 -exist 2>/dev/null || return 1
   ipset destroy $S_GEO.new 2>/dev/null
   { echo "create $S_GEO.new hash:net family inet maxelem 262144"; sed "s/^/add $S_GEO.new /" "$SD/geo.cidr"; } | ipset restore 2>/dev/null \
@@ -91,7 +136,7 @@ sets(){
     [[ $x =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+(/[0-9]+)?$ ]] && ipset add $S_OK "$x" -exist 2>/dev/null
   done
   # адрес VPS и серверов туннелей — тоже свои
-  for x in $VPS_IP $(cat "$DD"/.endpoint-* 2>/dev/null | awk '{print $2}') $(cat "$DD"/xray/*.server 2>/dev/null); do
+  for x in $VPS_IP $(cat "$DD"/.endpoint-* 2>/dev/null | awk '{print $2}') $(cat "$DD"/xray/*.server 2>/dev/null) $(awk '{print $2}' <<< "$TUN_NOW"); do
     [[ $x =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && ipset add $S_OK "$x" -exist 2>/dev/null
   done
   # с ловушек и за частоту — разные наборы (видно, за что), проверка — одна (list:set); counters — сколько пакетов отброшено
@@ -176,12 +221,13 @@ hook_on(){
     done
   done
 }
-fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_RATE_SKIP" "$SEC_BAN_HOURS" "$SEC_RATE_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
+fingerprint(){ printf '%s|' "$SEC_PROTECT" "$SEC_GEO_ALLOW" "$SEC_GEO_PORTS" "$SEC_GEO_TUNNELS" "$TUN_NOW" "$SEC_TRAP" "$SEC_TRAP_PORTS" "$SEC_RATE" "$SEC_RATE_SKIP" "$SEC_BAN_HOURS" "$SEC_RATE_BAN_HOURS" "$SEC_ALLOW_IPS" "$(wans | tr '\n' ' ')" "$(open_ports | tr '\n' ' ')" "$(cat "$SD/geo.ts" 2>/dev/null)"; }
 
 apply(){
   local a
   if ! on; then remove quiet; return 0; fi
   mkdir -p "$SD"; chmod 700 "$SD"
+  tun_refresh
   if [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ]; then
     a=$(geo_age)
     if [ "$a" -lt 0 ] || [ "$a" -ge "$GEO_MAX_AGE" ] || [ "$(cat "$SD/geo.src" 2>/dev/null)" != "$(ccs | tr '\n' ' ')" ]; then geo_update; fi
@@ -217,10 +263,11 @@ bans_log(){  # новые блокировки — в журнал $SD/bans.log 
   if [ "$new" -gt 0 ] && [ "$(wc -l < "$SD/bans.log")" -gt 2000 ]; then tail -n 1500 "$SD/bans.log" > "$SD/bans.t" && mv -f "$SD/bans.t" "$SD/bans.log"; fi
   return 0
 }
-geo_retry(){  # страны нужны, а набора нет (не скачались) — повторить, но не чаще раза в 10 минут
-  local t n
+geo_due(){  # набора нет, он старше недели или страны сменились — обновить, но не чаще раза в 10 минут
+  local t n a
   [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] || return 1
-  n=$(count $S_GEO); [ "${n:-0}" -gt 0 ] && return 1
+  n=$(count $S_GEO); a=$(geo_age)
+  [ "${n:-0}" -gt 0 ] && [ "$a" -ge 0 ] && [ "$a" -lt "$GEO_MAX_AGE" ] && [ "$(cat "$SD/geo.src" 2>/dev/null)" = "$(ccs | tr '\n' ' ')" ] && return 1
   t=$(cat "$SD/geo.try" 2>/dev/null); [[ $t =~ ^[0-9]+$ ]] || return 0
   [ $(( $(date +%s) - t )) -ge "${SEC_GEO_RETRY:-600}" ]
 }
@@ -249,14 +296,17 @@ ensure(){  # awg-guard, раз в минуту: правила на месте �
     read -r b c <<< "$h"
     for w in $(wans); do iptables -C "$b" -i "$w" -j "$c" 2>/dev/null || { miss=1; break 2; }; done
   done
-  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] && ! geo_retry || apply > "$SD/apply.log" 2>&1
+  tun_refresh
+  [ "$miss" = 0 ] && [ "$(fingerprint)" = "$(cat "$RUNF" 2>/dev/null)" ] && ! geo_due || apply > "$SD/apply.log" 2>&1
   peers
   bans_log
 }
 count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 status(){
   if ! on; then say "защита входящих выключена (SEC_PROTECT=yes — включить)"; return 0; fi
-  say "по странам: $( [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] && echo "порты $(nums "$SEC_GEO_PORTS" | tr '\n' ' ')— только $(ccs | tr 'a-z\n' 'A-Z '), сетей в наборе $(count $S_GEO)" || echo выключено)"
+  tun_refresh
+  [ -z "$TUN_NOW" ] || say "туннели: $(tr '\n' ';' <<< "$TUN_NOW")"
+  say "по странам:$( [ -n "$(ccs)" ] && [ -n "$(nums "$SEC_GEO_PORTS")" ] && echo "порты $(nums "$SEC_GEO_PORTS" | tr '\n' ' ')— только $(ccs | tr 'a-z\n' 'A-Z '), сетей в наборе $(count $S_GEO)" || echo выключено)"
   say "ловушки: $( [ "$SEC_TRAP" = yes ] && echo "$(traps | tr '\n' ' ')— заблокировано адресов $(count $S_TRAP)" || echo выключены)"
   say "частота: $( [ "${SEC_RATE:-0}" -gt 0 ] 2>/dev/null && echo "больше $SEC_RATE новых соединений в минуту — заблокировано $(count $S_RATE)" || echo выключено)"
   say "правил на месте: $(iptables -S $CI 2>/dev/null | grep -c '^-A') + $(iptables -S $CF 2>/dev/null | grep -c '^-A')"
@@ -266,7 +316,7 @@ case "${1:-status}" in
   apply)  apply;;
   ensure) ensure;;
   remove) remove;;
-  geo)    rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; geo_update;;
+  geo)    rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; tun_refresh; geo_update;;
   status) status;;
   unban)  [[ ${2:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { say "использование: sec.sh unban IP"; exit 2; }
           ipset del $S_TRAP "$2" 2>/dev/null; ipset del $S_RATE "$2" 2>/dev/null; event "блокировка снята: $2"; say "$2: блокировка снята";;

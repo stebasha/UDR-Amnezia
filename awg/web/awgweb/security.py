@@ -227,7 +227,15 @@ def sec_conns(wanip):
 
 def sec_protect(e):
     on = e.get("SEC_PROTECT", "no") == "yes"
-    st = {"on": on, "geo_allow": e.get("SEC_GEO_ALLOW", ""), "geo_ports": e.get("SEC_GEO_PORTS", ""),
+    tun = []
+    if e.get("SEC_GEO_TUNNELS") == "yes":
+        for l in read_file(os.path.join(DD, "sec", "tun.now")).splitlines():
+            p = l.split()
+            if len(p) == 3:
+                tun.append({"name": p[0], "ip": p[1], "cc": "" if p[2] == "-" else p[2]})
+    allow = e.get("SEC_GEO_ALLOW", "").split()
+    st = {"on": on, "geo_allow": " ".join(allow + sorted({t["cc"] for t in tun if t["cc"]} - set(allow))),
+          "geo_tunnels": tun, "geo_ports": e.get("SEC_GEO_PORTS", ""),
           "trap": e.get("SEC_TRAP", DEFAULTS["SEC_TRAP"]), "rate": e.get("SEC_RATE", DEFAULTS["SEC_RATE"]),
           "ban": e.get("SEC_BAN_HOURS", DEFAULTS["SEC_BAN_HOURS"]),
           "rate_skip": e.get("SEC_RATE_SKIP", DEFAULTS["SEC_RATE_SKIP"]),
