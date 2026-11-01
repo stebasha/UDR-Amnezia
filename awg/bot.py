@@ -810,7 +810,8 @@ def broadcast(text, critical=False):
     for c in C["admins"] + C["viewers"]:
         if c in mu and not critical:
             continue
-        send(c, text, [[("📊 Состояние", "m:main")]])
+        r = send(c, text, [[("📊 Состояние", "m:main")]])
+        log("оповещение %s, чат %s: %s" % ("доставлено" if r else "НЕ доставлено", c, re.sub(r"<[^>]*>", "", text).replace("\n", " ")[:120]))
 
 
 def autotune_msgs():
@@ -836,6 +837,7 @@ def autotune_msgs():
 
 def monitor():
     bad = collections.Counter()
+    good = collections.Counter()   # минуты в норме после тревоги: «снова в норме» только после 5 подряд, иначе колебания вокруг порога дают поток сообщений
     alerted = {}
     hist = collections.deque(maxlen=1440)
     ev_size = os.path.getsize(os.path.join(DD, "events.log")) if os.path.exists(os.path.join(DD, "events.log")) else 0
@@ -858,16 +860,20 @@ def monitor():
                 rc, out = P.run(["ip", "-4", "route", "show", "table", "all", "to", s], timeout=5)
                 if "dev" not in out:
                     cur["sub:" + s] = ("warn", "⚠️ Подсеть VPN-сервера %s пропала (VPN-сервер выключен?)" % s)
-            for k in set(cur) | set(bad):
+            for k in set(cur) | set(bad) | set(alerted):
                 if k in cur:
+                    good.pop(k, None)
                     bad[k] += 1
                     if bad[k] == 3 and k not in alerted:
                         alerted[k] = cur[k][1]
                         broadcast("<b>Роутер %s</b>\n%s" % (esc(H), esc(cur[k][1])), critical=cur[k][0] == "crit")
                 else:
-                    del bad[k]
+                    bad.pop(k, None)
                     if k in alerted:
-                        broadcast("✅ <b>%s</b>: снова в норме\n<s>%s</s>" % (esc(H), esc(alerted.pop(k).split("\n")[0])))
+                        good[k] += 1
+                        if good[k] >= 5:
+                            del good[k]
+                            broadcast("✅ <b>%s</b>: снова в норме\n<s>%s</s>" % (esc(H), esc(alerted.pop(k).split("\n")[0])))
             # события, о которых не сообщает awg-notify
             evf = os.path.join(DD, "events.log")
             sz = os.path.getsize(evf) if os.path.exists(evf) else 0

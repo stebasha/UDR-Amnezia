@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.4"
+VERSION = "1.10.5"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -1196,7 +1196,7 @@ def system_health(cpu=None, hist=None, procs=True):
     avg5 = sum(recent) / len(recent) if recent else cpu
     if avg5 > 90:
         ck("cpu", "warn", "Процессор загружен на %d%% последние минуты" % avg5, "посмотрите нагрузку: top -o %CPU (IDS/IPS и DPI UniFi сильно грузят процессор)")
-    elif load[0] > cores * 2:
+    elif load[0] > cores * 1.5:
         ck("cpu", "warn", "Высокая средняя нагрузка: %.2f при %d ядрах" % (load[0], cores), "кратковременно — нормально; долго — смотрите top")
     else:
         ck("cpu", "ok", "Процессор: %d%%, нагрузка %.2f (ядер: %d)" % (cpu, load[0], cores))

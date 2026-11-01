@@ -2470,7 +2470,7 @@ send_text() {  # канал выбирается по первому получ�
     if [ "$i" = "$MAIN" ]; then to=10; else to=15; fi
     code=$(send_via "$i" "$to" "$1" "${CHATS[0]}")
     if [ "$code" = 200 ]; then
-      [ "$i" != "$MAIN" ] &amp;&amp; log "доставлено через ${i:-WAN}"
+      log "доставлено через ${i:-WAN}"
       for c in "${CHATS[@]:1}"; do
         code=$(send_via "$i" "$to" "$1" "$c"); [ "$code" = 200 ] || log "чат $c: HTTP ${code:-000}"
       done
