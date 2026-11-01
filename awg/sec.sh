@@ -252,12 +252,16 @@ remove(){
 }
 BANSF=${AWG_RUN:-/run}/awg-sec.bans
 bans_log(){  # новые блокировки — в журнал $SD/bans.log (время|за что|адрес), до 2000 строк
-  local s ip why new=0
+  # известные адреса — в памяти: блокировок тысячи, а сверка раз в минуту (grep на адрес — тысячи процессов в минуту)
+  local s ip why l now new=0; local -A seen=()
+  { while IFS= read -r l; do seen["$l"]=1; done < "$BANSF"; } 2>/dev/null
+  printf -v now '%(%s)T' -1
   for s in $S_TRAP $S_RATE; do
     why="trap"; [ $s = $S_RATE ] && why="rate"
     for ip in $(members $s); do
-      grep -qx "$why $ip" "$BANSF" 2>/dev/null && continue
-      echo "$why $ip" >> "$BANSF"; echo "$(date +%s)|$why|$ip" >> "$SD/bans.log"; new=$((new + 1))
+      [ -n "${seen["$why $ip"]:-}" ] && continue
+      seen["$why $ip"]=1
+      echo "$why $ip" >> "$BANSF"; echo "$now|$why|$ip" >> "$SD/bans.log"; new=$((new + 1))
     done
   done
   if [ "$new" -gt 0 ] && [ "$(wc -l < "$SD/bans.log")" -gt 2000 ]; then tail -n 1500 "$SD/bans.log" > "$SD/bans.t" && mv -f "$SD/bans.t" "$SD/bans.log"; fi

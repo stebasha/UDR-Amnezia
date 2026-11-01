@@ -112,8 +112,8 @@ check(){
   return $rc
 }
 case "${1:-run}" in
-  run)    STOP=""; trap 'STOP=1' TERM INT; exec {SLEEPFD}<> <(:)       # сигнал — флажок (см. failover.sh)
-          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] && read -r -t 5 -u "$SLEEPFD" _ 2>/dev/null; done; exit 0;;
+  run)    STOP=""; trap 'STOP=1' TERM INT       # сигнал — флажок (см. failover.sh)
+          while [ -z "$STOP" ]; do apply; [ -z "$STOP" ] && { sleep 5 & wait $!; }; done; exit 0;;
   apply)  apply;;
   remove) load; EXTRA_SUBNETS=""; cleanup;;
   check)  check;;

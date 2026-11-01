@@ -19,6 +19,7 @@
     bot.py --once-from F обработать готовый ответ getUpdates из файла (тесты; ответы печатаются)
 """
 import collections
+import glob
 import html
 import json
 import os
@@ -115,7 +116,7 @@ class TG:
                         cmd += ["--form-string", "%s=%s" % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))]
                 else:
                     if tmp is None:
-                        fd, tmp = tempfile.mkstemp(prefix=".bot-", dir=DD)
+                        fd, tmp = tempfile.mkstemp(prefix=".bot-", dir="/tmp")   # раз в полминуты: не на флеш
                         with os.fdopen(fd, "w", encoding="utf-8") as f:
                             json.dump(params or {}, f, ensure_ascii=False)
                     cmd += ["-H", "Content-Type: application/json", "--data-binary", "@" + tmp]
@@ -908,6 +909,11 @@ def main():
     if not C["token"] or not C["admins"]:
         sys.exit("нет TG_TOKEN или TG_CHAT в %s/telegram.env" % DD)
     log("бот запущен: администраторы %s%s" % (", ".join(C["admins"]), "; просмотр " + ", ".join(C["viewers"]) if C["viewers"] else ""))
+    for f in glob.glob(os.path.join(DD, ".bot-*")):   # до 1.10.8 временные файлы лежали здесь и оставались при перезапуске службы
+        try:
+            os.remove(f)
+        except OSError:
+            pass
     TGAPI.call("setMyCommands", {"commands": [
         {"command": "menu", "description": "меню кнопками"}, {"command": "status", "description": "состояние"},
         {"command": "tunnels", "description": "каналы"}, {"command": "router", "description": "роутер: CPU, память, диск"},

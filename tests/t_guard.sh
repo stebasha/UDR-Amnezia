@@ -82,8 +82,9 @@ done
 chmod +x $SH/*
 # WANS_TTL — пересмотр WAN раз в 30 с (не каждый проход) в окно замера не попадает: меряется обычный проход
 WANS_TTL=3600 PATH=$SH:$PATH bash "$COMP/guard.sh" run > /dev/null 2>&1 &
-GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -c . $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
-ck "guard: обычный проход — не больше 5 внешних команд (проходов $np, команд $ng; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ]'
+# пауза между проходами (1.10.8) — один sleep на проход, считается отдельно от бюджета работы
+GP=$!; sleep 2; : > $CNT; sleep 10; ng=$(grep -vcx sleep $CNT); gs=$(grep -cx sleep $CNT); np=$(grep -cx flock $CNT); kill -TERM $GP; wait $GP 2>/dev/null
+ck "guard: обычный проход — не больше 5 внешних команд и одной паузы (проходов $np, команд $ng, sleep $gs; $(sort $CNT | uniq -c | sort -rn | head -4 | awk '{printf "%s×%s ", $2, $1}'))" '[ "$np" -ge 1 ] && [ "$ng" -le $((5 * np)) ] && [ "$gs" -le $((np + 1)) ]'
 # защита входящих (1.10.1): сторож сам запускает сверку sec.sh, когда SEC_PROTECT=yes (раньше не видел настройку)
 printf '#!/bin/bash\necho "$1" >> "%s/sec.calls"\n' "$T" > "$DD/sec.sh"; chmod +x "$DD/sec.sh"
 printf 'SEC_PROTECT=yes\n' >> $DD/awg.env
