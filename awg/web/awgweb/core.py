@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.5"
+VERSION = "1.10.6"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -601,6 +601,7 @@ SETTINGS = {
     "SEC_PROTECT": (v_choice("yes", "no"), ["awg-guard"], "Защита входящих из интернета"),
     "SEC_GEO_ALLOW": (v_countries, ["awg-guard"], "Разрешённые страны"),
     "SEC_GEO_PORTS": (v_ports, ["awg-guard"], "Порты только из разрешённых стран"),
+    "SEC_GEO_TUNNELS": (v_choice("yes", "no"), ["awg-guard"], "Добавлять страны туннелей"),
     "SEC_TRAP": (v_choice("yes", "no"), ["awg-guard"], "Блокировать сканеры (порты-ловушки)"),
     "SEC_TRAP_PORTS": (v_ports, ["awg-guard"], "Порты-ловушки"),
     "SEC_RATE": (v_int(0, 20), ["awg-guard"], "Блокировать подбор паролей: новых соединений в минуту больше"),
@@ -613,7 +614,7 @@ DEFAULTS = {"RECOVER_SEC": "600", "QUALITY": "yes", "QUALITY_LOSS": "40", "QUALI
             "CHECK_RX_MIN": "65536", "CHECK_MAX_AGE": "60", "RECHECK_AFTER": "120", "RECHECK_SLOW": "30", "RECHECK_MAX": "60",
             "LEAK_GUARD": "no", "LEAK_V6": "block", "UI_FIX": "no", "UI_DOMAINS": "ui.com", "UI_DNS": "9.9.9.9",
             "DNS_ALL_TUNNEL": "no", "LISTS_MODE": "off", "DNS_INTERCEPT": "no", "DNS_BLOCK_DOT": "no", "TRAFFIC_ACCT": "no", "AUTO_TUNE": "no",
-            "SEC_PROTECT": "no", "SEC_TRAP": "yes", "SEC_RATE": "0", "SEC_RATE_SKIP": "25 80", "SEC_BAN_HOURS": "24", "SEC_RATE_BAN_HOURS": "1",
+            "SEC_PROTECT": "no", "SEC_GEO_TUNNELS": "no", "SEC_TRAP": "yes", "SEC_RATE": "0", "SEC_RATE_SKIP": "25 80", "SEC_BAN_HOURS": "24", "SEC_RATE_BAN_HOURS": "1",
             "SEC_TRAP_PORTS": "23 135 139 445 1433 2323 3306 3389 5432 5900 6379 7547 8291 9200 27017"}
 
 

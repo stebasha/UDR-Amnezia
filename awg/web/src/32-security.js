@@ -4,6 +4,7 @@
     SEC_PROTECT: { t: 'bool', hint: T('Свои правила роутера для пакетов из интернета: правила UniFi не меняются. Выключить — правила убираются сразу.') },
     SEC_GEO_ALLOW: { t: 'text', ph: 'ru', hint: T('Коды стран через пробел. На порты ниже подключиться можно только из них.') },
     SEC_GEO_PORTS: { t: 'text', ph: '8123 44300', hint: T('Порты WAN (как в пробросе UniFi), куда пускать только из разрешённых стран: вход в NAS, Home Assistant, почта по паролю, консоль 443. Не добавляйте 25 (почта приходит со всего мира) и 80 (Let\'s Encrypt). Если сами уезжаете за границу — добавьте страну или зайдите через VPN-сервер роутера.') },
+    SEC_GEO_TUNNELS: { t: 'bool', hint: T('К разрешённым странам добавляются страны выхода туннелей, а сами адреса выхода считаются своими. Сменится адрес туннеля — список обновится сам в течение минуты.') },
     SEC_TRAP: { t: 'bool', hint: T('Кто стучится на порты-ловушки (Telnet, RDP, SMB, базы данных…) — сканер: его адрес блокируется целиком, и на проброшенные порты тоже. Открытые и проброшенные порты ловушками не бывают.') },
     SEC_TRAP_PORTS: { t: 'text', hint: T('До 15 портов. Открытые на роутере и проброшенные исключаются сами.') },
     SEC_RATE: { t: 'num', unit: T('в минуту'), hint: T('Больше стольких новых соединений за минуту с одного адреса на проброшенные порты — подбор паролей: для адреса закрываются проброшенные порты. По умолчанию выключено (0): за мобильным адресом оператора сидит много людей, а приложения NAS и Home Assistant сами открывают много соединений — так блокируются свои. Включайте (2–20), только если в журналах NAS видите подбор паролей.') },
@@ -89,10 +90,11 @@
       if (geoBtn) geoBtn.addEventListener('click', () => busy(geoBtn, async () => {
         try { const x = await api('/api/security/geo', {}); (x.ok ? ok : err)(x.msg); load(true); } catch (e) { err(e); }
       }));
-      const form = settingsForm(T('Защита входящих'), 'lock', ['SEC_PROTECT', 'SEC_GEO_ALLOW', 'SEC_GEO_PORTS', 'SEC_TRAP', 'SEC_BAN_HOURS', 'SEC_RATE', 'SEC_RATE_SKIP', 'SEC_RATE_BAN_HOURS', 'SEC_ALLOW_IPS', 'SEC_TRAP_PORTS'], s,
+      const form = settingsForm(T('Защита входящих'), 'lock', ['SEC_PROTECT', 'SEC_GEO_ALLOW', 'SEC_GEO_TUNNELS', 'SEC_GEO_PORTS', 'SEC_TRAP', 'SEC_BAN_HOURS', 'SEC_RATE', 'SEC_RATE_SKIP', 'SEC_RATE_BAN_HOURS', 'SEC_ALLOW_IPS', 'SEC_TRAP_PORTS'], s,
         el('div', null, el('div', { class: 'alert info' }, icon('info'), el('div', null,
           pr.on ? [el('b', null, T('Включена. ')), T('Заблокировано сейчас: ') + (pr.trap_n + pr.rate_n) + T(' (сканеры ') + pr.trap_n + T(', подбор ') + pr.rate_n + T('); отброшено пакетов: по странам ') + pr.geo_drop + T(', заблокированных ') + pr.ban_drop + '.']
             : T('Выключена. Рекомендуемое: порты управления и входа по паролю — только из вашей страны, блокировка сканеров.'))),
+        pr.geo_tunnels.length ? el('div', { class: 'small muted' }, T('Туннели: ') + pr.geo_tunnels.map((x) => x.name + ' ' + x.ip + ' — ' + (x.cc ? x.cc.toUpperCase() : T('страна неизвестна'))).join('; ')) : null,
         el('div', { class: 'row wrap' }, fill, geoBtn)));
       const banRows = pr.banned.map((b) => {
         const un = el('button', { class: 'btn sm' }, T('Снять'));

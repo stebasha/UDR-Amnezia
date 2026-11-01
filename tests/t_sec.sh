@@ -50,7 +50,7 @@ n0=$(wc -l < "$STUB/curl.log")
 ck "страны: свежие (неделя) — не скачиваются снова" '[ "$(wc -l < "$STUB/curl.log")" = "$n0" ]'
 printf 'SEC_GEO_ALLOW="zz"\n' >> "$DD/awg.env"
 "$X" apply > $T/o 2>&1
-ck "страна без адресов: правило по странам не ставится (иначе отбросились бы все)" 'grep -q "▲ адресов разрешённых стран нет" $T/o && ! cf | grep -q AWG_SEC_GEO && ! ci | grep -q AWG_SEC_GEO' || cat $T/o
+ck "страна без адресов: остаётся прежний список, порты не открываются всем" 'grep -q "▲ действует прежний список стран: RU" $T/o && cf | grep -q AWG_SEC_GEO' || cat $T/o
 # не скачалось при включении — сверка повторяет сама (не чаще раза в 10 минут), причина — в apply.log
 mv "$T/srv/ru.cidr" "$T/srv/ru.off"; rm -f "$DD/lists/geo-ru.cidr" "$DD/sec/geo.cidr" "$DD/sec/geo.ts"; ipset destroy AWG_SEC_GEO
 printf 'SEC_GEO_ALLOW="ru"\n' >> "$DD/awg.env"
@@ -64,6 +64,35 @@ echo $(( $(date +%s) - 700 )) > "$DD/sec/geo.try"
 ck "через 10 минут — скачано, правило поставлено" 'cf | grep -q ctorigdstport && [ "$(grep -c . "$STUB/ipset-AWG_SEC_GEO")" = 6 ]' || cat "$DD/sec/apply.log"
 rm -f "$DD/sec/geo.ts"; "$X" geo > $T/o 2>&1
 ck "sec.sh geo: скачать сейчас и поставить" 'grep -q "только из RU" $T/o' || cat $T/o
+echo $(( $(date +%s) - 700000 )) > "$DD/sec/geo.ts"; echo $(( $(date +%s) - 700 )) > "$DD/sec/geo.try"
+"$X" ensure
+ck "сверка сама обновляет адреса старше недели" '[ "$(( $(date +%s) - $(cat "$DD/sec/geo.ts") ))" -lt 60 ]' || cat "$DD/sec/apply.log"
+# страны туннелей: сервер основного в настройках, резервный работает, клиент VPN-сервера роутера не считается
+printf '[Peer]\nEndpoint = 198.51.100.7:51822\n' > "$DD/main.conf"
+printf 'fi.example.org 203.0.113.9\n' > "$DD/.endpoint-awgbackup"
+printf '#!/bin/bash\nprintf "awgbackup\\tKEY\\t203.0.113.9:36883\\nwgsrv1\\tPEER\\t192.0.2.44:5000\\n"\n' > "$T/awgbin"; chmod 755 "$T/awgbin"; export AWG=$T/awgbin
+printf '5.1.0.0/16\n5.2.0.0/16\n5.3.0.0/16\n' > "$T/srv/fi.cidr"
+printf 'x "country": "FI" y' > "$T/srv/203.0.113.9"
+printf 'x "country":"RU" y' > "$T/srv/198.51.100.7"
+cat > "$T/bin/curl" <<'S'
+#!/bin/bash
+o=""; u=""; while [ $# -gt 0 ]; do case "$1" in -o) o=$2; shift;; http*) u=$1;; esac; shift; done
+echo "curl $u" >> "$STUB/curl.log"
+f="$SRV/$(basename "$u")"; [ -f "$f" ] || exit 22
+if [ -n "$o" ]; then cp "$f" "$o"; else cat "$f"; fi
+S
+printf 'TUN_CC_URL=https://ripe.test/\nSEC_GEO_TUNNELS=yes\n' >> "$DD/awg.env"
+"$X" ensure
+ck "туннели: страны и адреса выхода добавлены, клиент VPN-сервера нет" 'grep -q "только из FI RU" "$DD/sec/apply.log" && grep -q "^awgbackup 203.0.113.9 fi$" "$DD/sec/tun.now" && grep -q "^main 198.51.100.7 ru$" "$DD/sec/tun.now" && grep -qx 198.51.100.7 "$STUB/ipset-AWG_SEC_OK" && ! grep -q 192.0.2.44 "$DD/sec/tun.now"' || cat "$DD/sec/apply.log" "$DD/sec/tun.now"
+rm -f "$STUB/curl.log"; "$X" ensure
+ck "туннели: страна берётся из кэша, в сеть не ходим" '! grep -q ripe "$STUB/curl.log" 2>/dev/null'
+sed -i 's/203.0.113.9/203.0.113.10/' "$DD/.endpoint-awgbackup" "$T/awgbin"; mv "$T/srv/fi.cidr" "$T/srv/fi.off"
+rm -f "$DD/lists/geo-fi.cidr" "$DD/lists/geo-se.cidr"; printf 'x "country": "SE" y' > "$T/srv/203.0.113.10"
+"$X" ensure
+ck "новая страна не скачалась: фильтр остаётся с прежним списком, адрес выхода уже свой" 'cf | grep -q ctorigdstport && grep -q "действует прежний список" "$DD/sec/apply.log" && grep -qx 203.0.113.10 "$STUB/ipset-AWG_SEC_OK"' || cat "$DD/sec/apply.log"
+mv "$T/srv/fi.off" "$T/srv/fi.cidr"; unset AWG; rm -f "$DD/main.conf" "$DD/.endpoint-awgbackup"
+printf 'SEC_GEO_TUNNELS=no\n' >> "$DD/awg.env"; echo $(( $(date +%s) - 700 )) > "$DD/sec/geo.try"; "$X" ensure
+ck "туннели выключены: страны только ручные" 'grep -q "только из RU" "$DD/sec/apply.log" && [ ! -e "$DD/sec/tun.now" ]' || cat "$DD/sec/apply.log"
 printf 'SEC_GEO_ALLOW="ru"\nSEC_RATE=0\nSEC_TRAP=no\n' >> "$DD/awg.env"
 "$X" apply > /dev/null 2>&1
 ck "ловушки и частота выключаются по отдельности" '! ci | grep -q "add-set AWG_SEC_TRAP" && ! cf | grep -q "recent --name" && cf | grep -q ctorigdstport'
