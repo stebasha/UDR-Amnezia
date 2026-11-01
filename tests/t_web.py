@@ -747,7 +747,7 @@ def main():
         check("3x-ui: конфиг AWG 3.1 из ответа API (ключ сервера, S3/S4, H-диапазоны, I1, защита заголовков, Endpoint)",
               "PublicKey = U0VSVkVSLVBVQkxJQy1LRVktRk9SLVRFU1RTLTEyMzQ=" in conf and "S4 = 16" in conf and "H1 = 100000-200000" in conf
               and "I1 = <r 64>" in conf and "HeaderProtectionKey = " in conf and "RandomTrailers = on" in conf and "DisableCookies" not in conf
-              and "MTU = 1404" in conf and "Endpoint = 203.0.113.50:%d" % sent.get("port", 0) in conf and "DNS" not in conf, conf)
+              and "MTU = 1404" in conf and "Endpoint = 203.0.113.50:%d" % sent.get("port", 0) in conf and not re.search(r"^DNS\s*=", conf, re.M), conf)
         ev = open(os.path.join(dd, "awg.env")).read()
         s, j = a.get("/api/xui")
         t1 = [t for t in j["tunnels"] if t["name"] == "awgxui"]
