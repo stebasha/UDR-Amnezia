@@ -308,16 +308,25 @@ def apply_conf_text(h, t, text, why):
             raise ValueError("конфиг не принят: " + "; ".join(errs))
         if old.strip() == text.strip():
             return {"ok": True, "msg": "изменений нет", "unchanged": True}
-        if old:
-            rev_save(t, old, "до: " + why)
-            write_secure(cp + ".prev", old)
-        write_secure(cp, text)
-        rc, out = up_tunnel(t)
-        if rc != 0 and old:
-            write_secure(cp, old)
-            up_tunnel(t)
-            h.act("conf-set-failed", {t: why})
-            return {"ok": False, "msg": "туннель с новым конфигом не поднялся, возвращён прежний:\n" + out.strip()}
+        # Замок туннеля — до записи конфига: если туннель сейчас перезапускает другая служба, конфиг не меняем и так и
+        # говорим. Раньше конфиг записывался, up.sh не дожидался замка, панель возвращала прежний конфиг и отвечала
+        # «туннель с новым конфигом не поднялся» — настоящая причина (занятый замок) терялась.
+        try:
+            with tunnel_lock(t):
+                if old:
+                    rev_save(t, old, "до: " + why)
+                    write_secure(cp + ".prev", old)
+                write_secure(cp, text)
+                rc, out = up_tunnel(t, locked=True)
+                if rc != 0 and old:
+                    write_secure(cp, old)
+                    rc2, out2 = up_tunnel(t, locked=True)
+                    h.act("conf-set-failed", {t: why})
+                    return {"ok": False, "msg": "туннель с новым конфигом не поднялся, возвращён прежний" +
+                            ("" if rc2 == 0 else " (но и с ним туннель не поднялся: %s)" % out2.strip()[-300:]) +
+                            ":\n" + out.strip()}
+        except TunnelBusy as ex:
+            return {"ok": False, "msg": "%s; конфиг не изменён" % ex}
         rev_save(t, text, why)
         if svc_active("awg-self"):
             run(["systemctl", "restart", "awg-self"], timeout=30)   # адрес сервера туннеля — в исключениях awg-self

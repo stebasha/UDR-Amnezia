@@ -89,6 +89,40 @@ check("up_tunnel: замок занят — up.sh не запускается", 
 fcntl.flock(lk, fcntl.LOCK_UN)
 rc, out = C.up_tunnel("awgx", wait=1)
 check("up_tunnel: замок свободен — up.sh выполнен", rc == 0 and C.read_file(os.path.join(T, "up.log")) == "up awgx\n", (rc, out))
+# замена конфига из панели: замок туннеля занят — конфиг не меняется, ответ называет настоящую причину (раньше: «не поднялся»)
+import awgweb.configs as CF  # noqa: E402
+cpx = os.path.join(T, "awgx.conf")
+open(cpx, "w").write("OLD\n")
+CF.wg_only = lambda t: t
+CF.conf_path = lambda t, e=None: cpx
+CF.conf_validate = lambda text: []
+CF.rev_save = lambda *a, **k: None
+CF.svc_active = lambda u: False
+CF.hs_age = lambda t: 5
+
+
+class _H:
+    def act(self, *a):
+        pass
+
+
+os.remove(os.path.join(T, "up.log"))
+fcntl.flock(lk, fcntl.LOCK_EX)
+_w = CF.tunnel_lock.__init__.__defaults__
+CF.tunnel_lock.__init__.__defaults__ = (1,)
+r = CF.apply_conf_text(_H(), "awgx", "NEW\n", "тест")
+check("конфиг: замок занят — конфиг не изменён, причина названа", not r["ok"] and "другая служба" in r["msg"] and "не изменён" in r["msg"]
+      and C.read_file(cpx) == "OLD\n" and not os.path.exists(os.path.join(T, "up.log")), r)
+fcntl.flock(lk, fcntl.LOCK_UN)
+r = CF.apply_conf_text(_H(), "awgx", "NEW\n", "тест")
+check("конфиг: замок свободен — записан и туннель перезапущен", r["ok"] and C.read_file(cpx) == "NEW\n"
+      and C.read_file(os.path.join(T, "up.log")) == "up awgx\n", r)
+open(up, "w").write("#!/bin/sh\necho \"up $1\" >> %s/up.log\ngrep -q BAD %s && { echo bad; exit 1; }\nexit 0\n" % (T, cpx))
+os.remove(os.path.join(T, "up.log"))
+r = CF.apply_conf_text(_H(), "awgx", "BAD\n", "тест")
+check("конфиг: не поднялся — возвращён прежний, оба запуска под одним замком", not r["ok"] and "возвращён прежний" in r["msg"]
+      and "но и с ним" not in r["msg"] and C.read_file(cpx) == "NEW\n" and C.read_file(os.path.join(T, "up.log")).count("up awgx") == 2, r)
+CF.tunnel_lock.__init__.__defaults__ = _w
 # импорт vpn://: сжатая «бомба» не разворачивается в память целиком
 import base64, struct, zlib  # noqa: E401,E402
 import awgweb.importer as IM  # noqa: E402

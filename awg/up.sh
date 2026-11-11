@@ -29,6 +29,11 @@ cd "$DD" || exit 1
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}
 umask 077
 
+# amneziawg-go — в своём сеансе (setsid). Scope systemd меняет только cgroup, а группа процессов остаётся той, что у
+# вызывающего: панель по сроку или отмене задачи (mtu.sh, подбор обфускации) завершает всю группу командой kill, Ctrl+C
+# в терминале тоже бьёт по группе — вместе с ними погибал и процесс туннеля, интерфейс пропадал.
+SETSID=""; command -v setsid >/dev/null 2>&1 && setsid -w true >/dev/null 2>&1 && SETSID="setsid -w"
+
 is_xray(){ case " $XRAY_TUNNELS " in *" $1 "*) return 0;; esac; return 1; }
 
 conf_of(){
@@ -124,10 +129,10 @@ bring_up(){
   # пропадал и туннель лежал, пока сторож не поднимет его заново.
   if { [ -n "${AWG_FORCE_SCOPE:-}" ] || { [ "${EUID:-1}" = 0 ] && [ -d /run/systemd/system ]; }; } && [ -z "${AWG_NO_SCOPE:-}" ] \
      && command -v systemd-run >/dev/null 2>&1; then
-    systemd-run --scope --quiet --collect --description="AmneziaWG $n" "$DD/amneziawg-go" "$n" >/dev/null 2>&1 \
-      || { ip link show "$n" >/dev/null 2>&1 || ./amneziawg-go "$n" >/dev/null 2>&1; }
+    systemd-run --scope --quiet --collect --description="AmneziaWG $n" $SETSID "$DD/amneziawg-go" "$n" >/dev/null 2>&1 \
+      || { ip link show "$n" >/dev/null 2>&1 || $SETSID ./amneziawg-go "$n" >/dev/null 2>&1; }
   else
-    ./amneziawg-go "$n" >/dev/null 2>&1
+    $SETSID ./amneziawg-go "$n" >/dev/null 2>&1
   fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" >/dev/null 2>&1 && break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then

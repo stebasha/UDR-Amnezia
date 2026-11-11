@@ -878,6 +878,11 @@ cd "$DD" || exit 1
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}
 umask 077
 
+<span class="c"># amneziawg-go — в своём сеансе (setsid). Scope systemd меняет только cgroup, а группа процессов остаётся той, что у</span>
+<span class="c"># вызывающего: панель по сроку или отмене задачи (mtu.sh, подбор обфускации) завершает всю группу командой kill, Ctrl+C</span>
+<span class="c"># в терминале тоже бьёт по группе — вместе с ними погибал и процесс туннеля, интерфейс пропадал.</span>
+SETSID=""; command -v setsid &gt;/dev/null 2&gt;&amp;1 &amp;&amp; setsid -w true &gt;/dev/null 2&gt;&amp;1 &amp;&amp; SETSID="setsid -w"
+
 is_xray(){ case " $XRAY_TUNNELS " in *" $1 "*) return 0;; esac; return 1; }
 
 conf_of(){
@@ -973,10 +978,10 @@ bring_up(){
 <span class="c">  # пропадал и туннель лежал, пока сторож не поднимет его заново.</span>
   if { [ -n "${AWG_FORCE_SCOPE:-}" ] || { [ "${EUID:-1}" = 0 ] &amp;&amp; [ -d /run/systemd/system ]; }; } &amp;&amp; [ -z "${AWG_NO_SCOPE:-}" ] \
      &amp;&amp; command -v systemd-run &gt;/dev/null 2&gt;&amp;1; then
-    systemd-run --scope --quiet --collect --description="AmneziaWG $n" "$DD/amneziawg-go" "$n" &gt;/dev/null 2&gt;&amp;1 \
-      || { ip link show "$n" &gt;/dev/null 2&gt;&amp;1 || ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1; }
+    systemd-run --scope --quiet --collect --description="AmneziaWG $n" $SETSID "$DD/amneziawg-go" "$n" &gt;/dev/null 2&gt;&amp;1 \
+      || { ip link show "$n" &gt;/dev/null 2&gt;&amp;1 || $SETSID ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1; }
   else
-    ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
+    $SETSID ./amneziawg-go "$n" &gt;/dev/null 2&gt;&amp;1
   fi
   for _ in 1 2 3 4 5 6 7 8 9 10; do ip link show "$n" &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break; sleep 0.3; done
   if ! ./awg setconf "$n" "$tmp"; then
@@ -1000,7 +1005,7 @@ for t in $TUNNELS_EXTRA; do bring_up "$t" || rc=1; done
 exit $rc
 EOF
 chmod 755 /data/awg/up.sh
-/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 155 строк">Показать целиком · 155 строк</button></figure>
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 160 строк">Показать целиком · 160 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
   </div></div>
 
@@ -1100,7 +1105,10 @@ fw_rules(){  # fw_rules ИНТЕРФЕЙС → строки «таблица|п�
 dedup(){
   local t line n k removed=0 lines
 <span class="c">  # пока чистим, awg-guard и awg-self не пересобирают свои цепочки (общие замки); после — пусть сверятся заново</span>
-  if command -v flock &gt;/dev/null &amp;&amp; { exec 7&gt;"${AWG_RUN:-/run}/awg-guard.lock" 8&gt;"${AWG_RUN:-/run}/awg-self.lock"; } 2&gt;/dev/null; then flock -w 30 7; flock -w 30 8; fi
+<span class="c">  # Не дождались замка — не чистим: удаление «лишней» копии посреди чужой сборки цепочки убрало бы и нужное правило</span>
+  if command -v flock &gt;/dev/null &amp;&amp; { exec 7&gt;"${AWG_RUN:-/run}/awg-guard.lock" 8&gt;"${AWG_RUN:-/run}/awg-self.lock"; } 2&gt;/dev/null; then
+    flock -w 30 7 &amp;&amp; flock -w 30 8 || { { exec 7&gt;&amp;- 8&gt;&amp;-; } 2&gt;/dev/null; echo "awg-guard или awg-self заняты дольше 30 с — повторите" &gt;&amp;2; echo 0; return 1; }
+  fi
   for t in nat mangle filter; do
     lines=$(iptables -t "$t" -S 2&gt;/dev/null) || continue          # нет ответа (блокировка) — пропускаем таблицу
     while IFS= read -r line; do
@@ -1139,7 +1147,7 @@ forget(){  # убрать правила интерфейса (все копии
 }
 
 case "$1" in
-  dedup)  n=$(dedup); echo "убрано дубликатов: $n"; exit 0;;
+  dedup)  n=$(dedup) || { echo "дубликаты не убраны: замки заняты"; exit 1; }; echo "убрано дубликатов: $n"; exit 0;;
   forget) forget "$2"; exit $?;;
 esac
 
@@ -1611,7 +1619,7 @@ while true; do
   sleep "$INTERVAL" &amp; wait $!
 done
 EOF
-chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 574 строк">Показать целиком · 574 строк</button></figure>
+chmod 755 /data/awg/failover.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 577 строк">Показать целиком · 577 строк</button></figure>
 <figure class="cb"><figcaption><span class="on on-router">Роутер</span><span class="cbt">служба systemd (копия хранится в /data/awg)</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-failover.service &lt;&lt;'EOF'
 [Unit]
 Description=AmneziaWG failover for UniFi PBR
@@ -2520,7 +2528,13 @@ spool_flush() {
 
 <span class="c"># одна отправка за раз (событие и отчёт могут совпасть)</span>
 exec 9&gt;/tmp/awg-notify.lock
-command -v flock &gt;/dev/null &amp;&amp; flock -w 120 9
+<span class="c"># Не дождались очереди (прошлая отправка висит на медленных каналах) — в отложенные, а не параллельно с ней:</span>
+<span class="c"># две отправки одновременно разбирали бы один и тот же файл отложенных и слали сообщения дважды или теряли их.</span>
+if command -v flock &gt;/dev/null &amp;&amp; ! flock -w 120 9; then
+  spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
+  log "очередь отправки занята дольше 120 с, сообщение отложено"
+  exit 1
+fi
 
 if send_text "$TEXT"; then
   spool_flush
@@ -2530,7 +2544,7 @@ log "ВСЕ КАНАЛЫ НЕДОСТУПНЫ, сообщение отложен
 spool_add "🕓 (отложено, событие в $(date '+%F %T'))"$'\n'"$TEXT"
 exit 1
 EOF
-chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 144 строк">Показать целиком · 144 строк</button></figure>
+chmod 700 /data/awg/notify.sh</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 150 строк">Показать целиком · 150 строк</button></figure>
 <figure class="cb long"><figcaption><span class="on on-router">Роутер</span><span class="cbt">создать awg-notify.sh</span><button class="copy" type="button">Копировать</button></figcaption><pre><code>cat &gt; /data/awg/awg-notify.sh &lt;&lt;'EOF'
 <span class="c">#!/bin/bash</span>
 <span class="c"># awg-notify.sh — уведомления в Telegram о работе failover.</span>

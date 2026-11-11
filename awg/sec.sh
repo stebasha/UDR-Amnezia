@@ -292,9 +292,17 @@ join_hs(){  # «интерфейс адрес время-handshake» по пир
   { wg show all endpoints 2>/dev/null | sed 's/^/E\t/'; wg show all latest-handshakes 2>/dev/null | sed 's/^/H\t/'; } \
     | awk -F'\t' '$1=="E" {ep[$2" "$3]=$4} $1=="H" && ($2" "$3) in ep {print $2, ep[$2" "$3], $4}'
 }
+# Один проход за раз: сверка сторожа (ensure), кнопки панели (geo), установщик и awg-guard remove (apply, remove).
+# Раньше замок брала только сверка: apply из панели шёл одновременно с ней — две сборки цепочек (дубликаты правил,
+# пустая цепочка посреди сборки) и общий временный набор $S_GEO.new, который один процесс удалял из-под другого.
+sec_lock(){  # sec_lock СЕКУНДЫ → 0, если замок взят (или flock нет)
+  command -v flock >/dev/null || return 0
+  { exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; } 2>/dev/null || return 0
+  flock -w "$1" 7
+}
 ensure(){  # awg-guard, раз в минуту: правила на месте и настройки те же — только журнал новых блокировок
   local h b c w miss=0
-  if command -v flock >/dev/null; then exec 7>"${AWG_RUN:-/run}/awg-sec.lock"; flock -w 20 7 || return 0; fi   # ждать, а не пропускать: прошлая сверка могла ещё не отпустить замок
+  sec_lock 20 || return 0   # ждать, а не пропускать: прошлая сверка могла ещё не отпустить замок
   if ! on; then iptables -S $CI >/dev/null 2>&1 && remove quiet; return 0; fi
   for h in "${HOOKS[@]}"; do
     read -r b c <<< "$h"
@@ -316,11 +324,12 @@ status(){
   say "правил на месте: $(iptables -S $CI 2>/dev/null | grep -c '^-A') + $(iptables -S $CF 2>/dev/null | grep -c '^-A')"
 }
 
+busy(){ say "✘ защиту входящих сейчас меняет другой процесс (сверка awg-guard) — повторите через минуту"; exit 1; }
 case "${1:-status}" in
-  apply)  apply;;
+  apply)  sec_lock 60 || busy; apply;;
   ensure) ensure;;
-  remove) remove;;
-  geo)    rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; tun_refresh; geo_update;;
+  remove) sec_lock 60 || busy; remove;;
+  geo)    sec_lock 60 || busy; rm -f "$SD/geo.ts"; on && { apply | tee "$SD/apply.log"; exit 0; }; tun_refresh; geo_update;;
   status) status;;
   unban)  [[ ${2:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { say "использование: sec.sh unban IP"; exit 2; }
           ipset del $S_TRAP "$2" 2>/dev/null; ipset del $S_RATE "$2" 2>/dev/null; event "блокировка снята: $2"; say "$2: блокировка снята";;

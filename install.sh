@@ -26,7 +26,7 @@
 #         --uninstall       удалить
 #         --help
 # ============================================================================
-INSTALLER_VERSION=1.10.9
+INSTALLER_VERSION=1.10.10
 # Канал обновлений (#8), запоминается в $DD/.channel (install.sh --update и панель обновляются оттуда же):
 #   stable — последний релиз GitHub: архив с SHA256SUMS, сумма проверяется (по умолчанию);
 #   beta   — ветка main (то, что уже влито, но ещё не выпущено релизом);
@@ -508,12 +508,18 @@ do_bins_check(){  # код 0 — актуально, 10 — есть новее,
   [ $rc = 10 ] && hint "обновить: $DD/install.sh --bins-update (сборка на вашем VPS) или --bins-update ПАПКА (готовые файлы с SHA256SUMS)"
   return $rc
 }
+up_tun(){  # up_tun ТУННЕЛЬ — up.sh под замком туннеля, как у сторожа и панели: их up.sh посреди нашего пересоздал бы интерфейс
+  local lf="${AWG_RUN:-/run}/awg-tun-$1.lock"
+  if command -v flock >/dev/null && { : >>"$lf"; } 2>/dev/null; then
+    ( flock -w 30 9 || { echo "ОШИБКА: $1: туннель сейчас перезапускает другая служба"; exit 1; }; "$DD/up.sh" "$1" ) 9>"$lf"
+  else "$DD/up.sh" "$1"; fi
+}
 tun_hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 bins_live(){ local t a; for t in $(list_tunnels); do a=$(tun_hs_age "$t"); [ "$a" -ge 0 ] 2>/dev/null && [ "$a" -le 180 ] && printf ' %s' "$t"; done; }
 bins_apply(){  # bins_apply "ТУННЕЛИ" — пересоздать туннели на новых бинарниках; если туннель из списка (был handshake) его не получил — вернуть *.prev
   local before=$1 t a bad="" i
   info "перезапускаю туннели на новых бинарниках (несколько секунд без PBR-трафика, kill-switch держит, утечки нет)…"
-  for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1 || bad="$bad $t"; done
+  for t in $(list_tunnels); do up_tun "$t" >/dev/null 2>&1 || bad="$bad $t"; done
   systemctl restart awg-failover 2>/dev/null     # вернёт маршруты и начнёт проверки, а они вызывают handshake
   [ -n "$bad" ] && err "не поднялись:$bad"
   for i in $(seq 1 "${BINS_WAIT:-30}"); do
@@ -524,7 +530,7 @@ bins_apply(){  # bins_apply "ТУННЕЛИ" — пересоздать тунн
     err "на новых бинарниках нет handshake:$bad — возвращаю прежние"
     if [ -f "$DD/awg.prev" ] && [ -f "$DD/amneziawg-go.prev" ]; then
       cp -p "$DD/awg.prev" "$DD/awg" && cp -p "$DD/amneziawg-go.prev" "$DD/amneziawg-go"
-      for t in $(list_tunnels); do "$DD/up.sh" "$t" >/dev/null 2>&1; done
+      for t in $(list_tunnels); do up_tun "$t" >/dev/null 2>&1; done
       systemctl restart awg-failover 2>/dev/null
       ok "вернул прежние: $("$DD/awg" --version 2>&1 | head -1)"
     else
@@ -651,7 +657,7 @@ bring_up_and_test(){  # bring_up_and_test ИНТЕРФЕЙС "описание" 
   local ifc=$1 what=$2 a out
   while :; do
     info "поднимаю $ifc…"
-    out=$("$DD/up.sh" "$ifc" 2>&1); say "$out" | sed 's/^/    /'
+    out=$(up_tun "$ifc" 2>&1); say "$out" | sed 's/^/    /'
     if echo "$out" | grep -q 'ОШИБКА'; then
       if echo "$out" | grep -qiE 'unrecognized|invalid|unknown'; then
         warn "утилита awg не поняла строку конфига: бинарник старее, чем параметры в конфиге."
@@ -1641,7 +1647,7 @@ do_rotate_keys(){
   [ -n "$sp" ] || { err "VPS не вернул новый публичный ключ: $out"; return 1; }
   info "на VPS ключи заменены, сервер перезапущен. Обновляю конфиг на роутере и поднимаю туннель…"
   conf_set_keys "$cf" "$nk" "$sp"
-  "$DD/up.sh" "$t" 2>&1 | sed 's/^/    /'
+  up_tun "$t" 2>&1 | sed 's/^/    /'
   for i in $(seq 1 25); do [ "$(hs_age "$t")" -ge 0 ] && [ "$(hs_age "$t")" -lt 20 ] && { okk=1; break; }; sleep 1; done
   if [ $okk = 1 ] && tun_ip "$t" >/dev/null; then
     ok "новые ключи работают: handshake есть, интернет через $t открывается"
@@ -1650,7 +1656,7 @@ do_rotate_keys(){
   else
     err "туннель с новыми ключами не заработал: откатываю"
     cp -p "$pre" "$cf"; vssh "ROLLBACK=$bk bash /root/vps-rotate.sh" 2>&1 | sed 's/^/    /'
-    "$DD/up.sh" "$t" >/dev/null 2>&1; sleep 5
+    up_tun "$t" >/dev/null 2>&1; sleep 5
     tun_ip "$t" >/dev/null && ok "откат выполнен, туннель работает на старых ключах" || err "после отката туннель не отвечает: смотрите Диагностика"
   fi
   vssh 'rm -f /root/vps-rotate.sh'
@@ -1909,7 +1915,7 @@ menu_tunnels(){
       7) step_quality;;
       8) step_rail; systemctl restart awg-failover; ok "сторож перезапущен";;
       9) get_kit; step_bins && { info "перезапускаю туннели на новых бинарниках (несколько секунд без PBR-трафика, утечки нет)…"
-           "$DD/up.sh" 2>&1 | sed 's/^/    /'; systemctl restart awg-failover; sleep 8
+           for a in $(list_tunnels); do up_tun "$a"; done 2>&1 | sed 's/^/    /'; systemctl restart awg-failover; sleep 8
            for a in $(list_tunnels); do tun_ip "$a" >/dev/null && ok "$a работает" || err "$a не отвечает: верните прежние файлы (*.prev) или смотрите Диагностика"; done; };;
       10) return;;
     esac

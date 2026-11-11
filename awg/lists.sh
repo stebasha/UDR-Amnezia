@@ -70,7 +70,7 @@ load_set(){  # load_set НАБОР ФАЙЛ — атомарно: временн
 }
 count(){ ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
 update(){
-  local force=$1 tmp u n c ok=1 got=0 msg=""
+  local force=$1 tmp u n c ok=1 gok=0 got=0 msg=""
   mkdir -p "$LD"; chmod 700 "$LD"
   # одно обновление за раз: фоновое (awg-guard) и кнопка в панели не должны подменять наборы одновременно
   if command -v flock >/dev/null; then exec 8>"$LD/.lock"; flock -n 8 || { say "обновление списков уже идёт"; return 0; }; fi
@@ -89,17 +89,23 @@ update(){
     else ok=0; say "✘ список заблокированного не обновлён (скачано источников: $got, сетей: $n) — остаётся прежний"; fi
   fi
   if [ "$LISTS_MODE" = geoip ] || [ "$force" = --force ]; then
-    : > "$tmp/geo"
+    : > "$tmp/geo"; gok=0
     for c in $(countries); do
       # shellcheck disable=SC2059
       if fetch "$(printf "$GEO_URL" "$c")" "$tmp/$c.raw"; then
         clean "$tmp/$c.raw" > "$tmp/$c"; n=$(wc -l < "$tmp/$c")
-        if [ "$n" -ge "$MIN_GEO" ]; then mv -f "$tmp/$c" "$LD/geo-$c.cidr"; say "✔ ${c^^}: $n сетей"
+        if [ "$n" -ge "$MIN_GEO" ]; then mv -f "$tmp/$c" "$LD/geo-$c.cidr"; gok=$((gok + 1)); say "✔ ${c^^}: $n сетей"
         else ok=0; say "✘ ${c^^}: ответ не похож на список ($n строк) — остаётся прежний"; fi
       else ok=0; say "✘ ${c^^}: не скачался — остаётся прежний"; fi
       [ -s "$LD/geo-$c.cidr" ] && cat "$LD/geo-$c.cidr" >> "$tmp/geo"
     done
-    sort -u "$tmp/geo" > "$LD/geo.cidr"; date +%s > "$LD/geo.ts"; countries | tr '\n' ' ' > "$LD/geo.src"; msg="$msg страны $(countries | tr 'a-z\n' 'A-Z '): $(wc -l < "$LD/geo.cidr");"
+    # файл — целиком через mv: «lists.sh load» сторожа не должен прочитать его наполовину записанным
+    sort -u "$tmp/geo" > "$tmp/geo.all" && mv -f "$tmp/geo.all" "$LD/geo.cidr"
+    # время и страны — только если скачалась хоть одна страна. Раньше отметка ставилась и когда не скачалось ничего
+    # (сеть или источник недоступны): due() сутки (LIST_MAX_AGE) отвечал «рано», и сбой повторялся только назавтра;
+    # теперь фоновая проверка сторожа повторит его через час
+    [ "$gok" -gt 0 ] && { date +%s > "$LD/geo.ts"; countries | tr '\n' ' ' > "$LD/geo.src"; }
+    msg="$msg страны $(countries | tr 'a-z\n' 'A-Z '): $(wc -l < "$LD/geo.cidr");"
   fi
   rm -rf "$tmp"
   load
