@@ -16,7 +16,7 @@ conf_for(){ case "$1" in "$MAIN") echo main.conf;; "${BACKUP:-awgbackup}") [ -f 
 wan_if(){ [ -n "$WANIF" ] && { echo "$WANIF"; return; }; ip -4 route show table all 2>/dev/null | awk '$1=="default"{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | grep -v -E '^(awg|wg|lo|wgclt)' | head -n1; }
 WAN=$(wan_if)
 up_tun(){   # под тем же замком, что сторож и панель: два up.sh одновременно мешают друг другу
-  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-tun-$1.lock"
   else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
 }
 df_ping(){ ping -I "$WAN" -M "do" -c 1 -W 2 -s "$1" "$2" >/dev/null 2>&1; }   # 0 — пакет с payload $1 дошёл без фрагментации

@@ -856,6 +856,23 @@ grep -E -c '^(Address|Endpoint|Jc)' /data/awg/main.conf</code></pre></figure>
 <span class="c"># VLESS/Reality (#42): туннели из XRAY_TUNNELS — процесс Xray (служба awg-xray-ИМЯ, вход tun), конфиг xray/ИМЯ.json.</span>
 <span class="c"># Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, &lt;имя&gt;.conf — дополнительные.</span>
 DD=${DD:-/data/awg}
+<span class="c"># Унаследованные дескрипторы закрываем сразу: вызывающий (сторож, mtu.sh, obfs-tune.sh) держит на fd 7–9 замки</span>
+<span class="c"># (/run/awg-tun-ИМЯ.lock, awg-guard.lock, awg-tune.lock). amneziawg-go и Xray их унаследовали бы и держали всё время</span>
+<span class="c"># жизни туннеля: панель 30 с ждала замок и отвечала «перезапускает другая служба», сторож не мог пересоздать туннель.</span>
+<span class="c"># До 1.10.9 замок назывался awg-up-ИМЯ.lock: его до сих пор держат туннели, поднятые старым up.sh, поэтому имя новое.</span>
+close_inherited(){
+  local fd
+  if [ -d /proc/$$/fd ]; then
+    for fd in /proc/$$/fd/*; do
+      fd=${fd##*/}
+      case "$fd" in 0|1|2|255|*[!0-9]*) continue;; esac     # 255 — сам скрипт (bash)
+      eval "exec $fd&gt;&amp;-" 2&gt;/dev/null
+    done
+  else
+    for fd in 3 4 5 6 7 8 9; do eval "exec $fd&gt;&amp;-" 2&gt;/dev/null; done
+  fi
+}
+close_inherited
 cd "$DD" || exit 1
 [ -r awg.env ] &amp;&amp; . ./awg.env
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}
@@ -983,7 +1000,7 @@ for t in $TUNNELS_EXTRA; do bring_up "$t" || rc=1; done
 exit $rc
 EOF
 chmod 755 /data/awg/up.sh
-/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 138 строк">Показать целиком · 138 строк</button></figure>
+/data/awg/up.sh awgmain</code></pre><button class="more" type="button" aria-expanded="false" data-label="Показать целиком · 155 строк">Показать целиком · 155 строк</button></figure>
 <figure class="cb out"><figcaption><span class="on on-out">вывод</span><span class="cbt">ожидаемо</span></figcaption><pre><code>awgmain поднят: адрес 10.8.2.13/32, MTU 1406, конфиг main.conf</code></pre></figure>
   </div></div>
 
@@ -1354,7 +1371,7 @@ ensure_tunnels(){
 <span class="c"># поднять туннель один раз, даже если его одновременно поднимает сторож другого маршрута (#22); force — пересоздать</span>
 up_once(){
   if command -v flock &gt;/dev/null; then
-    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] &amp;&amp; link_up "$1" &amp;&amp; exit 0; "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1 ) 9&gt;"${AWG_RUN:-/run}/awg-up-$1.lock"
+    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] &amp;&amp; link_up "$1" &amp;&amp; exit 0; "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1 ) 9&gt;"${AWG_RUN:-/run}/awg-tun-$1.lock"
   else "$DD/up.sh" "$1" &gt;/dev/null 2&gt;&amp;1; fi
 }
 

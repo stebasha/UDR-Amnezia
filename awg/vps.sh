@@ -44,6 +44,11 @@ else
   [ -r "$DD/vps.d/$VPS_ID.env" ] && . "$DD/vps.d/$VPS_ID.env"
 fi
 event(){ echo "$(date +%s)|vps|$1" >> "$DD/events.log"; }
+up_tun(){   # под тем же замком, что сторож и панель: два up.sh одновременно мешают друг другу
+  local lf="${AWG_RUN:-/run}/awg-tun-$1.lock"
+  if command -v flock >/dev/null && { : >>"$lf"; } 2>/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"$lf"
+  else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
+}
 notify(){ if { [ -r "$DD/telegram.env" ] || [ -r "$DD/hooks.env" ]; } && [ -x "$DD/notify.sh" ]; then "$DD/notify.sh" "$1" >/dev/null 2>&1; fi; return 0; }
 
 valid(){
@@ -158,10 +163,10 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   say "· VPS: изменено, сервер перезапущен (копия $bk)"
   # VPS уже на новых значениях: прерывание (остановка задачи, срок, Ctrl+C) до конца проверки возвращает обе стороны,
   # иначе роутер и сервер остались бы с разными ключами или параметрами и туннель не поднялся бы
-  trap 'trap - INT TERM; say "✘ прервано: возвращаю обе стороны"; cp -p "$pre" "$CF"; vrun "ROLLBACK=$bk bash /root/vps-rotate.sh" >/dev/null 2>&1; "$DD/up.sh" "$T" >/dev/null 2>&1; vrun "rm -f /root/vps-rotate.sh /root/awg-obf.txt" >/dev/null 2>&1; exit 1' INT TERM
+  trap 'trap - INT TERM; say "✘ прервано: возвращаю обе стороны"; cp -p "$pre" "$CF"; vrun "ROLLBACK=$bk bash /root/vps-rotate.sh" >/dev/null 2>&1; up_tun "$T"; vrun "rm -f /root/vps-rotate.sh /root/awg-obf.txt" >/dev/null 2>&1; exit 1' INT TERM
   "$apply" "$sp"
   say "· роутер: конфиг $T обновлён, туннель пересоздан; жду handshake (до ${VPS_WAIT} с)…"
-  "$DD/up.sh" "$T" >/dev/null 2>&1
+  up_tun "$T"
   if wait_hs "$T"; then
     say "✔ $what: туннель $T работает (handshake есть, интернет через него открывается)"
     vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
@@ -174,7 +179,7 @@ coordinated(){  # coordinated ОПИСАНИЕ ПЕРЕМЕННЫЕ_ДЛЯ_VPS �
   say "✘ $what: туннель $T не заработал — откатываю обе стороны"
   cp -p "$pre" "$CF"
   out=$(vrun "ROLLBACK=$bk bash /root/vps-rotate.sh" 2>&1); echo "$out" | grep -q ROLLED_BACK && say "· VPS: возвращена копия $bk" || say "· VPS: откат не подтвердился: $(echo "$out" | tail -n1)"
-  "$DD/up.sh" "$T" >/dev/null 2>&1
+  up_tun "$T"
   vrun 'rm -f /root/vps-rotate.sh /root/awg-obf.txt' >/dev/null 2>&1
   if wait_hs "$T"; then say "· откат выполнен: $T работает на прежних значениях"; else say "· после отката $T не отвечает: смотрите «Диагностика» и awgctl selftest"; fi
   [ -n "${VPS_NO_KEEP:-}" ] && rm -f "$pre"
