@@ -330,7 +330,7 @@ ensure_tunnels(){
 # поднять туннель один раз, даже если его одновременно поднимает сторож другого маршрута (#22); force — пересоздать
 up_once(){
   if command -v flock >/dev/null; then
-    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] && link_up "$1" && exit 0; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
+    ( flock -w 30 9 || exit 1; [ "${2:-}" != force ] && link_up "$1" && exit 0; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-tun-$1.lock"
   else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
 }
 

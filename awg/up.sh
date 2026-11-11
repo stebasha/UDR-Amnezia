@@ -7,6 +7,23 @@
 # VLESS/Reality (#42): туннели из XRAY_TUNNELS — процесс Xray (служба awg-xray-ИМЯ, вход tun), конфиг xray/ИМЯ.json.
 # Конфиги: main.conf — основной, backup.conf (или client.conf) — запасной, <имя>.conf — дополнительные.
 DD=${DD:-/data/awg}
+# Унаследованные дескрипторы закрываем сразу: вызывающий (сторож, mtu.sh, obfs-tune.sh) держит на fd 7–9 замки
+# (/run/awg-tun-ИМЯ.lock, awg-guard.lock, awg-tune.lock). amneziawg-go и Xray их унаследовали бы и держали всё время
+# жизни туннеля: панель 30 с ждала замок и отвечала «перезапускает другая служба», сторож не мог пересоздать туннель.
+# До 1.10.9 замок назывался awg-up-ИМЯ.lock: его до сих пор держат туннели, поднятые старым up.sh, поэтому имя новое.
+close_inherited(){
+  local fd
+  if [ -d /proc/$$/fd ]; then
+    for fd in /proc/$$/fd/*; do
+      fd=${fd##*/}
+      case "$fd" in 0|1|2|255|*[!0-9]*) continue;; esac     # 255 — сам скрипт (bash)
+      eval "exec $fd>&-" 2>/dev/null
+    done
+  else
+    for fd in 3 4 5 6 7 8 9; do eval "exec $fd>&-" 2>/dev/null; done
+  fi
+}
+close_inherited
 cd "$DD" || exit 1
 [ -r awg.env ] && . ./awg.env
 MAIN=${MAIN:-awgmain}; BACKUP=${BACKUP:-}; TUNNELS_EXTRA=${TUNNELS_EXTRA:-}; LEAK_V6=${LEAK_V6:-block}; XRAY_TUNNELS=${XRAY_TUNNELS:-}

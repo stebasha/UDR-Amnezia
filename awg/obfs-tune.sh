@@ -40,7 +40,7 @@ set_params(){  # set_params КОНФИГ "K=V K=V…" — заменить (ил
 }
 hs_age(){ local ts; ts=$("$DD/awg" show "$1" latest-handshakes 2>/dev/null | awk 'NR==1{print $2}'); if [ -z "$ts" ] || [ "$ts" = 0 ]; then echo -1; else echo $(( $(date +%s) - ts )); fi; }
 up_tun(){
-  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-up-$1.lock"
+  if command -v flock >/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"${AWG_RUN:-/run}/awg-tun-$1.lock"
   else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
 }
 is_active(){ local f; for f in "$STATEB" "$STATEB"-*; do [ -f "$f" ] && grep -qx "ACTIVE=$1" "$f" && return 0; done; return 1; }

@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.8"
+VERSION = "1.10.9"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -129,9 +129,9 @@ def stop_group(p, grace=3):
 
 def up_tunnel(t, timeout=60, wait=30):
     """Поднять (перезапустить) туннель через up.sh под тем же замком, что берут сторож и подбор параметров
-    (/run/awg-up-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del)."""
+    (/run/awg-tun-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del)."""
     try:
-        f = open(os.path.join(RUN, "awg-up-%s.lock" % t), "w")
+        f = open(os.path.join(RUN, "awg-tun-%s.lock" % t), "w")
     except OSError:
         return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
     with f:

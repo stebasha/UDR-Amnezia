@@ -146,4 +146,9 @@ ck "up.sh: временные файлы с ключом не остаются" 
 rm -f "$U/sr.log" "$U/links/awgmain"
 DD=$U/dd AWG_RUN=$U/run AWG_NO_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1
 ck "up.sh: без systemd — как раньше, напрямую" '[ ! -e "$U/sr.log" ] && [ -e "$U/links/awgmain" ]'
+# 1.10.9: amneziawg-go не наследует замки вызывающего (fd 7–9): иначе держит /run/awg-tun-ИМЯ.lock всё время жизни
+printf '#!/bin/bash\ntouch "%s/links/$1"; ls /proc/$$/fd > "%s/fds.log"\n' "$U" "$U" > "$U/dd/amneziawg-go"
+rm -f "$U/links/awgmain"
+( flock 9; DD=$U/dd AWG_RUN=$U/run AWG_FORCE_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1 ) 9>"$U/run/awg-tun-awgmain.lock" 7>"$U/run/g.lock"
+ck "up.sh: замки вызывающего (fd 7, 9) не уходят в amneziawg-go" '[ -s "$U/fds.log" ] && ! grep -qxE "7|9" "$U/fds.log" && grep -q "awgmain поднят" "$U/out"'
 echo "misc: провалов $fails"; [ $fails = 0 ]

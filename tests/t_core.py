@@ -82,7 +82,7 @@ import fcntl  # noqa: E402
 up = os.path.join(T, "up.sh")
 open(up, "w").write("#!/bin/sh\necho \"up $1\" >> %s/up.log\n" % T)
 os.chmod(up, 0o755)
-lk = open(os.path.join(T, "awg-up-awgx.lock"), "w")
+lk = open(os.path.join(T, "awg-tun-awgx.lock"), "w")
 fcntl.flock(lk, fcntl.LOCK_EX)
 rc, out = C.up_tunnel("awgx", wait=1)
 check("up_tunnel: замок занят — up.sh не запускается", rc == 1 and not os.path.exists(os.path.join(T, "up.log")), (rc, out))
