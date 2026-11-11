@@ -151,4 +151,11 @@ printf '#!/bin/bash\ntouch "%s/links/$1"; ls /proc/$$/fd > "%s/fds.log"\n' "$U" 
 rm -f "$U/links/awgmain"
 ( flock 9; DD=$U/dd AWG_RUN=$U/run AWG_FORCE_SCOPE=1 PATH="$U/bin:$PATH" bash "$U/dd/up.sh" awgmain > "$U/out" 2>&1 ) 9>"$U/run/awg-tun-awgmain.lock" 7>"$U/run/g.lock"
 ck "up.sh: замки вызывающего (fd 7, 9) не уходят в amneziawg-go" '[ -s "$U/fds.log" ] && ! grep -qxE "7|9" "$U/fds.log" && grep -q "awgmain поднят" "$U/out"'
+# 1.10.10: amneziawg-go в своём сеансе: kill группы вызывающего (срок или отмена задачи панели, Ctrl+C) его не задевает
+printf '#!/bin/bash\ntouch "%s/links/$1"; ps -o pgid= -p $$ | tr -d " " > "%s/pg.log"\n' "$U" "$U" > "$U/dd/amneziawg-go"
+for m in AWG_FORCE_SCOPE AWG_NO_SCOPE; do
+  rm -f "$U/links/awgmain" "$U/pg.log"
+  pg=$(setsid bash -c 'ps -o pgid= -p $$ | tr -d " "; env DD="$1" AWG_RUN="$2" "$3=1" PATH="$4" bash "$1/up.sh" awgmain > "$5" 2>&1' _ "$U/dd" "$U/run" "$m" "$U/bin:$PATH" "$U/out")
+  ck "up.sh: amneziawg-go не в группе процессов вызывающего ($m)" '[ -s "$U/pg.log" ] && [ -n "$pg" ] && [ "$(cat "$U/pg.log")" != "$pg" ] && grep -q "awgmain поднят" "$U/out"'
+done
 echo "misc: провалов $fails"; [ $fails = 0 ]

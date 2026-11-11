@@ -140,5 +140,10 @@ sed -i 's/^SEC_PROTECT=yes/SEC_PROTECT=no/' "$DD/awg.env"
 "$X" ensure
 ck "выключили — сверка убирает всё" '! iptables -S INPUT | grep -q AWG_SEC && ! iptables -S FORWARD | grep -q AWG_SEC && ! ci | grep -q . && ! grep -qx AWG_SEC_TRAP "$STUB/ipsets"'
 ck "правила UniFi не тронуты" 'iptables -S INPUT | grep -q UBIOS_INPUT_JUMP && iptables -t nat -S UBIOS_PREROUTING_USER_HOOK | grep -q 8123'
+# 1.10.10: apply из панели и установщика — под тем же замком, что сверка сторожа (раньше шли одновременно с ней)
+sed -i 's/^SEC_PROTECT=no/SEC_PROTECT=yes/' "$DD/awg.env"
+( flock 7; sleep 4 ) 7>"$AWG_RUN/awg-sec.lock" & lp=$!; sleep 0.5
+s0=$(date +%s); "$X" apply > "$T/o" 2>&1; s1=$(date +%s); wait $lp
+ck "apply ждёт, пока сверка отпустит замок" '[ $((s1 - s0)) -ge 3 ] && grep -q "защита входящих:" "$T/o"' || cat "$T/o"
 echo "== sec: ошибок $fails"
 [ $fails = 0 ]

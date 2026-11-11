@@ -26,7 +26,7 @@ import time
 import urllib.parse
 import zlib
 
-VERSION = "1.10.9"
+VERSION = "1.10.10"
 DD = os.environ.get("DD", "/data/awg")
 WEBD = os.environ.get("AWG_WEBD", os.path.join(DD, "web"))
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -127,24 +127,52 @@ def stop_group(p, grace=3):
         pass
 
 
-def up_tunnel(t, timeout=60, wait=30):
-    """Поднять (перезапустить) туннель через up.sh под тем же замком, что берут сторож и подбор параметров
-    (/run/awg-tun-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del)."""
-    try:
-        f = open(os.path.join(RUN, "awg-tun-%s.lock" % t), "w")
-    except OSError:
-        return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
-    with f:
-        end = time.time() + wait
+class TunnelBusy(Exception):
+    """Замок туннеля держит другая служба (сторож, подбор параметров, mtu.sh) дольше, чем мы готовы ждать."""
+
+
+class tunnel_lock:
+    """Замок перезапуска туннеля /run/awg-tun-ИМЯ.lock — тот же, что берут сторож, mtu.sh, подбор обфускации и vps.sh.
+    with tunnel_lock(t): … — ждёт до wait секунд, иначе TunnelBusy. Файл не открылся (нет /run) — без замка, как раньше."""
+
+    def __init__(self, t, wait=30):
+        self.t, self.wait, self.f = t, wait, None
+
+    def __enter__(self):
+        try:
+            self.f = open(os.path.join(RUN, "awg-tun-%s.lock" % self.t), "w")
+        except OSError:
+            return self
+        end = time.time() + self.wait
         while True:
             try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
+                fcntl.flock(self.f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
             except OSError:
                 if time.time() > end:
-                    return 1, "туннель %s сейчас перезапускает другая служба — повторите позже" % t
+                    self.f.close()
+                    self.f = None
+                    raise TunnelBusy("туннель %s сейчас перезапускает другая служба — повторите позже" % self.t)
                 time.sleep(0.3)
+
+    def __exit__(self, *a):
+        if self.f:
+            self.f.close()      # закрытие файла снимает flock
+            self.f = None
+        return False
+
+
+def up_tunnel(t, timeout=60, wait=30, locked=False):
+    """Поднять (перезапустить) туннель через up.sh под тем же замком, что берут сторож и подбор параметров
+    (/run/awg-tun-ИМЯ.lock): иначе два up.sh одновременно мешают друг другу (ip link add/del).
+    locked=True — замок уже взят вызывающим (with tunnel_lock(t))."""
+    if locked:
         return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
+    try:
+        with tunnel_lock(t, wait):
+            return run([os.path.join(DD, "up.sh"), t], timeout=timeout)
+    except TunnelBusy as ex:
+        return 1, str(ex)
 
 
 def url_origin(u):

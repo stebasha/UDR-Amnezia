@@ -53,6 +53,11 @@ ck "geoip: и для дополнительного маршрута (умный
 "$G" check > $T/c
 ck "check: GeoIP в отчёте" 'grep -q "OK     GeoIP: напрямую RU, CN ZZ (12 сетей)" $T/c || grep -q "OK     GeoIP: напрямую" $T/c'
 ck "due: свежий — рано, старый — пора" '! "$L" due && echo 1 > "$DD/lists/geo.ts" && "$L" due'
+# 1.10.10: не скачалось ни одной страны — отметка времени прежняя, due повторит через час, а не через сутки
+cp "$DD/lists/geo.cidr" $T/gkeep; echo 1 > "$DD/lists/geo.ts"; mkdir -p $T/nosrv
+SRV=$T/nosrv "$L" update > $T/o4 2>&1
+ck "geoip: ничего не скачалось — кэш прежний, обновление снова «пора»" 'cmp -s $T/gkeep "$DD/lists/geo.cidr" && [ "$(cat "$DD/lists/geo.ts")" = 1 ] && "$L" due' || cat $T/o4
+"$L" update > /dev/null 2>&1
 "$L" status > $T/s
 ck "status: режим и числа" 'grep -q "режим: geoip (напрямую: CN RU ZZ )" $T/s && grep -q "geo: в наборе AWG_GEO 12" $T/s'
 : > "$STUB/ipsets"; rm -f "$STUB"/ipset-AWG_*; "$G" apply

@@ -6,3 +6,4 @@ After=awg-failover.service network-online.target
 Type=oneshot
 ExecStart=/data/awg/backup.sh auto
 Nice=10
+TimeoutStartSec=30min

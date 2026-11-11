@@ -90,8 +90,8 @@ valid_vps(){
   [[ $BK_VPS_DIR =~ ^/[A-Za-z0-9._/-]{1,200}$ ]] && [[ $BK_VPS_DIR != *..* ]] || { echo "VPS: папка — абсолютный путь из букв, цифр, . _ - /"; return 1; }
   [ -f "$RKEY" ] || { echo "VPS: нет ключа роутера $RKEY (создаётся установщиком при настройке VPS: install.sh → VPS)"; return 1; }
   mkdir -p "$DD/ssh"; chmod 700 "$DD/ssh"
-  SSHO=(-p "$BK_VPS_PORT" -i "$RKEY" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$DD/ssh/known_hosts")
-  SCPO=(-q -P "$BK_VPS_PORT" -i "$RKEY" -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$DD/ssh/known_hosts")
+  SSHO=(-p "$BK_VPS_PORT" -i "$RKEY" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$DD/ssh/known_hosts")
+  SCPO=(-q -P "$BK_VPS_PORT" -i "$RKEY" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$DD/ssh/known_hosts")
 }
 vrun(){ ssh "${SSHO[@]}" "$BK_VPS_USER@$BK_VPS_HOST" "$@" < /dev/null; }
 ship_vps(){  # ship_vps ФАЙЛ

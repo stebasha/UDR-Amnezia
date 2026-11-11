@@ -208,7 +208,9 @@ restart_dnsmasq(){  # UniFi сам перезапускает dnsmasq; если 
     sleep 1; np=$(dnsmasq_pid) && [ "$np" != "$pid" ] && return 0
   done
   log "UniFi не поднял dnsmasq за 15 с — запускаю сам: $cmd"
-  setsid $cmd </dev/null >/dev/null 2>&1 9>&- &
+  # dnsmasq живёт долго: не отдаём ему ни замок awg-self (fd 9), ни другие дескрипторы вызывающего
+  # shellcheck disable=SC2086
+  setsid $cmd </dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
   sleep 2
 }
 ui_dns(){  # держит файл в conf-dir dnsmasq и следит, что dnsmasq его загрузил

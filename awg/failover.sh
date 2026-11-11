@@ -59,7 +59,10 @@ fw_rules(){  # fw_rules ИНТЕРФЕЙС → строки «таблица|п�
 dedup(){
   local t line n k removed=0 lines
   # пока чистим, awg-guard и awg-self не пересобирают свои цепочки (общие замки); после — пусть сверятся заново
-  if command -v flock >/dev/null && { exec 7>"${AWG_RUN:-/run}/awg-guard.lock" 8>"${AWG_RUN:-/run}/awg-self.lock"; } 2>/dev/null; then flock -w 30 7; flock -w 30 8; fi
+  # Не дождались замка — не чистим: удаление «лишней» копии посреди чужой сборки цепочки убрало бы и нужное правило
+  if command -v flock >/dev/null && { exec 7>"${AWG_RUN:-/run}/awg-guard.lock" 8>"${AWG_RUN:-/run}/awg-self.lock"; } 2>/dev/null; then
+    flock -w 30 7 && flock -w 30 8 || { { exec 7>&- 8>&-; } 2>/dev/null; echo "awg-guard или awg-self заняты дольше 30 с — повторите" >&2; echo 0; return 1; }
+  fi
   for t in nat mangle filter; do
     lines=$(iptables -t "$t" -S 2>/dev/null) || continue          # нет ответа (блокировка) — пропускаем таблицу
     while IFS= read -r line; do
@@ -98,7 +101,7 @@ forget(){  # убрать правила интерфейса (все копии
 }
 
 case "$1" in
-  dedup)  n=$(dedup); echo "убрано дубликатов: $n"; exit 0;;
+  dedup)  n=$(dedup) || { echo "дубликаты не убраны: замки заняты"; exit 1; }; echo "убрано дубликатов: $n"; exit 0;;
   forget) forget "$2"; exit $?;;
 esac
 

@@ -39,12 +39,17 @@ latest(){
     && sed -n 's/.*"tag_name": *"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' "$t" | head -1
   rm -f "$t"
 }
+up_tun(){   # под тем же замком, что сторож и панель: up.sh сторожа посреди нашего пересоздал бы интерфейс
+  local lf="${AWG_RUN:-/run}/awg-tun-$1.lock"
+  if command -v flock >/dev/null && { : >>"$lf"; } 2>/dev/null; then ( flock -w 30 9 || exit 1; "$DD/up.sh" "$1" >/dev/null 2>&1 ) 9>"$lf"
+  else "$DD/up.sh" "$1" >/dev/null 2>&1; fi
+}
 restart_tunnels(){
   local t
   # shellcheck disable=SC1091
   . "$DD/awg.env" 2>/dev/null
   for t in $XRAY_TUNNELS; do
-    if "$DD/up.sh" "$t" >/dev/null 2>&1; then say "  туннель $t перезапущен"; else say "  туннель $t не поднялся: проверьте «Туннели → VLESS»"; fi
+    if up_tun "$t"; then say "  туннель $t перезапущен"; else say "  туннель $t не поднялся: проверьте «Туннели → VLESS»"; fi
   done
 }
 
